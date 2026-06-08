@@ -1,0 +1,10 @@
+/target/
+/.tmp/
+/tmp/
+/pkg/
+/lib/shirobai/*.so
+/lib/shirobai/*.bundle
+/lib/shirobai/*.dll
+*.o
+*.a
+Gemfile.lock

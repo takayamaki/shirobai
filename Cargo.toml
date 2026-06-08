@@ -1,0 +1,3 @@
+[workspace]
+members = ["ext/shirobai", "crates/shirobai-core"]
+resolver = "3"

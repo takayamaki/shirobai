@@ -1,0 +1,13 @@
+[package]
+name = "shirobai-ext"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "shirobai"
+crate-type = ["cdylib"]
+
+[dependencies]
+magnus = "0.8"
+shirobai-core = { path = "../../crates/shirobai-core" }

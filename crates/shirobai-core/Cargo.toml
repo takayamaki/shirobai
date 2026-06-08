@@ -1,0 +1,7 @@
+[package]
+name = "shirobai-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ruby-prism = "1.9.0"
