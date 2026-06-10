@@ -14,7 +14,6 @@
 #
 # Run each mode in a separate process (see run_e2e.sh).
 
-require "benchmark"
 require "rubocop"
 
 $LOAD_PATH.unshift File.join(__dir__, "..", "lib")
@@ -68,12 +67,27 @@ end
 commissioner = RuboCop::Cop::Commissioner.new(cops)
 sources.first(50).each { |ps| commissioner.investigate(ps) }
 
-offenses = 0
-elapsed = Benchmark.realtime do
-  sources.each do |ps|
-    offenses += commissioner.investigate(ps).offenses.size
-  end
-end
+# Sweep warmup-era garbage before starting the clock so it is not collected
+# (and charged) inside the timed region. Do NOT GC.disable: shirobai's value is
+# reduced Ruby allocation/eval, and that shows up as reduced GC cost, so GC must
+# be inside the measured region.
+GC.start
 
-printf("%-9s cops=%-4d replaced=%-2d files=%-5d offenses=%-7d %.2fs\n",
-       mode, cops.size, replaced, sources.size, offenses, elapsed)
+offenses = 0
+# Measure process CPU time (utime+stime), not wall time. The investigate loop is
+# effectively single-threaded (manual Commissioner loop + synchronous magnus
+# calls), so process CPU time ~= the pure computational cost and drops the
+# scheduling/contention jitter that inflates wall time. Ruby eval, Rust walk and
+# reparse are all on-CPU user time in the same process, so stock-vs-shirobai
+# stays a fair compute comparison. Wall is kept as a sanity check: cpu << wall
+# means external load contaminated the run.
+c0 = Process.clock_gettime(Process::CLOCK_PROCESS_CPUTIME_ID)
+w0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+sources.each do |ps|
+  offenses += commissioner.investigate(ps).offenses.size
+end
+cpu = Process.clock_gettime(Process::CLOCK_PROCESS_CPUTIME_ID) - c0
+wall = Process.clock_gettime(Process::CLOCK_MONOTONIC) - w0
+
+printf("%-9s cops=%-4d replaced=%-2d files=%-5d offenses=%-7d cpu=%.2fs wall=%.2fs\n",
+       mode, cops.size, replaced, sources.size, offenses, cpu, wall)
