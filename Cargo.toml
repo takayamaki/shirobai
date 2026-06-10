@@ -1,3 +1,13 @@
 [workspace]
 members = ["ext/shirobai", "crates/shirobai-core"]
 resolver = "3"
+
+# Release tuning. The hot path crosses crate boundaries (ext cdylib -> core
+# check_* -> ruby-prism); without LTO the cross-crate calls are not inlined and
+# codegen-units=16 (the release default) further fragments optimization. Fat LTO
+# + a single codegen unit lets the whole graph optimize together. opt-level=3 is
+# already the release default. panic is left at the default (unwind): magnus
+# relies on unwinding to surface Ruby exceptions, so panic=abort is unsafe here.
+[profile.release]
+lto = "fat"
+codegen-units = 1
