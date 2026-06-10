@@ -16,7 +16,7 @@ module Shirobai
 
         def on_new_investigation
           source = processed_source.raw_source
-          Shirobai.check_debugger(source, debugger_methods).each do |start_offset, end_offset|
+          Shirobai.check_debugger(source, debugger_methods, debugger_requires).each do |start_offset, end_offset|
             range = Parser::Source::Range.new(processed_source.buffer, start_offset, end_offset)
             add_offense(range, message: format(MSG, source: range.source))
           end
@@ -25,7 +25,15 @@ module Shirobai
         private
 
         def debugger_methods
-          config = cop_config.fetch("DebuggerMethods", [])
+          flatten_config("DebuggerMethods")
+        end
+
+        def debugger_requires
+          flatten_config("DebuggerRequires")
+        end
+
+        def flatten_config(key)
+          config = cop_config.fetch(key, [])
           list = config.is_a?(Array) ? config : config.values.flatten
           list.grep(String)
         end

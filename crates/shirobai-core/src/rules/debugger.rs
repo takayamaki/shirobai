@@ -9,13 +9,19 @@ pub struct DebuggerOffense {
 /// byte range RuboCop would mark as an offense.
 ///
 /// `methods` is the already-flattened `DebuggerMethods` list (chained names
-/// such as `binding.pry` or `Foo::Bar::Baz.debug`).
-pub fn check_debugger(source: &[u8], methods: &[String]) -> Vec<DebuggerOffense> {
+/// such as `binding.pry` or `Foo::Bar::Baz.debug`). `requires` is the
+/// flattened `DebuggerRequires` list (e.g. `debug/start`).
+pub fn check_debugger(
+    source: &[u8],
+    methods: &[String],
+    requires: &[String],
+) -> Vec<DebuggerOffense> {
     let result = parse(source);
     let node = result.node();
     let mut visitor = DebuggerVisitor {
         source,
         methods,
+        requires,
         stack: Vec::new(),
         offenses: Vec::new(),
     };
@@ -60,6 +66,7 @@ fn kind_of(node: &Node<'_>) -> Kind {
 struct DebuggerVisitor<'a> {
     source: &'a [u8],
     methods: &'a [String],
+    requires: &'a [String],
     /// Ancestor kinds of the node currently being visited (self not included).
     stack: Vec<Kind>,
     offenses: Vec<DebuggerOffense>,
@@ -79,7 +86,8 @@ impl DebuggerVisitor<'_> {
                 receiver = inner.receiver();
             } else {
                 let loc = recv.location();
-                let src = String::from_utf8_lossy(&self.source[loc.start_offset()..loc.end_offset()]);
+                let src =
+                    String::from_utf8_lossy(&self.source[loc.start_offset()..loc.end_offset()]);
                 let part = src.trim_start_matches("::");
                 name = format!("{part}.{name}");
                 receiver = None;
@@ -92,26 +100,50 @@ impl DebuggerVisitor<'_> {
     /// `{ }`) is excluded, matching RuboCop's `send` node which does not span
     /// its block.
     fn offense_end(&self, call: &ruby_prism::CallNode<'_>) -> usize {
-        if let Some(block) = call.block() {
-            if let Some(block_node) = block.as_block_node() {
-                let start = call.location().start_offset();
-                let mut end = block_node.location().start_offset();
-                while end > start && self.source[end - 1].is_ascii_whitespace() {
-                    end -= 1;
-                }
-                return end;
+        if let Some(block) = call.block()
+            && let Some(block_node) = block.as_block_node()
+        {
+            let start = call.location().start_offset();
+            let mut end = block_node.location().start_offset();
+            while end > start && self.source[end - 1].is_ascii_whitespace() {
+                end -= 1;
             }
+            return end;
         }
         call.location().end_offset()
     }
 
     fn has_arguments(&self, call: &ruby_prism::CallNode<'_>) -> bool {
-        call.arguments().map_or(false, |args| !args.arguments().is_empty())
+        call.arguments()
+            .is_some_and(|args| !args.arguments().is_empty())
     }
 
     fn debugger_method(&self, call: &ruby_prism::CallNode<'_>) -> bool {
         let name = self.chained_method_name(call);
         self.methods.iter().any(|m| m == &name)
+    }
+
+    /// Port of RuboCop's `debugger_require?`: a `require` call with a single
+    /// string-literal argument whose value is in `DebuggerRequires`.
+    fn debugger_require(&self, call: &ruby_prism::CallNode<'_>) -> bool {
+        if call.name().as_slice() != b"require" {
+            return false;
+        }
+        let Some(args) = call.arguments() else {
+            return false;
+        };
+        let args = args.arguments();
+        if args.len() != 1 {
+            return false;
+        }
+        let Some(arg) = args.iter().next() else {
+            return false;
+        };
+        let Some(string) = arg.as_string_node() else {
+            return false;
+        };
+        let value = string.unescaped();
+        self.requires.iter().any(|r| r.as_bytes() == value)
     }
 
     /// Nearest ancestor kind, skipping Prism's `ArgumentsNode` wrapper so that a
@@ -130,14 +162,17 @@ impl DebuggerVisitor<'_> {
     /// Port of RuboCop's `assumed_argument?`: the call sits directly inside a
     /// call, a literal, or a pair, so it is almost certainly an argument.
     fn assumed_argument(&self) -> bool {
-        matches!(self.effective_parent(), Kind::Call | Kind::Literal | Kind::Pair)
+        matches!(
+            self.effective_parent(),
+            Kind::Call | Kind::Literal | Kind::Pair
+        )
     }
 
     /// Port of RuboCop's `assumed_usage_context?`. A no-argument debugger-named
     /// call nested in another call is assumed to be used as an argument unless a
     /// block/lambda/`begin` ancestor proves it is a real statement.
     fn assumed_usage_context(&self, call: &ruby_prism::CallNode<'_>) -> bool {
-        let any_call_ancestor = self.stack.iter().any(|k| *k == Kind::Call);
+        let any_call_ancestor = self.stack.contains(&Kind::Call);
         if self.has_arguments(call) || !any_call_ancestor {
             return false;
         }
@@ -159,7 +194,7 @@ impl DebuggerVisitor<'_> {
         if call.is_safe_navigation() {
             return;
         }
-        if self.debugger_method(call) {
+        if self.debugger_method(call) || self.debugger_require(call) {
             let loc = call.location();
             self.offenses.push(DebuggerOffense {
                 start_offset: loc.start_offset(),
@@ -187,7 +222,11 @@ mod tests {
     use super::*;
 
     fn ranges(source: &str, methods: &[String]) -> Vec<(usize, usize)> {
-        check_debugger(source.as_bytes(), methods)
+        ranges_req(source, methods, &[])
+    }
+
+    fn ranges_req(source: &str, methods: &[String], requires: &[String]) -> Vec<(usize, usize)> {
+        check_debugger(source.as_bytes(), methods, requires)
             .into_iter()
             .map(|o| (o.start_offset, o.end_offset))
             .collect()
@@ -240,25 +279,37 @@ mod tests {
     // Typical: a constant receiver chain (`Kernel.binding.irb`).
     #[test]
     fn const_receiver_chain() {
-        assert_eq!(ranges("Kernel.binding.irb", &default_methods()), vec![(0, 18)]);
+        assert_eq!(
+            ranges("Kernel.binding.irb", &default_methods()),
+            vec![(0, 18)]
+        );
     }
 
     // A constant path chain (`Foo::Bar::Baz.debug`).
     #[test]
     fn const_path_chain_config() {
-        assert_eq!(ranges("Foo::Bar::Baz.debug", &m(&["Foo::Bar::Baz.debug"])), vec![(0, 19)]);
+        assert_eq!(
+            ranges("Foo::Bar::Baz.debug", &m(&["Foo::Bar::Baz.debug"])),
+            vec![(0, 19)]
+        );
     }
 
     // A cbase constant (`::Kernel.debugger`) drops the leading `::` when matching.
     #[test]
     fn cbase_constant() {
-        assert_eq!(ranges("::Kernel.debugger", &default_methods()), vec![(0, 17)]);
+        assert_eq!(
+            ranges("::Kernel.debugger", &default_methods()),
+            vec![(0, 17)]
+        );
     }
 
     // A trailing literal block is excluded from the offense range.
     #[test]
     fn block_excluded_from_range() {
-        assert_eq!(ranges("Pry.rescue { puts 1 }", &default_methods()), vec![(0, 10)]);
+        assert_eq!(
+            ranges("Pry.rescue { puts 1 }", &default_methods()),
+            vec![(0, 10)]
+        );
     }
 
     // Comments are ignored by the parser.
@@ -302,7 +353,10 @@ mod tests {
     // A debugger call inside a block is a real usage and is reported.
     #[test]
     fn inside_block_reported() {
-        assert_eq!(ranges("do_something { custom_debugger }", &m(&["custom_debugger"])).len(), 1);
+        assert_eq!(
+            ranges("do_something { custom_debugger }", &m(&["custom_debugger"])).len(),
+            1
+        );
     }
 
     // A debugger call inside an explicit `begin` argument is reported.
@@ -328,5 +382,40 @@ mod tests {
     #[test]
     fn safe_navigation_not_reported() {
         assert!(ranges("binding&.pry", &default_methods()).is_empty());
+    }
+
+    // --- DebuggerRequires ---
+
+    // A `require` of a configured debugger entry point is reported.
+    #[test]
+    fn require_reported() {
+        assert_eq!(
+            ranges_req("require 'my_debugger'", &[], &m(&["my_debugger"])),
+            vec![(0, 21)]
+        );
+    }
+
+    // `require` without arguments is not a debugger require.
+    #[test]
+    fn require_without_arguments() {
+        assert!(ranges_req("require", &[], &m(&["my_debugger"])).is_empty());
+    }
+
+    // `require` with multiple arguments is not a debugger require.
+    #[test]
+    fn require_multiple_arguments() {
+        assert!(ranges_req("require 'my_debugger', 'x'", &[], &m(&["my_debugger"])).is_empty());
+    }
+
+    // `require` with a non-string argument is not a debugger require.
+    #[test]
+    fn require_non_string_argument() {
+        assert!(ranges_req("require my_debugger", &[], &m(&["my_debugger"])).is_empty());
+    }
+
+    // A `require` of an unlisted path is not reported.
+    #[test]
+    fn require_unlisted() {
+        assert!(ranges_req("require 'other'", &[], &m(&["my_debugger"])).is_empty());
     }
 }
