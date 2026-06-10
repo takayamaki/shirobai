@@ -78,7 +78,6 @@ struct Visitor<'a> {
     offense_ranges: Vec<(usize, usize)>,
     offenses: Vec<IndentationOffense>,
     /// Node ranges that have been `ignore_node`'d (assignment rhs, def under modifier).
-    #[allow(dead_code)] // used by the assignment / def-modifier stages
     ignored: Vec<(usize, usize)>,
 }
 
@@ -209,7 +208,6 @@ impl<'a> Visitor<'a> {
         line.iter().position(|&b| b != b' ' && b != b'\t')
     }
 
-    #[allow(dead_code)] // used by the assignment / def-modifier stages
     fn is_ignored(&self, range: (usize, usize)) -> bool {
         self.ignored.contains(&range)
     }
@@ -362,9 +360,13 @@ impl<'a> Visitor<'a> {
         } else if let Some(n) = node.as_unless_node() {
             self.on_unless_node(&n);
         } else if let Some(n) = node.as_while_node() {
-            self.on_while_node(n.keyword_loc().start_offset(), n.statements().as_ref());
+            if !self.is_ignored(loc(&n.as_node().location())) {
+                self.on_while_node(n.keyword_loc().start_offset(), n.statements().as_ref());
+            }
         } else if let Some(n) = node.as_until_node() {
-            self.on_while_node(n.keyword_loc().start_offset(), n.statements().as_ref());
+            if !self.is_ignored(loc(&n.as_node().location())) {
+                self.on_while_node(n.keyword_loc().start_offset(), n.statements().as_ref());
+            }
         } else if let Some(n) = node.as_for_node() {
             self.on_for_node(&n);
         } else if let Some(n) = node.as_case_node() {
@@ -375,7 +377,73 @@ impl<'a> Visitor<'a> {
             self.on_block_node(node, &n);
         } else if let Some(n) = node.as_begin_node() {
             self.on_begin_node(&n);
+        } else if let Some((assign_start, value)) = assignment_value(node) {
+            self.on_assignment(assign_start, &value);
         }
+    }
+
+    /// `check_assignment(node, rhs)`: the rhs `if`/`while`/`until` is checked
+    /// against a base that is either the assignment (variable alignment) or the
+    /// rhs keyword, then `ignore_node`'d so the normal walk skips it.
+    fn on_assignment(&mut self, assign_start: usize, value: &Node<'_>) {
+        // rhs = first_part_of_call_chain(rhs)
+        let rhs = first_part_of_call_chain(value);
+        let Some(rhs) = rhs else { return };
+
+        let rhs_range = loc(&rhs.location());
+        // variable_alignment?(node.loc, rhs, style):
+        //   style == keyword -> false; else !line_break_before_keyword.
+        let variable_alignment = if self.config.end_align == 0 {
+            false
+        } else {
+            // line_break_before_keyword? = rhs.first_line > whole_expression.line
+            self.line_of(rhs_range.0) <= self.line_of(assign_start)
+        };
+
+        if let Some(n) = rhs.as_if_node() {
+            if n.end_keyword_loc().is_none() {
+                return;
+            }
+            let base_off = if variable_alignment {
+                assign_start
+            } else {
+                n.if_keyword_loc()
+                    .map(|l| l.start_offset())
+                    .unwrap_or(rhs_range.0)
+            };
+            self.check_if(
+                base_off,
+                n.statements().as_ref().map(|s| s.as_node()),
+                n.subsequent().as_ref(),
+            );
+            self.ignored.push(rhs_range);
+        } else if let Some(n) = rhs.as_while_node() {
+            let base_off = if variable_alignment {
+                assign_start
+            } else {
+                n.keyword_loc().start_offset()
+            };
+            self.on_while_with_base(base_off, n.statements().as_ref());
+            self.ignored.push(rhs_range);
+        } else if let Some(n) = rhs.as_until_node() {
+            let base_off = if variable_alignment {
+                assign_start
+            } else {
+                n.keyword_loc().start_offset()
+            };
+            self.on_while_with_base(base_off, n.statements().as_ref());
+            self.ignored.push(rhs_range);
+        }
+    }
+
+    fn on_while_with_base(
+        &mut self,
+        base_off: usize,
+        body: Option<&ruby_prism::StatementsNode<'_>>,
+    ) {
+        let Some(body) = body else { return };
+        let bref = self.make_body(&body.as_node());
+        self.check_indentation(base_off, Some(bref), false);
     }
 
     /// First statement of a Prism body node (statements / begin), or the node
@@ -450,6 +518,9 @@ impl<'a> Visitor<'a> {
     fn on_if_node(&mut self, n: &ruby_prism::IfNode<'_>) {
         // ternary / modifier-form: an `if` without an `end` keyword.
         if n.end_keyword_loc().is_none() {
+            return;
+        }
+        if self.is_ignored(loc(&n.as_node().location())) {
             return;
         }
         let Some(if_kw) = n.if_keyword_loc() else {
@@ -702,6 +773,128 @@ fn is_special_modifier(name: &[u8]) -> bool {
     SPECIAL_MODIFIERS.contains(&name)
 }
 
+/// `extract_rhs(node)` for assignment-like nodes: returns the assignment's
+/// `(whole_expression_start, value)` when `node` is a write/op-asgn node or an
+/// attribute/index-write `send`. Mirrors `CheckAssignment#extract_rhs`.
+fn assignment_value<'pr>(node: &Node<'pr>) -> Option<(usize, Node<'pr>)> {
+    let start = node.location().start_offset();
+
+    macro_rules! v {
+        ($e:expr) => {
+            return Some((start, $e.value()))
+        };
+    }
+    if let Some(n) = node.as_local_variable_write_node() {
+        v!(n)
+    }
+    if let Some(n) = node.as_instance_variable_write_node() {
+        v!(n)
+    }
+    if let Some(n) = node.as_class_variable_write_node() {
+        v!(n)
+    }
+    if let Some(n) = node.as_global_variable_write_node() {
+        v!(n)
+    }
+    if let Some(n) = node.as_constant_write_node() {
+        v!(n)
+    }
+    if let Some(n) = node.as_constant_path_write_node() {
+        v!(n)
+    }
+    if let Some(n) = node.as_local_variable_and_write_node() {
+        v!(n)
+    }
+    if let Some(n) = node.as_local_variable_or_write_node() {
+        v!(n)
+    }
+    if let Some(n) = node.as_local_variable_operator_write_node() {
+        v!(n)
+    }
+    if let Some(n) = node.as_instance_variable_and_write_node() {
+        v!(n)
+    }
+    if let Some(n) = node.as_instance_variable_or_write_node() {
+        v!(n)
+    }
+    if let Some(n) = node.as_instance_variable_operator_write_node() {
+        v!(n)
+    }
+    if let Some(n) = node.as_class_variable_and_write_node() {
+        v!(n)
+    }
+    if let Some(n) = node.as_class_variable_or_write_node() {
+        v!(n)
+    }
+    if let Some(n) = node.as_class_variable_operator_write_node() {
+        v!(n)
+    }
+    if let Some(n) = node.as_global_variable_and_write_node() {
+        v!(n)
+    }
+    if let Some(n) = node.as_global_variable_or_write_node() {
+        v!(n)
+    }
+    if let Some(n) = node.as_global_variable_operator_write_node() {
+        v!(n)
+    }
+    if let Some(n) = node.as_constant_and_write_node() {
+        v!(n)
+    }
+    if let Some(n) = node.as_constant_or_write_node() {
+        v!(n)
+    }
+    if let Some(n) = node.as_constant_operator_write_node() {
+        v!(n)
+    }
+    // `foo.bar = if ...` / `foo&.bar = if ...`: an attribute-write CallNode whose
+    // last argument is the rhs.
+    if let Some(c) = node.as_call_node()
+        && c.is_attribute_write()
+    {
+        let args = c.arguments()?;
+        let last = args.arguments().iter().last()?;
+        return Some((start, last));
+    }
+    None
+}
+
+/// `first_part_of_call_chain(node)`: descend through call receivers to the
+/// innermost non-call node (the receiver chain root). Returns `None` only when
+/// `node` is itself a call with no receiver (a bare method send root, which the
+/// caller treats as "not an if/while rhs").
+fn first_part_of_call_chain<'pr>(node: &Node<'pr>) -> Option<Node<'pr>> {
+    // First hop from the borrowed node.
+    let mut current = match node.as_call_node() {
+        Some(c) => c.receiver()?,
+        None => return as_if_or_loop(node),
+    };
+    // Subsequent hops on owned receivers.
+    loop {
+        let next = current.as_call_node().and_then(|c| c.receiver());
+        match next {
+            Some(r) => current = r,
+            None => return Some(current),
+        }
+    }
+}
+
+/// Returns an owned copy of `node` if it is an if/while/until (the only rhs
+/// kinds the assignment path cares about), reconstructed via its typed
+/// accessor; otherwise `None`.
+fn as_if_or_loop<'pr>(node: &Node<'pr>) -> Option<Node<'pr>> {
+    if let Some(n) = node.as_if_node() {
+        return Some(n.as_node());
+    }
+    if let Some(n) = node.as_while_node() {
+        return Some(n.as_node());
+    }
+    if let Some(n) = node.as_until_node() {
+        return Some(n.as_node());
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -750,6 +943,20 @@ mod tests {
         });
         assert_eq!(got.len(), 1);
         assert!(got[0].message.contains("Use 1 (not 2) tabs"));
+    }
+
+    #[test]
+    fn assignment_if_variable_aligned_offense() {
+        // `0` at col 8 with end-aligned-keyword body; variable style base is the
+        // assignment (col 0), so expected col 2 -> delta -6.
+        let got = run("var = if a\n        0\n      end\n");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].column_delta, -6);
+    }
+
+    #[test]
+    fn assignment_if_aligned_with_variable_accepted() {
+        assert!(run("var = if a\n  0\nend\n").is_empty());
     }
 
     #[test]
