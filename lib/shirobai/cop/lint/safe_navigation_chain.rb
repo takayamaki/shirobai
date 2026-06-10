@@ -26,6 +26,10 @@ module Shirobai
           Shirobai.check_safe_navigation_chain(source, methods).each do |start, fin, replacement, wrap_start, wrap_end|
             range = Parser::Source::Range.new(buffer, start, fin)
             add_offense(range) do |corrector|
+              # Empty replacement means the offense has no safe correction
+              # (e.g. the else branch of a ternary on the same receiver).
+              next if replacement.empty?
+
               corrector.replace(range, replacement)
               if wrap_end > wrap_start
                 corrector.wrap(Parser::Source::Range.new(buffer, wrap_start, wrap_end), "(", ")")
