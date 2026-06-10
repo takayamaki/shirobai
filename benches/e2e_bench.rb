@@ -40,11 +40,16 @@ Shirobai::Cop.constants(false).each do |dept|
   end
 end
 
-cop_classes = registry.enabled(config).map do |klass|
-  if mode == "shirobai" && shirobai_cops.key?(klass.cop_name)
-    shirobai_cops[klass.cop_name]
-  else
-    klass
+# Modes:
+#   stock    - all default cops, unchanged
+#   shirobai - implemented cops swapped for the Rust drop-ins
+#   removed  - implemented cops dropped entirely (measures their stock eval cost)
+cop_classes = registry.enabled(config).filter_map do |klass|
+  implemented = shirobai_cops.key?(klass.cop_name)
+  case mode
+  when "shirobai" then implemented ? shirobai_cops[klass.cop_name] : klass
+  when "removed" then implemented ? nil : klass
+  else klass
   end
 end
 
