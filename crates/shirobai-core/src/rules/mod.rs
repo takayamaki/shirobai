@@ -6,6 +6,7 @@ pub mod complexity;
 pub mod debugger;
 pub mod dispatch;
 pub mod dot_position;
+pub mod first_argument_indentation;
 pub mod line_end_concatenation;
 pub mod line_length;
 pub mod line_length_breakable;

@@ -373,6 +373,42 @@ fn check_argument_alignment(
     .collect()
 }
 
+/// Ruby entry point for `Layout/FirstArgumentIndentation`. Takes the source,
+/// the enforced style (0=special_for_inner_method_call_in_parentheses,
+/// 1=consistent, 2=consistent_relative_to_receiver,
+/// 3=special_for_inner_method_call), the configured indentation width and
+/// whether the cop is disabled because `Layout/ArgumentAlignment` enforces
+/// `with_fixed_indentation` while `Layout/FirstMethodArgumentLineBreak` is off.
+/// Returns `[[start, end, column_delta, message, autocorrect, correct_start,
+/// correct_end], ...]`.
+#[allow(clippy::type_complexity)]
+fn check_first_argument_indentation(
+    source: String,
+    style: u8,
+    indent_width: usize,
+    enforce_fixed_with_no_line_break: bool,
+) -> Vec<(usize, usize, isize, String, bool, usize, usize)> {
+    shirobai_core::rules::first_argument_indentation::check_first_argument_indentation(
+        source.as_bytes(),
+        style,
+        indent_width,
+        enforce_fixed_with_no_line_break,
+    )
+    .into_iter()
+    .map(|o| {
+        (
+            o.start_offset,
+            o.end_offset,
+            o.column_delta,
+            o.message,
+            o.autocorrect,
+            o.correct_start,
+            o.correct_end,
+        )
+    })
+    .collect()
+}
+
 /// Ruby entry point for `Style/RedundantSelf`. Returns one entry per redundant
 /// `self` receiver: `[[self_start, self_end, dot_start, dot_end], ...]`. The
 /// `Kernel` method allow-list is supplied by Ruby.
@@ -426,5 +462,9 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         function!(check_argument_alignment, 4),
     )?;
     module.define_module_function("check_redundant_self", function!(check_redundant_self, 2))?;
+    module.define_module_function(
+        "check_first_argument_indentation",
+        function!(check_first_argument_indentation, 4),
+    )?;
     Ok(())
 }
