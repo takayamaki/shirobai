@@ -171,6 +171,24 @@ fn check_multiline_method_call_indentation(
     .collect()
 }
 
+/// Ruby entry point for `Layout/DotPosition`. Takes the source and the enforced
+/// style (0=leading, 1=trailing). Returns `[[dot_start, dot_end, remove_start,
+/// remove_end, insert_pos], ...]`.
+fn check_dot_position(source: String, style: u8) -> Vec<(usize, usize, usize, usize, usize)> {
+    shirobai_core::rules::dot_position::check_dot_position(source.as_bytes(), style)
+        .into_iter()
+        .map(|o| {
+            (
+                o.start_offset,
+                o.end_offset,
+                o.remove_start,
+                o.remove_end,
+                o.insert_pos,
+            )
+        })
+        .collect()
+}
+
 #[magnus::init(name = "shirobai")]
 fn init(ruby: &Ruby) -> Result<(), Error> {
     let module = ruby.define_module("Shirobai")?;
@@ -190,5 +208,6 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         "check_multiline_method_call_indentation",
         function!(check_multiline_method_call_indentation, 4),
     )?;
+    module.define_module_function("check_dot_position", function!(check_dot_position, 2))?;
     Ok(())
 }
