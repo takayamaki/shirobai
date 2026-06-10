@@ -6,6 +6,7 @@ pub mod debugger;
 pub mod dispatch;
 pub mod dot_position;
 pub mod line_length;
+pub mod line_length_breakable;
 pub mod method_name;
 pub mod multiline_method_call_indentation;
 pub mod multiline_operation_indentation;

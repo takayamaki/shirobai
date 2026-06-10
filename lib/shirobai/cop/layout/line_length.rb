@@ -27,6 +27,7 @@ module Shirobai
 
         def on_new_investigation
           source = processed_source.raw_source
+          compute_breakables(source)
           Shirobai.check_line_length(source, max, tab_indentation_width || 0).each do |candidate|
             line_index, length, _line_start, _line_end, _indent_diff, heredoc_delimiters = candidate
             line = processed_source.lines[line_index]
@@ -35,6 +36,25 @@ module Shirobai
         end
 
         private
+
+        # Build the per-line autocorrection data (insertion byte offset and,
+        # for `SplitStrings`, the string delimiter). Mirrors upstream's
+        # `breakable_range_by_line_index` / `breakable_string_delimiters`.
+        def compute_breakables(source)
+          buffer = processed_source.buffer
+          @breakable_range_by_line_index = {}
+          @breakable_string_delimiters = {}
+          Shirobai.check_line_length_breakables(source, max, !!allow_string_split?).each do |entry|
+            line_index, insert_offset, delimiter = entry
+            @breakable_range_by_line_index[line_index] =
+              Parser::Source::Range.new(buffer, insert_offset, insert_offset + 1)
+            @breakable_string_delimiters[line_index] = delimiter unless delimiter.empty?
+          end
+        end
+
+        def allow_string_split?
+          cop_config["SplitStrings"]
+        end
 
         def check_candidate(line, line_index, length, heredoc_delimiters)
           return if allowed_candidate?(line, line_index, heredoc_delimiters)
@@ -74,11 +94,18 @@ module Shirobai
 
         def register_offense(loc, line, line_index, length: line_length(line))
           message = format(MSG, length: length, max: max)
-          add_offense(loc, message: message) do
-            # Record the longest offending line so `--auto-gen-config` can
-            # propose a `Max` value (upstream does this from its corrector
-            # block; the auto-correction itself is not yet ported).
-            self.max = length
+          breakable_range = @breakable_range_by_line_index[line_index]
+
+          add_offense(loc, message: message) do |corrector|
+            self.max = line_length(line)
+
+            insertion = if (delimiter = @breakable_string_delimiters[line_index])
+                          [delimiter, " \\\n", delimiter].join
+                        else
+                          "\n"
+                        end
+
+            corrector.insert_before(breakable_range, insertion) unless breakable_range.nil?
           end
         end
 

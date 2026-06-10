@@ -11,11 +11,5 @@ RSpec.describe Shirobai::Cop::Layout::LineLength, :config do
   # without it being stripped from the heredoc source.
   let(:trailing_whitespace) { " " }
 
-  before do |example|
-    if example.metadata[:full_description].include?("autocorrection")
-      skip "Layout/LineLength auto-correction is not yet ported (detection only)"
-    end
-  end
-
   VendorSpecHelper.load_vendor_spec(self, "rubocop/cop/layout/line_length_spec.rb")
 end

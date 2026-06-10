@@ -312,6 +312,26 @@ fn check_line_length(
         .collect()
 }
 
+/// Ruby entry point for `Layout/LineLength` auto-correction. Returns one entry
+/// per source line that can be broken: `[[line_index, insert_offset,
+/// delimiter], ...]`. `insert_offset` is the byte offset before which a break is
+/// inserted; `delimiter` is empty for an ordinary newline break or the string
+/// quote for a `SplitStrings` continuation.
+fn check_line_length_breakables(
+    source: String,
+    max: usize,
+    split_strings: bool,
+) -> Vec<(usize, usize, String)> {
+    shirobai_core::rules::line_length_breakable::compute_breakables(
+        source.as_bytes(),
+        max,
+        split_strings,
+    )
+    .into_iter()
+    .map(|b| (b.line_index, b.insert_offset, b.delimiter))
+    .collect()
+}
+
 #[magnus::init(name = "shirobai")]
 fn init(ruby: &Ruby) -> Result<(), Error> {
     let module = ruby.define_module("Shirobai")?;
@@ -334,6 +354,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     )?;
     module.define_module_function("check_dot_position", function!(check_dot_position, 2))?;
     module.define_module_function("check_line_length", function!(check_line_length, 3))?;
+    module.define_module_function(
+        "check_line_length_breakables",
+        function!(check_line_length_breakables, 3),
+    )?;
     module.define_module_function("check_method_name", function!(check_method_name, 2))?;
     module.define_module_function(
         "check_multiline_bundle",
