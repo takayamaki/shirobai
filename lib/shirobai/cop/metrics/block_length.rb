@@ -16,6 +16,7 @@ module Shirobai
 
         LABEL = "Block"
         MSG = "%<label>s has too many lines. [%<length>d/%<max>d]"
+        FOLDABLE_TYPES = %w[array hash heredoc method_call].freeze
 
         exclude_limit "Max"
 
@@ -24,9 +25,11 @@ module Shirobai
 
         def on_new_investigation
           source = processed_source.raw_source
-          Shirobai.check_block_length(source, max_length, count_comments?).each do |start, fin, length, method_name, receiver|
+          Shirobai.check_block_length(source, max_length, count_comments?, count_as_one).each do |start, fin, length, method_name, receiver|
             next if allowed_method?(method_name) || matches_allowed_pattern?(method_name)
             next if method_receiver_excluded?(receiver, method_name)
+
+            validate_count_as_one!
 
             range = Parser::Source::Range.new(processed_source.buffer, start, fin)
             add_offense(range, message: format(MSG, label: LABEL, length: length, max: max_length)) do
@@ -62,6 +65,21 @@ module Shirobai
 
         def count_comments?
           cop_config["CountComments"]
+        end
+
+        def count_as_one
+          Array(cop_config["CountAsOne"]).map(&:to_s)
+        end
+
+        # Mirror the lazy `RuboCop::Warning` the calculator raises for an unknown
+        # `CountAsOne` type once a block is actually counted.
+        def validate_count_as_one!
+          unknown = count_as_one - FOLDABLE_TYPES
+          return if unknown.empty?
+
+          raise RuboCop::Warning,
+                "Unknown foldable type: #{unknown.first.to_sym.inspect}. " \
+                "Valid foldable types are: #{FOLDABLE_TYPES.join(', ')}."
         end
       end
     end
