@@ -6,6 +6,10 @@ require "rubocop/rspec/support"
 $LOAD_PATH.unshift File.join(__dir__, "..", "lib")
 require "shirobai"
 
+# Vendor spec support helpers used by the upstream cop specs we re-run verbatim
+# (e.g. `trailing_whitespace`).
+require_relative "../vendor/rubocop/spec/support/misc_helper"
+
 RSpec.configure do |config|
   config.expect_with :rspec do |expectations|
     expectations.include_chain_clauses_in_custom_matcher_descriptions = true
