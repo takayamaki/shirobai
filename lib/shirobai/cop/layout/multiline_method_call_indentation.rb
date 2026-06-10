@@ -47,7 +47,7 @@ module Shirobai
           offenses.each do |start, fin, column_delta, message, body_s, body_e, end_s, end_e|
             range = Parser::Source::Range.new(buffer, start, fin)
             add_offense(range, message: message) do |corrector|
-              if body_e > body_s
+              if end_e > end_s
                 correct_with_block(corrector, range, column_delta, buffer, body_s, body_e, end_s, end_e)
               else
                 RuboCop::Cop::AlignmentCorrector.correct(corrector, processed_source, range, column_delta)
@@ -65,8 +65,10 @@ module Shirobai
           selector_range = range_between(selector_line.begin_pos, selector_line.end_pos)
           RuboCop::Cop::AlignmentCorrector.correct(corrector, processed_source, selector_range, column_delta)
 
-          body = Parser::Source::Range.new(buffer, body_s, body_e)
-          RuboCop::Cop::AlignmentCorrector.correct(corrector, processed_source, body, column_delta)
+          if body_e > body_s
+            body = Parser::Source::Range.new(buffer, body_s, body_e)
+            RuboCop::Cop::AlignmentCorrector.correct(corrector, processed_source, body, column_delta)
+          end
 
           end_kw = Parser::Source::Range.new(buffer, end_s, end_e)
           end_range = range_by_whole_lines(end_kw, include_final_newline: false)

@@ -5,14 +5,14 @@
 //! `MultilineExpressionIndentation` mixin (the operation half lives in
 //! `multiline_operation_indentation`).
 //!
-//! Coverage so far (大枠): regular indentation for all three styles —
-//! `aligned` (semantic dot-above / first-call alignment + syntactic
-//! keyword/assignment base), `indented`, and `indented_relative_to_receiver`
-//! (receiver-relative base) — plus the simple (no-block) autocorrect path.
+//! Coverage: regular indentation for all three styles — `aligned` (semantic
+//! dot-above / first-call / multiline-block-chain alignment + syntactic
+//! keyword/assignment/operation base), `indented`, and
+//! `indented_relative_to_receiver` (receiver-relative base, hash/grouped chained
+//! receiver, splat) — plus block-aware autocorrect.
 //!
-//! Not yet ported (skipped in the spec's `PENDING` list): block-chain alignment
-//! and block-aware correction, hash-pair alignment, splat-relative indentation,
-//! `operation_rhs` syntactic base, and a few grouped/array-receiver edges.
+//! Not yet ported (skipped in the spec's `PENDING` list): hash-pair alignment
+//! (`find_pair_ancestor` and friends).
 
 use ruby_prism::{CallNode, Location, Node, Visit};
 
@@ -370,21 +370,28 @@ impl<'a> Visitor<'a> {
     }
 
     /// `semantic_alignment_base`: the dot range to align a `.`-prefixed selector
-    /// with. The `get_dot_right_above` branch is handled in `alignment_base`; the
-    /// multiline-block-chain branch is not yet ported.
+    /// with — `get_dot_right_above`, then the multiline-block chain, then the
+    /// first-call fallback (`semantic_alignment_node`).
     fn semantic_alignment_base(
         &self,
         node: &CallNode<'_>,
         node_range: (usize, usize),
         rhs: (usize, usize),
     ) -> Option<(usize, usize)> {
-        if !self.text(rhs.0, rhs.1).starts_with('.') {
+        let rhs_text = self.text(rhs.0, rhs.1);
+        if !rhs_text.starts_with('.') && !rhs_text.starts_with("&.") {
             return None;
         }
         if self.argument_in_parenthesized_call(node_range) {
             return None;
         }
-        self.first_call_alignment_base(node)
+        if let Some(dot) = node.call_operator_loc()
+            && let Some(above) = self.get_dot_right_above(dot.start_offset())
+        {
+            return Some(above);
+        }
+        self.find_multiline_block_chain_base(node)
+            .or_else(|| self.first_call_alignment_base(node))
     }
 
     /// `first_call_alignment_node` reduced to the base range it yields: the
@@ -427,6 +434,100 @@ impl<'a> Visitor<'a> {
             return None; // method on a `begin`/grouped receiver's last line
         }
         Some((dot_start, sel_end))
+    }
+
+    /// `find_multiline_block_chain_node` reduced to its base range. When the call
+    /// carries a block, continuation alignment; otherwise the descendant-block
+    /// case.
+    fn find_multiline_block_chain_base(&self, node: &CallNode<'_>) -> Option<(usize, usize)> {
+        if let Some(blk) = node.block().and_then(|b| b.as_block_node()) {
+            let block_single_line = self.is_single_line(loc(&blk.as_node().location()));
+            self.find_continuation_base(node, block_single_line)
+        } else {
+            self.handle_descendant_base(node)
+        }
+    }
+
+    fn is_single_line(&self, range: (usize, usize)) -> bool {
+        self.line_of(range.0) == self.line_of(range.1)
+    }
+
+    /// `single_line_block_receiver?` → `receiver.send_node`'s `dot.join(selector)`:
+    /// a single-line call carrying a block.
+    fn block_receiver_dot(&self, receiver: &Node<'_>) -> Option<(usize, usize)> {
+        let c = receiver.as_call_node()?;
+        c.block().and_then(|b| b.as_block_node())?;
+        if !self.is_single_line(loc(&receiver.location())) {
+            return None;
+        }
+        let dot = c.call_operator_loc()?;
+        let sel = c.message_loc()?;
+        Some((dot.start_offset(), sel.end_offset()))
+    }
+
+    fn find_continuation_base(
+        &self,
+        node: &CallNode<'_>,
+        block_single_line: bool,
+    ) -> Option<(usize, usize)> {
+        let receiver = node.receiver()?;
+        if let Some(b) = self.block_receiver_dot(&receiver) {
+            return Some(b);
+        }
+        let rc = receiver.as_call_node()?;
+        // A receiver that carries a (multiline) block is a parser `:block`, not
+        // `call_type?` — `receiver.call_type? && receiver.loc.dot` is false.
+        if rc.block().and_then(|b| b.as_block_node()).is_some() {
+            return None;
+        }
+        let dot = rc.call_operator_loc()?;
+        let sel = rc.message_loc()?;
+        let base = (dot.start_offset(), sel.end_offset());
+        let rr = rc.receiver()?;
+        let rr_is_begin = rr.as_parentheses_node().is_some() || rr.as_begin_node().is_some();
+        if rr_is_begin && block_single_line {
+            return Some(base);
+        }
+        if self.line_of(dot.start_offset()) > self.line_of(rr.location().end_offset()) {
+            return Some(base);
+        }
+        None
+    }
+
+    fn handle_descendant_base(&self, node: &CallNode<'_>) -> Option<(usize, usize)> {
+        let receiver = node.receiver()?;
+        if let Some(b) = self.block_receiver_dot(&receiver) {
+            return Some(b);
+        }
+        // `node.each_descendant(:any_block).first&.multiline?` over the receiver
+        // chain: the deepest call carrying a multiline block.
+        let owner_dot = self.deepest_block_owner_dot(node)?;
+        if let Some(rc) = receiver.as_call_node()
+            && let (Some(dot), Some(sel)) = (rc.call_operator_loc(), rc.message_loc())
+        {
+            return Some((dot.start_offset(), sel.end_offset()));
+        }
+        Some(owner_dot)
+    }
+
+    /// The bottom-most call in the receiver chain that carries a multiline block;
+    /// returns its `dot.join(selector)`. `None` if there is no such block.
+    fn deepest_block_owner_dot(&self, node: &CallNode<'_>) -> Option<(usize, usize)> {
+        let mut found: Option<(usize, usize)> = None;
+        let mut current = node.as_node();
+        while let Some(c) = current.as_call_node() {
+            if let Some(blk) = c.block().and_then(|b| b.as_block_node())
+                && !self.is_single_line(loc(&blk.as_node().location()))
+                && let (Some(dot), Some(sel)) = (c.call_operator_loc(), c.message_loc())
+            {
+                found = Some((dot.start_offset(), sel.end_offset()));
+            }
+            match c.receiver() {
+                Some(r) => current = r,
+                None => break,
+            }
+        }
+        found
     }
 
     /// `syntactic_alignment_base`: keyword expression / assignment rhs /
@@ -481,26 +582,49 @@ impl<'a> Visitor<'a> {
         rhs: (usize, usize),
     ) -> Option<(usize, usize)> {
         match self.style {
-            Style::Aligned => {
-                // semantic_alignment_base, with the get_dot_right_above shortcut.
-                if self.text(rhs.0, rhs.1).starts_with('.')
-                    && !self.argument_in_parenthesized_call(node_range)
-                    && let Some(dot) = node.call_operator_loc()
-                    && let Some(above) = self.get_dot_right_above(dot.start_offset())
-                {
-                    return Some(above);
-                }
-                self.semantic_alignment_base(node, node_range, rhs)
-                    .or_else(|| self.syntactic_alignment_base(lhs, rhs))
-            }
+            Style::Aligned => self
+                .semantic_alignment_base(node, node_range, rhs)
+                .or_else(|| self.syntactic_alignment_base(lhs, rhs)),
             Style::IndentedRelativeToReceiver => self.receiver_alignment_base(node),
             Style::Indented => None,
         }
     }
 
-    /// `receiver_alignment_base`: the receiver of the bottom-most `.`-call. The
-    /// `find_hash_method_base_in_receiver_chain` branch is not yet ported.
+    /// `find_hash_method_base_in_receiver_chain`: the dot of the first receiver
+    /// call whose own receiver is a hash, or a `begin`/grouped node ending on the
+    /// call's dot line. (Despite the name it also handles grouped receivers.)
+    fn find_hash_method_base(&self, node: &CallNode<'_>) -> Option<(usize, usize)> {
+        let mut chain = node.receiver();
+        while let Some(cur) = chain {
+            let Some(c) = cur.as_call_node() else { break };
+            let base_receiver = c.receiver();
+            let matched = base_receiver.as_ref().is_some_and(|br| {
+                if br.as_hash_node().is_some() {
+                    return true;
+                }
+                let begin = br.as_parentheses_node().is_some() || br.as_begin_node().is_some();
+                begin
+                    && c.call_operator_loc().is_some_and(|dot| {
+                        self.line_of(dot.start_offset()) == self.line_of(br.location().end_offset())
+                    })
+            });
+            if matched
+                && let Some(dot) = c.call_operator_loc()
+                && let Some(sel) = c.message_loc()
+            {
+                return Some((dot.start_offset(), sel.end_offset()));
+            }
+            chain = base_receiver;
+        }
+        None
+    }
+
+    /// `receiver_alignment_base`: hash/grouped chained receiver base, else the
+    /// receiver of the bottom-most `.`-call.
     fn receiver_alignment_base(&self, node: &CallNode<'_>) -> Option<(usize, usize)> {
+        if let Some(b) = self.find_hash_method_base(node) {
+            return Some(b);
+        }
         let mut rec: Option<(usize, usize)> = None;
         let mut current = node.as_node();
         while let Some(c) = current.as_call_node() {
@@ -554,15 +678,30 @@ impl<'a> Visitor<'a> {
         }
 
         let message = self.build_message(node_range, lhs, rhs, base);
+
+        // Block-aware autocorrect: when the offending call carries a block, the
+        // Ruby side realigns the block body and `end` line too.
+        let (mut bbs, mut bbe, mut bes, mut bee) = (0, 0, 0, 0);
+        if let Some(blk) = call.block().and_then(|b| b.as_block_node()) {
+            if let Some(body) = blk.body() {
+                let b = loc(&body.location());
+                bbs = b.0;
+                bbe = b.1;
+            }
+            let close = blk.closing_loc();
+            bes = close.start_offset();
+            bee = close.end_offset();
+        }
+
         self.offenses.push(MethodCallIndentOffense {
             start_offset: rhs.0,
             end_offset: rhs.1,
             column_delta,
             message,
-            block_body_start: 0,
-            block_body_end: 0,
-            block_end_start: 0,
-            block_end_end: 0,
+            block_body_start: bbs,
+            block_body_end: bbe,
+            block_end_start: bes,
+            block_end_end: bee,
         });
     }
 
