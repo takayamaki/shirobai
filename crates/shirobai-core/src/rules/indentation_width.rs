@@ -59,7 +59,6 @@ pub fn check_indentation_width(
         config,
         allowed_lines,
         bom,
-        comment_lines: comment_lines(source),
         // Seed with correction ranges from earlier autocorrect iterations so a
         // correction nested in an already-corrected range stays suppressed
         // (`other_offense_in_same_range?` is cop-instance state, not per-pass).
@@ -77,8 +76,6 @@ struct Visitor<'a> {
     config: Config,
     allowed_lines: &'a [usize],
     bom: bool,
-    #[allow(dead_code)] // used by the relative_to_receiver stage
-    comment_lines: Vec<usize>,
     /// Registered correction ranges, for `other_offense_in_same_range?`.
     offense_ranges: Vec<(usize, usize)>,
     offenses: Vec<IndentationOffense>,
@@ -116,28 +113,6 @@ struct CallInfo {
 
 fn loc(l: &Location<'_>) -> (usize, usize) {
     (l.start_offset(), l.end_offset())
-}
-
-/// 1-based line numbers of comments that begin their line.
-fn comment_lines(source: &[u8]) -> Vec<usize> {
-    let result = ruby_prism::parse(source);
-    let mut lines = Vec::new();
-    for c in result.comments() {
-        let l = c.location();
-        let start = l.start_offset();
-        let line_start = match source[..start].iter().rposition(|&b| b == b'\n') {
-            Some(i) => i + 1,
-            None => 0,
-        };
-        if source[line_start..start]
-            .iter()
-            .all(|&b| b == b' ' || b == b'\t')
-        {
-            let line = source[..start].iter().filter(|&&b| b == b'\n').count() + 1;
-            lines.push(line);
-        }
-    }
-    lines
 }
 
 impl<'a> Visitor<'a> {
@@ -216,11 +191,6 @@ impl<'a> Visitor<'a> {
 
     fn same_line(&self, a: usize, b: usize) -> bool {
         self.line_of(a) == self.line_of(b)
-    }
-
-    #[allow(dead_code)] // used by the relative_to_receiver / assignment stages
-    fn text(&self, s: usize, e: usize) -> &'a str {
-        std::str::from_utf8(&self.source[s..e]).unwrap_or("")
     }
 
     /// The source line text (without trailing newline) for the line containing `off`.
@@ -418,11 +388,15 @@ impl<'a> Visitor<'a> {
             self.on_unless_node(&n);
         } else if let Some(n) = node.as_while_node() {
             if !self.is_ignored(loc(&n.as_node().location())) {
-                self.on_while_node(n.keyword_loc().start_offset(), n.statements().as_ref());
+                // `on_while` bases on `node` (its full source range), not the
+                // `while` keyword: for a post-condition `expr while c` the base
+                // is the start of `expr` (so the body on the same line is
+                // skipped); the loop body itself is checked by `on_kwbegin`.
+                self.on_while_node(node.location().start_offset(), n.statements().as_ref());
             }
         } else if let Some(n) = node.as_until_node() {
             if !self.is_ignored(loc(&n.as_node().location())) {
-                self.on_while_node(n.keyword_loc().start_offset(), n.statements().as_ref());
+                self.on_while_node(node.location().start_offset(), n.statements().as_ref());
             }
         } else if let Some(n) = node.as_for_node() {
             self.on_for_node(&n);
@@ -1177,6 +1151,15 @@ mod tests {
         });
         assert_eq!(got.len(), 1);
         assert!(got[0].message.contains("Use 1 (not 2) tabs"));
+    }
+
+    #[test]
+    fn post_condition_begin_end_while() {
+        // `x = begin\n func1\n   func2\nend while cond`: only `func1` (col 1)
+        // offends against the begin's `end` (col 0), expected col 2 -> delta +1.
+        let got = run("x = begin\n func1\n   func2\nend while cond\n");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].column_delta, 1);
     }
 
     #[test]
