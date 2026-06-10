@@ -51,6 +51,7 @@ pub fn check_indentation_width(
     source: &[u8],
     config: Config,
     allowed_lines: &[usize],
+    prior_ranges: &[(usize, usize)],
 ) -> Vec<IndentationOffense> {
     let bom = source.starts_with(&[0xef, 0xbb, 0xbf]);
     let mut rule = Visitor {
@@ -59,7 +60,10 @@ pub fn check_indentation_width(
         allowed_lines,
         bom,
         comment_lines: comment_lines(source),
-        offense_ranges: Vec::new(),
+        // Seed with correction ranges from earlier autocorrect iterations so a
+        // correction nested in an already-corrected range stays suppressed
+        // (`other_offense_in_same_range?` is cop-instance state, not per-pass).
+        offense_ranges: prior_ranges.to_vec(),
         offenses: Vec::new(),
         ignored: Vec::new(),
         bare_send_stack: Vec::new(),
@@ -583,12 +587,28 @@ impl<'a> Visitor<'a> {
     /// Build a `BodyRef` for a body node. `correct_first_stmt` mirrors
     /// `offense`: a `begin`-type body corrects only its first statement.
     fn make_body(&self, body: &Node<'_>) -> BodyRef {
-        // Unwrap an implicit `begin` to its protected statements (see
-        // `body_first_stmt`).
+        // An implicit `begin` (no `begin` keyword) is, in parser-gem, either a
+        // transparent statement group (descend) or — when it carries rescue/
+        // ensure — an `:ensure`/`:rescue` node that is NOT `begin_type`. For the
+        // latter, `offense` does not reduce to the first child: the offense
+        // range is the first protected statement but the correction spans the
+        // whole node, realigning the rescue/ensure handler lines too.
         if let Some(bn) = body.as_begin_node()
             && bn.begin_keyword_loc().is_none()
             && let Some(st) = bn.statements()
         {
+            if bn.rescue_clause().is_some() || bn.ensure_clause().is_some() {
+                let (start, _) = self.body_first_stmt(&st.as_node());
+                // parser-gem's `:ensure`/`:rescue` node range starts at the
+                // protected body, not at the implicit begin's opening.
+                let end = bn.as_node().location().end_offset();
+                return BodyRef {
+                    start,
+                    correct_range: (start, end),
+                    starts_with_access_modifier: self
+                        .body_starts_with_access_modifier(&st.as_node()),
+                };
+            }
             return self.make_body(&st.as_node());
         }
         let (start, _full) = self.body_first_stmt(body);
@@ -762,6 +782,33 @@ impl<'a> Visitor<'a> {
         let Some(body) = n.body() else { return };
         let bref = self.make_body(&body);
         self.check_indentation(base_off, Some(bref), false);
+
+        // indented_internal_methods style: when the block body contains an
+        // access modifier, also check members the way `check_members` does.
+        if self.config.indented_internal_methods
+            && let Some(st) = body.as_statements_node()
+            && self.contains_access_modifier(&st.as_node())
+        {
+            self.check_members_indented_internal(&st.as_node());
+        }
+    }
+
+    /// `contains_access_modifier?(body)`: any bare access-modifier send among
+    /// the body's statements.
+    fn contains_access_modifier(&self, body: &Node<'_>) -> bool {
+        let Some(st) = body.as_statements_node() else {
+            return false;
+        };
+        st.body().iter().any(|m| {
+            m.as_call_node()
+                .map(|c| {
+                    c.receiver().is_none()
+                        && c.arguments().is_none()
+                        && c.block().is_none()
+                        && is_bare_access_modifier(c.name().as_slice())
+                })
+                .unwrap_or(false)
+        })
     }
 
     /// `block_body_indentation_base(node, end_loc)`. For `relative_to_receiver`,
@@ -1099,7 +1146,7 @@ mod tests {
     }
 
     fn run(source: &str) -> Vec<IndentationOffense> {
-        check_indentation_width(source.as_bytes(), default_config(), &[])
+        check_indentation_width(source.as_bytes(), default_config(), &[], &[])
     }
 
     #[test]
@@ -1119,7 +1166,7 @@ mod tests {
     fn run_cfg(source: &str, mutate: impl FnOnce(&mut Config)) -> Vec<IndentationOffense> {
         let mut cfg = default_config();
         mutate(&mut cfg);
-        check_indentation_width(source.as_bytes(), cfg, &[])
+        check_indentation_width(source.as_bytes(), cfg, &[], &[])
     }
 
     #[test]
@@ -1164,7 +1211,9 @@ mod tests {
     fn relative_to_receiver_chained_block_offense() {
         // `foo\n  .bar do |x|\nx\nend`: with relative_to_receiver the base is
         // the dot (col 2), so body `x` (col 0) should be col 4 -> delta +4.
-        let got = run_cfg("foo\n  .bar do |x|\nx\nend\n", |c| c.relative_to_receiver = true);
+        let got = run_cfg("foo\n  .bar do |x|\nx\nend\n", |c| {
+            c.relative_to_receiver = true
+        });
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].column_delta, 4);
     }

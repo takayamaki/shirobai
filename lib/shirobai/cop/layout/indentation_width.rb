@@ -25,6 +25,11 @@ module Shirobai
           buffer = processed_source.buffer
 
           offenses_for_source.each do |start, fin, column_delta, message, autocorrect, cs, ce|
+            # Mirror `other_offense_in_same_range?`: the cop instance accumulates
+            # correction ranges across autocorrect iterations so a correction
+            # nested in an already-corrected range is reported but not corrected.
+            @offense_ranges << [cs, ce] if autocorrect
+
             range = Parser::Source::Range.new(buffer, start, fin)
             add_offense(range, message: message) do |corrector|
               next unless autocorrect
@@ -42,7 +47,10 @@ module Shirobai
 
         def offenses_for_source
           source = processed_source.raw_source
-          Shirobai.check_indentation_width(source, packed_config, allowed_line_numbers(source))
+          @offense_ranges ||= []
+          Shirobai.check_indentation_width(
+            source, packed_config, allowed_line_numbers(source), @offense_ranges
+          )
         end
 
         # The parser node whose `source_range` begins at `cs` and ends at `ce`,

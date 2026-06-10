@@ -8,9 +8,6 @@ RSpec.describe Shirobai::Cop::Layout::IndentationWidth, :config do
   # consistency styles) are ported. The groups below are still being ported and
   # are marked pending so the suite stays green between commits.
   STAGED_PENDING = [
-    /with begin\/rescue\/else\/ensure\/end/,             # multi-pass rescue-node correction
-    %r{with block.*`do` \.\.\. `ensure`},
-    /with block when consistency style is indented_internal_methods/,
     /bad indentation of begin\/end\/while/               # do-while + assignment interaction
   ].freeze
 
