@@ -1,4 +1,4 @@
-use ruby_prism::{Node, Visit, parse};
+use ruby_prism::{Node, Visit};
 
 pub struct DebuggerOffense {
     pub start_offset: usize,
@@ -16,17 +16,17 @@ pub fn check_debugger(
     methods: &[String],
     requires: &[String],
 ) -> Vec<DebuggerOffense> {
-    let result = parse(source);
-    let node = result.node();
-    let mut visitor = DebuggerVisitor {
-        source,
-        methods,
-        requires,
-        stack: Vec::new(),
-        offenses: Vec::new(),
-    };
-    visitor.visit(&node);
-    visitor.offenses
+    super::parse_cache::with_parsed(source, |source, node| {
+        let mut visitor = DebuggerVisitor {
+            source,
+            methods,
+            requires,
+            stack: Vec::new(),
+            offenses: Vec::new(),
+        };
+        visitor.visit(node);
+        visitor.offenses
+    })
 }
 
 /// Coarse classification of an ancestor node, mirroring the predicates RuboCop's

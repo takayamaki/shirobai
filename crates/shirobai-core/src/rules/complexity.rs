@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 
-use ruby_prism::{Node, Visit, parse, visit_call_node, visit_def_node};
+use ruby_prism::{Node, Visit, visit_call_node, visit_def_node};
 
 /// Per-method complexity result. Both scores are reported; each cop selects the
 /// one it needs.
@@ -21,14 +21,14 @@ pub struct MethodComplexity {
 }
 
 pub fn check_complexity(source: &[u8]) -> Vec<MethodComplexity> {
-    let result = parse(source);
-    let node = result.node();
-    let mut finder = MethodFinder {
-        source,
-        out: Vec::new(),
-    };
-    finder.visit(&node);
-    finder.out
+    super::parse_cache::with_parsed(source, |source, node| {
+        let mut finder = MethodFinder {
+            source,
+            out: Vec::new(),
+        };
+        finder.visit(node);
+        finder.out
+    })
 }
 
 /// Method names whose blocks are treated as iterating (`map{}`, `each{}`, ...)

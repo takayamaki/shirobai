@@ -1,4 +1,4 @@
-use ruby_prism::{Node, Visit, parse, visit_call_node, visit_lambda_node};
+use ruby_prism::{Node, Visit, visit_call_node, visit_lambda_node};
 
 /// A block whose body length exceeds `Max`. The cheap, config-driven filtering
 /// (`AllowedMethods` / `AllowedPatterns` / receiver exclusion) is left to the
@@ -21,17 +21,18 @@ pub fn check_block_length(
     count_comments: bool,
     count_as_one: &[String],
 ) -> Vec<BlockLengthCandidate> {
-    let result = parse(source);
-    let node = result.node();
-    let mut visitor = Visitor {
-        source,
-        max,
-        count_comments,
-        fold: Fold::from_types(count_as_one),
-        out: Vec::new(),
-    };
-    visitor.visit(&node);
-    visitor.out
+    let fold = Fold::from_types(count_as_one);
+    super::parse_cache::with_parsed(source, |source, node| {
+        let mut visitor = Visitor {
+            source,
+            max,
+            count_comments,
+            fold,
+            out: Vec::new(),
+        };
+        visitor.visit(node);
+        visitor.out
+    })
 }
 
 /// Which constructs `CountAsOne` folds. Unknown types are ignored here; the
