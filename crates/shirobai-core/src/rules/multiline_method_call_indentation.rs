@@ -5,14 +5,13 @@
 //! `MultilineExpressionIndentation` mixin (the operation half lives in
 //! `multiline_operation_indentation`).
 //!
-//! Coverage: regular indentation for all three styles — `aligned` (semantic
-//! dot-above / first-call / multiline-block-chain alignment + syntactic
-//! keyword/assignment/operation base), `indented`, and
-//! `indented_relative_to_receiver` (receiver-relative base, hash/grouped chained
-//! receiver, splat) — plus block-aware autocorrect.
-//!
-//! Not yet ported (skipped in the spec's `PENDING` list): hash-pair alignment
-//! (`find_pair_ancestor` and friends).
+//! Coverage: all three styles — `aligned` (semantic dot-above / first-call /
+//! multiline-block-chain alignment + syntactic keyword/assignment/operation
+//! base), `indented`, and `indented_relative_to_receiver` (receiver-relative
+//! base, hash/grouped chained receiver, splat) — regular indentation plus
+//! hash-pair alignment (`find_pair_ancestor`, `inside_multiline_chain_arg?`,
+//! `first_dot_alignment_base` incl. `after_multiline_block_base`) and
+//! block-aware autocorrect. The full vendor spec passes.
 
 use ruby_prism::{CallNode, Location, Node, Visit};
 
@@ -128,6 +127,10 @@ enum FrameKind {
     Splat {
         op_len: usize,
     },
+    /// A hash `pair` (`key: value`). `key` is the key's range.
+    Pair {
+        key: (usize, usize),
+    },
     Paren,
     Unaligned,
     Other,
@@ -137,6 +140,17 @@ struct Frame {
     start: usize,
     end: usize,
     kind: FrameKind,
+}
+
+/// A call in a receiver chain, with the fields the hash-pair alignment helpers
+/// read off it.
+#[derive(Clone, Copy)]
+struct CallInfo {
+    range: (usize, usize),
+    dot: Option<usize>,
+    sel: Option<(usize, usize)>,
+    recv: Option<(usize, usize)>,
+    has_multiline_block: bool,
 }
 
 struct Visitor<'a> {
@@ -657,27 +671,15 @@ impl<'a> Visitor<'a> {
         if !self.begins_its_line(rhs.0) {
             return;
         }
-        // (hash-pair handling not yet ported.)
-        if self.not_for_this_cop(node_range) {
-            return;
-        }
 
         let lhs = self.left_hand_side(node_range);
-        let base = self.alignment_base(call, node_range, lhs, rhs);
-
-        let correct_column = match base {
-            Some(b) => self.col(b.0) as isize + self.extra_indentation(),
-            None => {
-                let kw = self.kw_special(node_range);
-                (self.indent_col(lhs.0) + self.correct_indentation(kw)) as isize
-            }
+        let Some((correct_column, message)) = self.offending(call, node_range, lhs, rhs) else {
+            return;
         };
         let column_delta = correct_column - self.col(rhs.0) as isize;
         if column_delta == 0 {
             return;
         }
-
-        let message = self.build_message(node_range, lhs, rhs, base);
 
         // Block-aware autocorrect: when the offending call carries a block, the
         // Ruby side realigns the block body and `end` line too.
@@ -703,6 +705,247 @@ impl<'a> Visitor<'a> {
             block_end_start: bes,
             block_end_end: bee,
         });
+    }
+
+    /// `offending_range` + `check`: returns `(correct_column, message)`, or
+    /// `None` to skip. Routes hash-pair contexts before regular indentation.
+    fn offending(
+        &self,
+        call: &CallNode<'_>,
+        node_range: (usize, usize),
+        lhs: (usize, usize),
+        rhs: (usize, usize),
+    ) -> Option<(isize, String)> {
+        let pair_key = self.find_pair_ancestor();
+
+        if pair_key.is_some() && self.style == Style::Aligned {
+            return self.check_hash_pair_indentation(call, node_range, lhs, rhs);
+        }
+        if let Some(key) = pair_key
+            && self.style == Style::Indented
+            && self.base_receiver_is_hash(call)
+        {
+            return Some(self.check_hash_pair_indented_style(node_range, rhs, key));
+        }
+
+        // skip_for_context?
+        if pair_key.is_some() {
+            if self.inside_multiline_chain_arg(node_range) {
+                return None;
+            }
+        } else if self.not_for_this_cop(node_range) {
+            return None;
+        }
+
+        // check_regular_indentation
+        let base = self.alignment_base(call, node_range, lhs, rhs);
+        let correct_column = match base {
+            Some(b) => self.col(b.0) as isize + self.extra_indentation(),
+            None => {
+                let kw = self.kw_special(node_range);
+                (self.indent_col(lhs.0) + self.correct_indentation(kw)) as isize
+            }
+        };
+        Some((
+            correct_column,
+            self.build_message(node_range, lhs, rhs, base),
+        ))
+    }
+
+    /// `find_pair_ancestor`: the key range of the nearest hash-`pair` ancestor.
+    fn find_pair_ancestor(&self) -> Option<(usize, usize)> {
+        self.stack.iter().rev().find_map(|f| match f.kind {
+            FrameKind::Pair { key } => Some(key),
+            _ => None,
+        })
+    }
+
+    fn base_receiver_is_hash(&self, call: &CallNode<'_>) -> bool {
+        call.receiver()
+            .map(|r| bottom_receiver_node_is_hash(r))
+            .unwrap_or(false)
+    }
+
+    /// `check_hash_pair_indentation` (aligned style inside a hash pair).
+    fn check_hash_pair_indentation(
+        &self,
+        call: &CallNode<'_>,
+        node_range: (usize, usize),
+        lhs: (usize, usize),
+        rhs: (usize, usize),
+    ) -> Option<(isize, String)> {
+        let mut base = self.find_hash_pair_alignment_base(call);
+        if base.is_none() && self.inside_multiline_chain_arg(node_range) {
+            return None;
+        }
+        let base = base
+            .take()
+            .or_else(|| self.first_dot_alignment_base(call, node_range, rhs))
+            .unwrap_or(lhs);
+        if self.aligned_with_first_line_dot(call, node_range, rhs) {
+            return None;
+        }
+        let base_source = self.text(base.0, base.1).split('\n').next().unwrap_or("");
+        let message = format!(
+            "Align `{}` with `{}` on line {}.",
+            self.text(rhs.0, rhs.1),
+            base_source,
+            self.line_of(base.0)
+        );
+        Some((self.col(base.0) as isize, message))
+    }
+
+    /// `check_hash_pair_indented_style` (indented style, hash-literal receiver).
+    fn check_hash_pair_indented_style(
+        &self,
+        node_range: (usize, usize),
+        rhs: (usize, usize),
+        key: (usize, usize),
+    ) -> (isize, String) {
+        let key_col = self.col(key.0);
+        let correct_column = (key_col + self.indent * 2) as isize;
+        let hash_pair_base_column = (key_col + self.indent) as isize;
+        let used = self.col(rhs.0) as isize - hash_pair_base_column;
+        let what = self.operation_description(
+            self.kw_special(node_range),
+            self.part_of_assignment_rhs(rhs),
+        );
+        let message = format!(
+            "Use {} (not {used}) spaces for indenting {what} spanning multiple lines.",
+            self.indent
+        );
+        (correct_column, message)
+    }
+
+    /// `find_hash_pair_alignment_base`: when the chain bottoms out in a hash
+    /// literal, align with the first dotted call.
+    fn find_hash_pair_alignment_base(&self, call: &CallNode<'_>) -> Option<(usize, usize)> {
+        let receiver = call.receiver()?;
+        if !bottom_receiver_node_is_hash(receiver) {
+            return None;
+        }
+        self.first_call_dot_join(call)
+    }
+
+    /// `first_dot_alignment_base`, incl. `after_multiline_block_base`.
+    fn first_dot_alignment_base(
+        &self,
+        call: &CallNode<'_>,
+        node_range: (usize, usize),
+        rhs: (usize, usize),
+    ) -> Option<(usize, usize)> {
+        let rhs_text = self.text(rhs.0, rhs.1);
+        if !rhs_text.starts_with('.') && !rhs_text.starts_with("&.") {
+            return None;
+        }
+        let calls = self.chain_calls(call);
+        let fc_idx = calls.iter().rposition(|c| c.dot.is_some())?;
+        let fc = calls[fc_idx];
+        let dot = fc.dot?;
+        if fc.range == node_range {
+            return None;
+        }
+        // after_multiline_block_base: align with the call chained onto the block.
+        if fc.has_multiline_block && fc_idx > 0 {
+            let ab = calls[fc_idx - 1];
+            if let (Some(d), Some(sel)) = (ab.dot, ab.sel)
+                && ab.range != node_range
+            {
+                return Some((d, sel.1));
+            }
+        }
+        let recv = fc.recv?;
+        if self.line_of(dot) != self.line_of(recv.0) {
+            return None;
+        }
+        Some((dot, fc.sel?.1))
+    }
+
+    /// `aligned_with_first_line_dot?`.
+    fn aligned_with_first_line_dot(
+        &self,
+        call: &CallNode<'_>,
+        node_range: (usize, usize),
+        rhs: (usize, usize),
+    ) -> bool {
+        let rhs_text = self.text(rhs.0, rhs.1);
+        if !rhs_text.starts_with('.') && !rhs_text.starts_with("&.") {
+            return false;
+        }
+        let calls = self.chain_calls(call);
+        let Some(fc) = calls.iter().rfind(|c| c.dot.is_some()) else {
+            return false;
+        };
+        if let Some(recv) = call.receiver()
+            && fc.range == loc(&recv.location())
+        {
+            return false;
+        }
+        let Some(dot) = fc.dot else { return false };
+        self.line_of(dot) == self.line_of(node_range.0) && self.col(dot) == self.col(rhs.0)
+    }
+
+    /// `inside_multiline_chain_arg?`: the hash holding this pair is an argument of
+    /// an enclosing dotted call whose selector and receiver sit on different
+    /// lines. (Prism interposes `KeywordHashNode`/`ArgumentsNode` between the
+    /// pair and the call, where parser links the hash straight to the send.)
+    fn inside_multiline_chain_arg(&self, _node_range: (usize, usize)) -> bool {
+        let mut it = self.stack.iter().rev();
+        for f in it.by_ref() {
+            if matches!(f.kind, FrameKind::Pair { .. }) {
+                break;
+            }
+        }
+        // The hash holding the pair (`pair.parent`).
+        let Some(hash_start) = it.next().map(|f| f.start) else {
+            return false;
+        };
+        // Nearest enclosing call above the pair (skipping hash/arguments wrappers).
+        for f in it {
+            if let FrameKind::Send { dot, selector, .. } = &f.kind {
+                return match (dot, selector) {
+                    // `hash_arg_in_chain?`: the call must not have the hash as its
+                    // receiver, and its selector/receiver span different lines.
+                    (Some(_), Some(sel)) => {
+                        f.start != hash_start && self.line_of(sel.0) != self.line_of(f.start)
+                    }
+                    _ => false,
+                };
+            }
+        }
+        false
+    }
+
+    /// The chain of calls reachable through `.receiver`, `node` first and the
+    /// deepest receiver last.
+    fn chain_calls(&self, node: &CallNode<'_>) -> Vec<CallInfo> {
+        let mut v = Vec::new();
+        let mut current = node.as_node();
+        while let Some(c) = current.as_call_node() {
+            let has_multiline_block = c
+                .block()
+                .and_then(|b| b.as_block_node())
+                .is_some_and(|b| !self.is_single_line(loc(&b.as_node().location())));
+            v.push(CallInfo {
+                range: loc(&c.as_node().location()),
+                dot: c.call_operator_loc().map(|d| d.start_offset()),
+                sel: c.message_loc().as_ref().map(loc),
+                recv: c.receiver().map(|r| loc(&r.location())),
+                has_multiline_block,
+            });
+            match c.receiver() {
+                Some(r) => current = r,
+                None => break,
+            }
+        }
+        v
+    }
+
+    /// `first_call_has_a_dot`'s `dot.join(selector)`: the bottom-most `.`-call.
+    fn first_call_dot_join(&self, node: &CallNode<'_>) -> Option<(usize, usize)> {
+        let calls = self.chain_calls(node);
+        let fc = calls.iter().rfind(|c| c.dot.is_some())?;
+        Some((fc.dot?, fc.sel?.1))
     }
 
     fn right_hand_side(&self, call: &CallNode<'_>, dot: &Location<'_>) -> Option<(usize, usize)> {
@@ -836,6 +1079,11 @@ impl<'a> Visitor<'a> {
                 op_len: op.end_offset() - op.start_offset(),
             };
         }
+        if let Some(n) = node.as_assoc_node() {
+            return FrameKind::Pair {
+                key: loc(&n.key().location()),
+            };
+        }
         if let Some(rhs) = assignment_value(node) {
             return FrameKind::Assignment { rhs };
         }
@@ -870,6 +1118,15 @@ impl<'a> Visitor<'a> {
         }
         FrameKind::Other
     }
+}
+
+/// Whether `find_base_receiver(node)` is a hash literal.
+fn bottom_receiver_node_is_hash(node: Node<'_>) -> bool {
+    let mut cur = node;
+    while let Some(r) = cur.as_call_node().and_then(|c| c.receiver()) {
+        cur = r;
+    }
+    cur.as_hash_node().is_some()
 }
 
 /// `find_base_receiver`: walk `.receiver` to the bottom of the chain, returning
