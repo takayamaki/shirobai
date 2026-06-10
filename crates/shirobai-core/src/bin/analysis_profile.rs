@@ -121,14 +121,68 @@ fn kernel_methods() -> Vec<String> {
     // Snapshot of `Kernel.methods(false)` (Ruby 4.0). RedundantSelf supplies
     // this allow-list; a representative list keeps the analysis path live.
     [
-        "Array", "Complex", "Float", "Hash", "Integer", "Pathname", "Rational", "String",
-        "__callee__", "__dir__", "__method__", "`", "abort", "at_exit", "autoload", "autoload?",
-        "binding", "block_given?", "caller", "caller_locations", "catch", "eval", "exec", "exit",
-        "exit!", "fail", "fork", "format", "gets", "global_variables", "iterator?", "lambda",
-        "load", "local_variables", "loop", "open", "p", "print", "printf", "proc", "putc", "puts",
-        "raise", "rand", "readline", "readlines", "require", "require_relative", "select",
-        "set_trace_func", "sleep", "spawn", "sprintf", "srand", "syscall", "system", "test",
-        "throw", "trace_var", "trap", "untrace_var", "warn",
+        "Array",
+        "Complex",
+        "Float",
+        "Hash",
+        "Integer",
+        "Pathname",
+        "Rational",
+        "String",
+        "__callee__",
+        "__dir__",
+        "__method__",
+        "`",
+        "abort",
+        "at_exit",
+        "autoload",
+        "autoload?",
+        "binding",
+        "block_given?",
+        "caller",
+        "caller_locations",
+        "catch",
+        "eval",
+        "exec",
+        "exit",
+        "exit!",
+        "fail",
+        "fork",
+        "format",
+        "gets",
+        "global_variables",
+        "iterator?",
+        "lambda",
+        "load",
+        "local_variables",
+        "loop",
+        "open",
+        "p",
+        "print",
+        "printf",
+        "proc",
+        "putc",
+        "puts",
+        "raise",
+        "rand",
+        "readline",
+        "readlines",
+        "require",
+        "require_relative",
+        "select",
+        "set_trace_func",
+        "sleep",
+        "spawn",
+        "sprintf",
+        "srand",
+        "syscall",
+        "system",
+        "test",
+        "throw",
+        "trace_var",
+        "trap",
+        "untrace_var",
+        "warn",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -150,8 +204,9 @@ fn run_cop(cop: &str, sources: &[Vec<u8>]) -> usize {
         "block_length" => {
             let cao: Vec<String> = Vec::new();
             for s in sources {
-                sink = sink
-                    .wrapping_add(rules::block_length::check_block_length(s, 25, false, &cao).len());
+                sink = sink.wrapping_add(
+                    rules::block_length::check_block_length(s, 25, false, &cao).len(),
+                );
             }
         }
         "block_nesting" => {
@@ -200,10 +255,23 @@ fn run_cop(cop: &str, sources: &[Vec<u8>]) -> usize {
             }
         }
         "line_length_breakables" => {
-            // max=120, split_strings=false
+            // max=120, split_strings=false. Mirror the cop: derive the
+            // candidate-line set (length > Max) first, then restrict the
+            // breakable computation to those lines.
             for s in sources {
+                let candidates: std::collections::HashSet<usize> =
+                    rules::line_length::check_line_length(s, 120, 0)
+                        .into_iter()
+                        .map(|c| c.line_index)
+                        .collect();
                 sink = sink.wrapping_add(
-                    rules::line_length_breakable::compute_breakables(s, 120, false).len(),
+                    rules::line_length_breakable::compute_breakables_filtered(
+                        s,
+                        120,
+                        false,
+                        Some(&candidates),
+                    )
+                    .len(),
                 );
             }
         }
@@ -229,8 +297,7 @@ fn run_cop(cop: &str, sources: &[Vec<u8>]) -> usize {
         "redundant_self" => {
             let km = kernel_methods();
             for s in sources {
-                sink = sink
-                    .wrapping_add(rules::redundant_self::check_redundant_self(s, &km).len());
+                sink = sink.wrapping_add(rules::redundant_self::check_redundant_self(s, &km).len());
             }
         }
         "indentation_width" => {
@@ -290,10 +357,10 @@ fn collect_rb_files(dir: &str) -> Vec<Vec<u8>> {
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "rb") {
-                if let Ok(bytes) = std::fs::read(&path) {
-                    out.push(bytes);
-                }
+            } else if path.extension().is_some_and(|e| e == "rb")
+                && let Ok(bytes) = std::fs::read(&path)
+            {
+                out.push(bytes);
             }
         }
     }
@@ -343,9 +410,7 @@ fn time_mode(mode: &str, sources: &[Vec<u8>], iters: usize) -> (f64, f64, f64) {
     let median = times[times.len() / 2];
     let min = times[0];
     let max = times[times.len() - 1];
-    eprintln!(
-        "mode={mode} median={median:.6} min={min:.6} max={max:.6} sink={sink}"
-    );
+    eprintln!("mode={mode} median={median:.6} min={min:.6} max={max:.6} sink={sink}");
     (median, min, max)
 }
 

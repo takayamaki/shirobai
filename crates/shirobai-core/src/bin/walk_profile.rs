@@ -50,10 +50,7 @@ impl<'pr> Visit<'pr> for WalkVisitor {
             // discriminant is Copy + Eq but not numeric; hash its bit pattern.
             // SAFETY: Discriminant<Node> is a thin tag; read its bytes.
             let bytes = unsafe {
-                std::slice::from_raw_parts(
-                    (&d as *const _) as *const u8,
-                    std::mem::size_of_val(&d),
-                )
+                std::slice::from_raw_parts((&d as *const _) as *const u8, std::mem::size_of_val(&d))
             };
             bytes.iter().fold(0u64, |a, &b| (a << 8) | b as u64)
         };
