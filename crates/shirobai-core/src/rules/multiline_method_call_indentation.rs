@@ -13,7 +13,7 @@
 //! `first_dot_alignment_base` incl. `after_multiline_block_base`) and
 //! block-aware autocorrect. The full vendor spec passes.
 
-use ruby_prism::{CallNode, Location, Node, Visit};
+use ruby_prism::{CallNode, Location, Node};
 
 /// One misindented method-call selector. `column_delta` is
 /// `correct_column - actual_column`. `block_*` ranges (0 = none) tell the Ruby
@@ -52,18 +52,26 @@ pub fn check_multiline_method_call_indentation(
     indent_width: usize,
     base_indent_width: usize,
 ) -> Vec<MethodCallIndentOffense> {
-    super::parse_cache::with_parsed(source, |source, node| {
-        let mut visitor = Visitor {
-            source,
-            style: Style::from_u8(style),
-            indent: indent_width,
-            base: base_indent_width,
-            stack: Vec::new(),
-            offenses: Vec::new(),
-        };
-        visitor.visit(node);
-        visitor.offenses
-    })
+    let mut rule = build_rule(source, style, indent_width, base_indent_width);
+    super::dispatch::run(source, &mut [&mut rule]);
+    rule.offenses
+}
+
+/// Build the rule for use standalone or in a shared-walk bundle.
+pub(crate) fn build_rule(
+    source: &[u8],
+    style: u8,
+    indent_width: usize,
+    base_indent_width: usize,
+) -> Visitor<'_> {
+    Visitor {
+        source,
+        style: Style::from_u8(style),
+        indent: indent_width,
+        base: base_indent_width,
+        stack: Vec::new(),
+        offenses: Vec::new(),
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -153,13 +161,13 @@ struct CallInfo {
     has_multiline_block: bool,
 }
 
-struct Visitor<'a> {
+pub(crate) struct Visitor<'a> {
     source: &'a [u8],
     style: Style,
     indent: usize,
     base: usize,
     stack: Vec<Frame>,
-    offenses: Vec<MethodCallIndentOffense>,
+    pub(crate) offenses: Vec<MethodCallIndentOffense>,
 }
 
 fn loc(l: &Location<'_>) -> (usize, usize) {
@@ -654,7 +662,7 @@ impl<'a> Visitor<'a> {
     }
 
     /// The method-call cop's `on_send`.
-    fn process_send(&mut self, call: &CallNode<'a>, node_range: (usize, usize)) {
+    fn process_send(&mut self, call: &CallNode<'_>, node_range: (usize, usize)) {
         let Some(_receiver) = call.receiver() else {
             return;
         };
@@ -1184,12 +1192,12 @@ fn assignment_value(node: &Node<'_>) -> Option<(usize, usize)> {
     None
 }
 
-impl<'a> Visit<'a> for Visitor<'a> {
-    fn visit_branch_node_enter(&mut self, node: Node<'a>) {
+impl super::dispatch::Rule for Visitor<'_> {
+    fn enter(&mut self, node: &Node<'_>) {
         if let Some(c) = node.as_call_node() {
             self.process_send(&c, loc(&node.location()));
         }
-        let kind = self.frame_for(&node);
+        let kind = self.frame_for(node);
         let l = node.location();
         self.stack.push(Frame {
             start: l.start_offset(),
@@ -1198,7 +1206,7 @@ impl<'a> Visit<'a> for Visitor<'a> {
         });
     }
 
-    fn visit_branch_node_leave(&mut self) {
+    fn leave(&mut self) {
         self.stack.pop();
     }
 }

@@ -15,7 +15,8 @@ module Shirobai
         include RuboCop::Cop::Alignment
         extend RuboCop::Cop::AutoCorrector
 
-        STYLE_TO_U8 = { aligned: 0, indented: 1 }.freeze
+        # Offenses come from `Shirobai::Dispatch` (shared walk); the style→u8 map
+        # lives there.
 
         def self.cop_name = "Layout/MultilineOperationIndentation"
         def self.badge = RuboCop::Cop::Badge.parse("Layout/MultilineOperationIndentation")
@@ -31,13 +32,8 @@ module Shirobai
         end
 
         def on_new_investigation
-          source = processed_source.raw_source
           buffer = processed_source.buffer
-          base_indent_width = config.for_cop("Layout/IndentationWidth")["Width"] || 2
-
-          offenses = Shirobai.check_multiline_operation_indentation(
-            source, STYLE_TO_U8.fetch(style), configured_indentation_width, base_indent_width
-          )
+          offenses = Shirobai::Dispatch.multiline(processed_source, config, cop_name)
 
           offenses.each do |start, fin, column_delta, message|
             range = Parser::Source::Range.new(buffer, start, fin)

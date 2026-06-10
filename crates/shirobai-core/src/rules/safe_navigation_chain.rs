@@ -1,6 +1,6 @@
 //! `Lint/SafeNavigationChain`.
 
-use ruby_prism::{CallNode, Node, Visit};
+use ruby_prism::{CallNode, Node};
 
 /// An ordinary method call chained after a safe-navigation call.
 pub struct SafeNavChainOffense {
@@ -20,16 +20,14 @@ pub fn check_safe_navigation_chain(
     source: &[u8],
     nil_methods: &[String],
 ) -> Vec<SafeNavChainOffense> {
-    super::parse_cache::with_parsed(source, |source, node| {
-        let mut visitor = Visitor {
-            source,
-            nil_methods,
-            stack: Vec::new(),
-            offenses: Vec::new(),
-        };
-        visitor.visit(node);
-        visitor.offenses
-    })
+    let mut rule = Visitor {
+        source,
+        nil_methods,
+        stack: Vec::new(),
+        offenses: Vec::new(),
+    };
+    super::dispatch::run(source, &mut [&mut rule]);
+    rule.offenses
 }
 
 enum TernaryKind {
@@ -210,7 +208,7 @@ impl<'a> Visitor<'a> {
         )
     }
 
-    fn process_call(&mut self, call: &CallNode<'a>) {
+    fn process_call(&mut self, call: &CallNode<'_>) {
         if call.is_safe_navigation() {
             return;
         }
@@ -295,16 +293,16 @@ impl<'a> Visitor<'a> {
     }
 }
 
-impl<'a> Visit<'a> for Visitor<'a> {
-    fn visit_branch_node_enter(&mut self, node: Node<'a>) {
+impl super::dispatch::Rule for Visitor<'_> {
+    fn enter(&mut self, node: &Node<'_>) {
         if let Some(call) = node.as_call_node() {
             self.process_call(&call);
         }
-        let frame = self.frame_for(&node);
+        let frame = self.frame_for(node);
         self.stack.push(frame);
     }
 
-    fn visit_branch_node_leave(&mut self) {
+    fn leave(&mut self) {
         self.stack.pop();
     }
 }

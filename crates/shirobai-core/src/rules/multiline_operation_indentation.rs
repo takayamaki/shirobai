@@ -6,7 +6,7 @@
 //! exercises) to Rust: ancestor-stack bookkeeping replaces parser-gem's
 //! `each_ancestor`, since Prism nodes carry no parent pointer.
 
-use ruby_prism::{CallNode, Location, Node, Visit};
+use ruby_prism::{CallNode, Location, Node};
 
 /// One misindented operand. `column_delta` is `correct_column - actual_column`
 /// (positive => the operand must move right). `message` is the fully formatted
@@ -40,18 +40,26 @@ pub fn check_multiline_operation_indentation(
     indent_width: usize,
     base_indent_width: usize,
 ) -> Vec<OperationIndentOffense> {
-    super::parse_cache::with_parsed(source, |source, node| {
-        let mut visitor = Visitor {
-            source,
-            style: Style::from_u8(style),
-            indent: indent_width,
-            base: base_indent_width,
-            stack: Vec::new(),
-            offenses: Vec::new(),
-        };
-        visitor.visit(node);
-        visitor.offenses
-    })
+    let mut rule = build_rule(source, style, indent_width, base_indent_width);
+    super::dispatch::run(source, &mut [&mut rule]);
+    rule.offenses
+}
+
+/// Build the rule for use standalone or in a shared-walk bundle.
+pub(crate) fn build_rule(
+    source: &[u8],
+    style: u8,
+    indent_width: usize,
+    base_indent_width: usize,
+) -> Visitor<'_> {
+    Visitor {
+        source,
+        style: Style::from_u8(style),
+        indent: indent_width,
+        base: base_indent_width,
+        stack: Vec::new(),
+        offenses: Vec::new(),
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -119,13 +127,13 @@ enum FrameKind {
     Other,
 }
 
-struct Visitor<'a> {
+pub(crate) struct Visitor<'a> {
     source: &'a [u8],
     style: Style,
     indent: usize,
     base: usize,
     stack: Vec<FrameKind>,
-    offenses: Vec<OperationIndentOffense>,
+    pub(crate) offenses: Vec<OperationIndentOffense>,
 }
 
 fn loc(l: &Location<'_>) -> (usize, usize) {
@@ -556,8 +564,8 @@ fn is_def_modifier(node: &Node<'_>) -> bool {
     is_def_modifier(&first)
 }
 
-impl<'a> Visit<'a> for Visitor<'a> {
-    fn visit_branch_node_enter(&mut self, node: Node<'a>) {
+impl super::dispatch::Rule for Visitor<'_> {
+    fn enter(&mut self, node: &Node<'_>) {
         if let Some(n) = node.as_and_node() {
             let op = loc(&node.location());
             self.handle(
@@ -576,11 +584,11 @@ impl<'a> Visit<'a> for Visitor<'a> {
             self.process_send(&c);
         }
 
-        let kind = self.frame_for(&node);
+        let kind = self.frame_for(node);
         self.stack.push(kind);
     }
 
-    fn visit_branch_node_leave(&mut self) {
+    fn leave(&mut self) {
         self.stack.pop();
     }
 }

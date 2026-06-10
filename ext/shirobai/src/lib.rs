@@ -189,6 +189,52 @@ fn check_dot_position(source: String, style: u8) -> Vec<(usize, usize, usize, us
         .collect()
 }
 
+/// Ruby entry point for the multiline-indentation bundle: runs
+/// `Layout/MultilineOperationIndentation` and
+/// `Layout/MultilineMethodCallIndentation` in one shared AST walk. Each config
+/// is `[style, indent_width, base_indent_width]`. Returns
+/// `[op_offenses, mc_offenses]` with the same per-cop tuple shapes as the
+/// standalone entry points.
+#[allow(clippy::type_complexity)]
+fn check_multiline_bundle(
+    source: String,
+    op: (u8, usize, usize),
+    mc: (u8, usize, usize),
+) -> (
+    Vec<(usize, usize, isize, String)>,
+    Vec<(usize, usize, isize, String, usize, usize, usize, usize)>,
+) {
+    let (op_off, mc_off) = shirobai_core::rules::bundle::check_multiline_bundle(
+        source.as_bytes(),
+        op.0,
+        op.1,
+        op.2,
+        mc.0,
+        mc.1,
+        mc.2,
+    );
+    let op_off = op_off
+        .into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.column_delta, o.message))
+        .collect();
+    let mc_off = mc_off
+        .into_iter()
+        .map(|o| {
+            (
+                o.start_offset,
+                o.end_offset,
+                o.column_delta,
+                o.message,
+                o.block_body_start,
+                o.block_body_end,
+                o.block_end_start,
+                o.block_end_end,
+            )
+        })
+        .collect();
+    (op_off, mc_off)
+}
+
 #[magnus::init(name = "shirobai")]
 fn init(ruby: &Ruby) -> Result<(), Error> {
     let module = ruby.define_module("Shirobai")?;
@@ -209,5 +255,9 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         function!(check_multiline_method_call_indentation, 4),
     )?;
     module.define_module_function("check_dot_position", function!(check_dot_position, 2))?;
+    module.define_module_function(
+        "check_multiline_bundle",
+        function!(check_multiline_bundle, 3),
+    )?;
     Ok(())
 }

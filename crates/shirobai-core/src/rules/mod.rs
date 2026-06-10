@@ -1,6 +1,8 @@
 pub mod block_length;
+pub mod bundle;
 pub mod complexity;
 pub mod debugger;
+pub mod dispatch;
 pub mod dot_position;
 pub mod multiline_method_call_indentation;
 pub mod multiline_operation_indentation;
