@@ -40,3 +40,27 @@ pub fn with_parsed<R>(source: &[u8], f: impl FnOnce(&[u8], &Node<'_>) -> R) -> R
             .with_dependent(|owner, result| f(owner, &result.node()))
     })
 }
+
+/// Collect the `(start_offset, end_offset)` byte ranges of every comment in the
+/// (cached) parse of `source`. Reuses the shared parse instead of re-parsing,
+/// so cops that need comment positions do not pay for a second full parse.
+pub fn comment_ranges(source: &[u8]) -> Vec<(usize, usize)> {
+    CACHE.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        let hit = slot
+            .as_ref()
+            .is_some_and(|parsed| parsed.borrow_owner().as_slice() == source);
+        if !hit {
+            *slot = Some(OwnedParse::new(source.to_vec(), |owner| parse(owner)));
+        }
+        slot.as_ref().unwrap().with_dependent(|_owner, result| {
+            result
+                .comments()
+                .map(|c| {
+                    let l = c.location();
+                    (l.start_offset(), l.end_offset())
+                })
+                .collect()
+        })
+    })
+}

@@ -10,7 +10,11 @@
 //! `special_for_inner_method_call_in_parentheses`); Ruby applies it via
 //! `AlignmentCorrector`.
 
+use std::rc::Rc;
+
 use ruby_prism::{Location, Node};
+
+use super::line_index::LineIndex;
 
 /// One misindented first argument. `[start_offset, end_offset)` is the offense
 /// range (the first argument). `[correct_start, correct_end)` is the range the
@@ -57,12 +61,14 @@ pub fn check_first_argument_indentation(
     if enforce_fixed_with_no_line_break {
         return Vec::new();
     }
+    let line_index = super::line_index::with_line_index(source, |li| li.clone());
     let mut rule = Visitor {
         source,
+        line_index: line_index.clone(),
         style: Style::from_u8(style),
         indent: indent_width,
         stack: Vec::new(),
-        comment_lines: comment_lines(source),
+        comment_lines: comment_lines(source, &line_index),
         offenses: Vec::new(),
     };
     super::dispatch::run(source, &mut [&mut rule]);
@@ -95,6 +101,7 @@ struct Frame {
 
 struct Visitor<'a> {
     source: &'a [u8],
+    line_index: Rc<LineIndex>,
     style: Style,
     indent: usize,
     stack: Vec<Frame>,
@@ -108,22 +115,19 @@ fn loc(l: &Location<'_>) -> (usize, usize) {
 }
 
 /// 1-based line numbers of comments that begin their line.
-fn comment_lines(source: &[u8]) -> Vec<usize> {
-    let result = ruby_prism::parse(source);
+///
+/// Comment positions come from the shared (cached) parse instead of a second
+/// full re-parse, and line start / line number are resolved through the shared
+/// [`LineIndex`].
+fn comment_lines(source: &[u8], line_index: &LineIndex) -> Vec<usize> {
     let mut lines = Vec::new();
-    for c in result.comments() {
-        let l = c.location();
-        let start = l.start_offset();
-        let line_start = match source[..start].iter().rposition(|&b| b == b'\n') {
-            Some(i) => i + 1,
-            None => 0,
-        };
+    for (start, _end) in super::parse_cache::comment_ranges(source) {
+        let line_start = line_index.line_start(start);
         if source[line_start..start]
             .iter()
             .all(|&b| b == b' ' || b == b'\t')
         {
-            let line = source[..start].iter().filter(|&&b| b == b'\n').count() + 1;
-            lines.push(line);
+            lines.push(line_index.line_of(start));
         }
     }
     lines
@@ -131,23 +135,17 @@ fn comment_lines(source: &[u8]) -> Vec<usize> {
 
 impl<'a> Visitor<'a> {
     fn line_start(&self, off: usize) -> usize {
-        match self.source[..off].iter().rposition(|&b| b == b'\n') {
-            Some(i) => i + 1,
-            None => 0,
-        }
+        self.line_index.line_start(off)
     }
 
     /// `Unicode::DisplayWidth.of(line[0, column])`.
     fn display_column(&self, off: usize) -> usize {
-        let ls = self.line_start(off);
-        std::str::from_utf8(&self.source[ls..off])
-            .map(unicode_width::UnicodeWidthStr::width)
-            .unwrap_or(off - ls)
+        self.line_index.display_column(self.source, off)
     }
 
     /// 1-based line number of `off`.
     fn line_of(&self, off: usize) -> usize {
-        self.source[..off].iter().filter(|&&b| b == b'\n').count() + 1
+        self.line_index.line_of(off)
     }
 
     fn begins_its_line(&self, off: usize) -> bool {
