@@ -90,10 +90,24 @@ struct Visitor<'a> {
 enum SendFrame {
     /// A receiver-less `send` ancestor, with its start offset.
     BareSend(usize),
+    /// A `send` with a receiver, carrying the chain info needed to resolve a
+    /// `relative_to_receiver` block base (dot / selector offsets and the
+    /// receiver's last line).
+    Call(CallInfo),
     /// An `arguments` wrapper, transparent to the modifier climb.
     Arguments,
     /// Any other node; breaks the modifier climb.
     Other,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct CallInfo {
+    /// Begin offset of the `.`/`&.` operator, if present.
+    dot: Option<usize>,
+    /// Begin offset of the selector (message), if present.
+    selector: Option<usize>,
+    /// 1-based last line of the receiver, if present.
+    receiver_last_line: Option<usize>,
 }
 
 fn loc(l: &Location<'_>) -> (usize, usize) {
@@ -363,7 +377,13 @@ impl super::dispatch::Rule for Visitor<'_> {
             if c.receiver().is_none() {
                 SendFrame::BareSend(node.location().start_offset())
             } else {
-                SendFrame::Other
+                SendFrame::Call(CallInfo {
+                    dot: c.call_operator_loc().map(|l| l.start_offset()),
+                    selector: c.message_loc().map(|l| l.start_offset()),
+                    receiver_last_line: c
+                        .receiver()
+                        .map(|r| self.line_of(r.location().end_offset().saturating_sub(1))),
+                })
             }
         } else {
             SendFrame::Other
@@ -464,7 +484,7 @@ impl<'a> Visitor<'a> {
             match frame {
                 SendFrame::Arguments => continue,
                 SendFrame::BareSend(start) => leftmost = start,
-                SendFrame::Other => break,
+                SendFrame::Call(_) | SendFrame::Other => break,
             }
         }
         leftmost
@@ -738,9 +758,38 @@ impl<'a> Visitor<'a> {
         if !self.begins_its_line(end_start) {
             return;
         }
+        let base_off = self.block_body_indentation_base(end_start);
         let Some(body) = n.body() else { return };
         let bref = self.make_body(&body);
-        self.check_indentation(end_start, Some(bref), false);
+        self.check_indentation(base_off, Some(bref), false);
+    }
+
+    /// `block_body_indentation_base(node, end_loc)`. For `relative_to_receiver`,
+    /// when the chain's dot (or selector) is on a line after the receiver, the
+    /// base is the dot (or selector) instead of the block's `end`.
+    fn block_body_indentation_base(&self, end_start: usize) -> usize {
+        if !self.config.relative_to_receiver {
+            return end_start;
+        }
+        // The owning call frame is the immediate parent (top of stack, since the
+        // block's own frame is not yet pushed during dispatch).
+        let Some(SendFrame::Call(info)) = self.bare_send_stack.last().copied() else {
+            return end_start;
+        };
+        // dot_on_new_line?: receiver.last_line < dot.line.
+        if let (Some(dot), Some(recv_last)) = (info.dot, info.receiver_last_line)
+            && recv_last < self.line_of(dot)
+        {
+            return dot;
+        }
+        // selector_on_new_line?: receiver.last_line < selector.line.
+        if let (Some(sel), Some(recv_last)) = (info.selector, info.receiver_last_line)
+            && info.dot.is_some()
+            && recv_last < self.line_of(sel)
+        {
+            return sel;
+        }
+        end_start
     }
 
     fn on_begin_node(&mut self, n: &ruby_prism::BeginNode<'_>) {
@@ -1109,6 +1158,23 @@ mod tests {
     #[test]
     fn adjacent_def_modifier_accepted() {
         assert!(run("foo def test\n  something\nend\n").is_empty());
+    }
+
+    #[test]
+    fn relative_to_receiver_chained_block_offense() {
+        // `foo\n  .bar do |x|\nx\nend`: with relative_to_receiver the base is
+        // the dot (col 2), so body `x` (col 0) should be col 4 -> delta +4.
+        let got = run_cfg("foo\n  .bar do |x|\nx\nend\n", |c| c.relative_to_receiver = true);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].column_delta, 4);
+    }
+
+    #[test]
+    fn relative_to_receiver_chained_block_accepted() {
+        let got = run_cfg("foo\n  .bar do |x|\n    x\nend\n", |c| {
+            c.relative_to_receiver = true;
+        });
+        assert!(got.is_empty());
     }
 
     #[test]
