@@ -26,3 +26,4 @@ end
 
 require_relative "cop/base"
 require_relative "cop/lint/debugger"
+require_relative "cop/metrics/block_length"
