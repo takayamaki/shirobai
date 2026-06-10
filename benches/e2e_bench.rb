@@ -81,6 +81,15 @@ offenses = 0
 # reparse are all on-CPU user time in the same process, so stock-vs-shirobai
 # stays a fair compute comparison. Wall is kept as a sanity check: cpu << wall
 # means external load contaminated the run.
+#
+# We also split CPU into GC vs compute. GC time (GC.stat(:time), cumulative ms)
+# is the dominant run-to-run noise source: stock allocates far more Ruby objects
+# than shirobai (whose cops do the work in Rust and return compact tuples), so
+# stock's GC time both is larger and swings more. `compute = cpu - gc` is the
+# low-variance signal for "is the actual analysis faster"; `gc` is reported on
+# its own because shirobai's reduced allocation is a real (if noisy) part of its
+# win, so we must not hide it (no GC.disable).
+gc0 = GC.stat(:time)
 c0 = Process.clock_gettime(Process::CLOCK_PROCESS_CPUTIME_ID)
 w0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 sources.each do |ps|
@@ -88,6 +97,9 @@ sources.each do |ps|
 end
 cpu = Process.clock_gettime(Process::CLOCK_PROCESS_CPUTIME_ID) - c0
 wall = Process.clock_gettime(Process::CLOCK_MONOTONIC) - w0
+gc = (GC.stat(:time) - gc0) / 1000.0
+compute = cpu - gc
 
-printf("%-9s cops=%-4d replaced=%-2d files=%-5d offenses=%-7d cpu=%.2fs wall=%.2fs\n",
-       mode, cops.size, replaced, sources.size, offenses, cpu, wall)
+printf("%-9s cops=%-4d replaced=%-2d files=%-5d offenses=%-7d " \
+       "cpu=%.2fs compute=%.2fs gc=%.2fs wall=%.2fs\n",
+       mode, cops.size, replaced, sources.size, offenses, cpu, compute, gc, wall)
