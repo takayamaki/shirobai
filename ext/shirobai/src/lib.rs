@@ -284,6 +284,31 @@ fn check_multiline_bundle(
     (op_off, mc_off)
 }
 
+/// Ruby entry point for `Layout/LineLength`. Walks every line and returns one
+/// entry per line whose visible length exceeds `max`: `[[line_index, length,
+/// line_start, line_end, indentation_difference, heredoc_delimiter], ...]`.
+/// Regex-based exemptions (AllowedPatterns / AllowURI / cop directives) and the
+/// `AllowHeredoc` delimiter filtering stay on the Ruby side.
+fn check_line_length(
+    source: String,
+    max: usize,
+    tab_width: usize,
+) -> Vec<(usize, usize, usize, usize, usize, String)> {
+    shirobai_core::rules::line_length::check_line_length(source.as_bytes(), max, tab_width)
+        .into_iter()
+        .map(|c| {
+            (
+                c.line_index,
+                c.length,
+                c.line_start,
+                c.line_end,
+                c.indentation_difference,
+                c.heredoc_delimiter,
+            )
+        })
+        .collect()
+}
+
 #[magnus::init(name = "shirobai")]
 fn init(ruby: &Ruby) -> Result<(), Error> {
     let module = ruby.define_module("Shirobai")?;
@@ -305,6 +330,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         function!(check_multiline_method_call_indentation, 4),
     )?;
     module.define_module_function("check_dot_position", function!(check_dot_position, 2))?;
+    module.define_module_function("check_line_length", function!(check_line_length, 3))?;
     module.define_module_function("check_method_name", function!(check_method_name, 2))?;
     module.define_module_function(
         "check_multiline_bundle",

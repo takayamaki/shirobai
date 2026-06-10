@@ -1,0 +1,17 @@
+# frozen_string_literal: true
+
+require "spec_helper"
+
+RSpec.describe Shirobai::Cop::Layout::LineLength, :config do
+  # The detection logic (offense location for over-long lines and every
+  # non-autocorrect option) is fully ported to Rust. Auto-correction (splitting
+  # long strings / breaking arrays, hashes and method calls across lines) is not
+  # yet ported, so every example under the `autocorrection` context is pending.
+  before do |example|
+    if example.metadata[:full_description].include?("autocorrection")
+      skip "Layout/LineLength auto-correction is not yet ported (detection only)"
+    end
+  end
+
+  VendorSpecHelper.load_vendor_spec(self, "rubocop/cop/layout/line_length_spec.rb")
+end
