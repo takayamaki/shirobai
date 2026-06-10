@@ -29,7 +29,7 @@ end
 module VendorSpecHelper
   VENDOR_SPEC_ROOT = File.expand_path("../vendor/rubocop/spec", __dir__)
 
-  def self.load_vendor_spec(example_group, relative_path)
+  def self.load_vendor_spec(example_group, relative_path, pending: [])
     full_path = File.join(VENDOR_SPEC_ROOT, relative_path)
     source = File.read(full_path)
 
@@ -38,6 +38,16 @@ module VendorSpecHelper
 
     header_end = source.index("\n", first_line) + 1
     body = source[header_end..].sub(/\nend\s*\z/, "\n")
+
+    unless pending.empty?
+      patterns = Array(pending)
+      example_group.before do |example|
+        desc = example.full_description
+        if patterns.any? { |p| desc.match?(p) }
+          skip("staged: not yet ported")
+        end
+      end
+    end
 
     lineno = source[0...header_end].count("\n") + 1
     example_group.instance_eval(body, full_path, lineno)

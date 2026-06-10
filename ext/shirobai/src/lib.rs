@@ -422,6 +422,47 @@ fn check_redundant_self(
         .collect()
 }
 
+/// Ruby entry point for `Layout/IndentationWidth`. `config` packs
+/// `[width, relative_to_receiver, access_modifier_outdent,
+/// indented_internal_methods, end_align, def_end_align_def, use_tabs]`.
+/// `allowed_lines` is the set of 1-based line numbers whose content matches an
+/// `AllowedPatterns` entry (regex matching stays in Ruby). Returns
+/// `[[start, end, column_delta, message, autocorrect, correct_start, correct_end], ...]`.
+#[allow(clippy::type_complexity)]
+fn check_indentation_width(
+    source: String,
+    config: Vec<i64>,
+    allowed_lines: Vec<usize>,
+) -> Vec<(usize, usize, isize, String, bool, usize, usize)> {
+    let cfg = shirobai_core::rules::indentation_width::Config {
+        width: config[0] as usize,
+        relative_to_receiver: config[1] != 0,
+        access_modifier_outdent: config[2] != 0,
+        indented_internal_methods: config[3] != 0,
+        end_align: config[4] as u8,
+        def_end_align_def: config[5] != 0,
+        use_tabs: config[6] != 0,
+    };
+    shirobai_core::rules::indentation_width::check_indentation_width(
+        source.as_bytes(),
+        cfg,
+        &allowed_lines,
+    )
+    .into_iter()
+    .map(|o| {
+        (
+            o.start_offset,
+            o.end_offset,
+            o.column_delta,
+            o.message,
+            o.autocorrect,
+            o.correct_start,
+            o.correct_end,
+        )
+    })
+    .collect()
+}
+
 #[magnus::init(name = "shirobai")]
 fn init(ruby: &Ruby) -> Result<(), Error> {
     let module = ruby.define_module("Shirobai")?;
@@ -465,6 +506,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_first_argument_indentation",
         function!(check_first_argument_indentation, 4),
+    )?;
+    module.define_module_function(
+        "check_indentation_width",
+        function!(check_indentation_width, 3),
     )?;
     Ok(())
 }
