@@ -24,7 +24,10 @@ module Shirobai
 
         def on_new_investigation
           source = processed_source.raw_source
-          Shirobai.check_block_length(source, max_length, count_comments?).each do |start, fin, length, _method_name, _receiver|
+          Shirobai.check_block_length(source, max_length, count_comments?).each do |start, fin, length, method_name, receiver|
+            next if allowed_method?(method_name) || matches_allowed_pattern?(method_name)
+            next if method_receiver_excluded?(receiver, method_name)
+
             range = Parser::Source::Range.new(processed_source.buffer, start, fin)
             add_offense(range, message: format(MSG, label: LABEL, length: length, max: max_length)) do
               self.max = length
@@ -33,6 +36,25 @@ module Shirobai
         end
 
         private
+
+        # Port of RuboCop's `method_receiver_excluded?`, operating on the method
+        # name and raw receiver source that Rust hands back instead of a node.
+        def method_receiver_excluded?(node_receiver, node_method)
+          node_receiver = node_receiver.empty? ? nil : node_receiver.gsub(/\s+/, "")
+
+          allowed_methods.any? do |config|
+            next unless config.is_a?(String)
+
+            receiver, method = config.split(".")
+
+            unless method
+              method = receiver
+              receiver = node_receiver
+            end
+
+            method == node_method && receiver == node_receiver
+          end
+        end
 
         def max_length
           cop_config["Max"]
