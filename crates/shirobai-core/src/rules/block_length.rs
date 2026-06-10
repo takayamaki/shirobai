@@ -7,6 +7,8 @@ use ruby_prism::{Node, Visit, parse, visit_call_node, visit_lambda_node};
 pub struct BlockLengthCandidate {
     pub start_offset: usize,
     pub end_offset: usize,
+    /// End of the block opening (`do` / `{`), used for the LSP location mode.
+    pub head_end: usize,
     pub length: usize,
     pub method_name: String,
     /// Raw receiver source, or empty when the call has no receiver.
@@ -182,10 +184,12 @@ impl Visitor<'_> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn push_candidate(
         &mut self,
         start: usize,
         end: usize,
+        head_end: usize,
         length: usize,
         method_name: String,
         receiver: String,
@@ -193,6 +197,7 @@ impl Visitor<'_> {
         self.out.push(BlockLengthCandidate {
             start_offset: start,
             end_offset: end,
+            head_end,
             length,
             method_name,
             receiver,
@@ -281,6 +286,7 @@ impl<'pr> Visit<'pr> for Visitor<'_> {
                 self.push_candidate(
                     loc.start_offset(),
                     loc.end_offset(),
+                    block_node.opening_loc().end_offset(),
                     length,
                     method_name,
                     receiver,
@@ -297,6 +303,7 @@ impl<'pr> Visit<'pr> for Visitor<'_> {
             self.push_candidate(
                 loc.start_offset(),
                 loc.end_offset(),
+                node.opening_loc().end_offset(),
                 length,
                 "lambda".to_string(),
                 String::new(),

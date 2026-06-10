@@ -25,13 +25,14 @@ module Shirobai
 
         def on_new_investigation
           source = processed_source.raw_source
-          Shirobai.check_block_length(source, max_length, count_comments?, count_as_one).each do |start, fin, length, method_name, receiver|
+          Shirobai.check_block_length(source, max_length, count_comments?, count_as_one).each do |start, fin, head_end, length, method_name, receiver|
             next if allowed_method?(method_name) || matches_allowed_pattern?(method_name)
             next if method_receiver_excluded?(receiver, method_name)
 
             validate_count_as_one!
 
-            range = Parser::Source::Range.new(processed_source.buffer, start, fin)
+            stop = RuboCop::LSP.enabled? ? head_end : fin
+            range = Parser::Source::Range.new(processed_source.buffer, start, stop)
             add_offense(range, message: format(MSG, label: LABEL, length: length, max: max_length)) do
               self.max = length
             end

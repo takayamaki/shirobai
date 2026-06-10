@@ -18,7 +18,7 @@ fn check_block_length(
     max: usize,
     count_comments: bool,
     count_as_one: Vec<String>,
-) -> Vec<(usize, usize, usize, String, String)> {
+) -> Vec<(usize, usize, usize, usize, String, String)> {
     shirobai_core::rules::block_length::check_block_length(
         source.as_bytes(),
         max,
@@ -26,7 +26,7 @@ fn check_block_length(
         &count_as_one,
     )
     .into_iter()
-    .map(|c| (c.start_offset, c.end_offset, c.length, c.method_name, c.receiver))
+    .map(|c| (c.start_offset, c.end_offset, c.head_end, c.length, c.method_name, c.receiver))
     .collect()
 }
 
