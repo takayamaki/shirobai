@@ -23,7 +23,23 @@ module Shirobai
         def self.badge = RuboCop::Cop::Badge.parse("Metrics/BlockLength")
 
         def on_new_investigation
-          # not implemented yet
+          source = processed_source.raw_source
+          Shirobai.check_block_length(source, max_length, count_comments?).each do |start, fin, length, _method_name, _receiver|
+            range = Parser::Source::Range.new(processed_source.buffer, start, fin)
+            add_offense(range, message: format(MSG, label: LABEL, length: length, max: max_length)) do
+              self.max = length
+            end
+          end
+        end
+
+        private
+
+        def max_length
+          cop_config["Max"]
+        end
+
+        def count_comments?
+          cop_config["CountComments"]
         end
       end
     end
