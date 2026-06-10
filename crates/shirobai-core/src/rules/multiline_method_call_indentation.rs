@@ -112,6 +112,9 @@ enum FrameKind {
         setter: bool,
         paren: Option<(usize, usize)>,
         args: Vec<(usize, usize)>,
+        /// `operator_method? && arguments?`: a binary-operator call (`a + b`),
+        /// for the `operation_rhs` syntactic alignment base.
+        binary_op: bool,
         /// `loc.dot` offset and the selector range, for `get_dot_right_above`
         /// and `left_hand_side` climbing.
         dot: Option<usize>,
@@ -119,6 +122,11 @@ enum FrameKind {
     },
     Block {
         body: Option<(usize, usize)>,
+    },
+    /// `splat` / `kwsplat`: shrinks the `indented_relative_to_receiver` extra
+    /// indentation by the operator length.
+    Splat {
+        op_len: usize,
     },
     Paren,
     Unaligned,
@@ -313,6 +321,20 @@ impl<'a> Visitor<'a> {
         lhs
     }
 
+    /// `extra_indentation`: 0 for `aligned`/`indented`; for
+    /// `indented_relative_to_receiver`, the indent width minus the splat operator
+    /// length when the call is a direct splat/kwsplat element.
+    fn extra_indentation(&self) -> isize {
+        if self.style != Style::IndentedRelativeToReceiver {
+            return 0;
+        }
+        if let Some(FrameKind::Splat { op_len }) = self.stack.last().map(|f| &f.kind) {
+            self.indent as isize - *op_len as isize
+        } else {
+            self.indent as isize
+        }
+    }
+
     fn correct_indentation(&self, kw: Option<KwInfo>) -> usize {
         let special = kw.is_some_and(|k| !k.is_modifier);
         if special {
@@ -407,7 +429,8 @@ impl<'a> Visitor<'a> {
         Some((dot_start, sel_end))
     }
 
-    /// `syntactic_alignment_base`: keyword expression / assignment rhs.
+    /// `syntactic_alignment_base`: keyword expression / assignment rhs /
+    /// operation rhs.
     fn syntactic_alignment_base(
         &self,
         lhs: (usize, usize),
@@ -418,6 +441,24 @@ impl<'a> Visitor<'a> {
         }
         if let Some(arhs) = self.part_of_assignment_rhs_for(lhs, rhs) {
             return Some(arhs);
+        }
+        self.operation_rhs(lhs)
+    }
+
+    /// `operation_rhs(lhs)`: if `lhs` is the right operand of an enclosing binary
+    /// operator (`a + lhs`), align with that operand. Returns its range.
+    fn operation_rhs(&self, lhs: (usize, usize)) -> Option<(usize, usize)> {
+        for f in self.stack.iter().rev() {
+            if let FrameKind::Send {
+                binary_op: true,
+                args,
+                ..
+            } = &f.kind
+                && let Some(first) = args.first()
+                && within(lhs, *first)
+            {
+                return Some(*first);
+            }
         }
         None
     }
@@ -501,14 +542,7 @@ impl<'a> Visitor<'a> {
         let base = self.alignment_base(call, node_range, lhs, rhs);
 
         let correct_column = match base {
-            Some(b) => {
-                let extra = if self.style == Style::IndentedRelativeToReceiver {
-                    self.indent as isize
-                } else {
-                    0
-                };
-                self.col(b.0) as isize + extra
-            }
+            Some(b) => self.col(b.0) as isize + self.extra_indentation(),
             None => {
                 let kw = self.kw_special(node_range);
                 (self.indent_col(lhs.0) + self.correct_indentation(kw)) as isize
@@ -651,6 +685,18 @@ impl<'a> Visitor<'a> {
                 body: n.body().map(|b| loc(&b.location())),
             };
         }
+        if let Some(n) = node.as_splat_node() {
+            let op = n.operator_loc();
+            return FrameKind::Splat {
+                op_len: op.end_offset() - op.start_offset(),
+            };
+        }
+        if let Some(n) = node.as_assoc_splat_node() {
+            let op = n.operator_loc();
+            return FrameKind::Splat {
+                op_len: op.end_offset() - op.start_offset(),
+            };
+        }
         if let Some(rhs) = assignment_value(node) {
             return FrameKind::Assignment { rhs };
         }
@@ -661,7 +707,7 @@ impl<'a> Visitor<'a> {
                     .map(|o| (o.start_offset(), close.end_offset())),
                 _ => None,
             };
-            let args = c
+            let args: Vec<(usize, usize)> = c
                 .arguments()
                 .map(|a| {
                     a.arguments()
@@ -670,10 +716,15 @@ impl<'a> Visitor<'a> {
                         .collect()
                 })
                 .unwrap_or_default();
+            let binary_op = c.receiver().is_some()
+                && c.call_operator_loc().is_none()
+                && c.name().as_slice() != b"[]"
+                && !args.is_empty();
             return FrameKind::Send {
                 setter: c.is_attribute_write(),
                 paren,
                 args,
+                binary_op,
                 dot: c.call_operator_loc().map(|d| d.start_offset()),
                 selector: c.message_loc().as_ref().map(loc),
             };

@@ -7,8 +7,6 @@ require "spec_helper"
 # ケースは下記 PENDING に列挙して skip し、実装するたびに該当行を削除していく。
 RSpec.describe Shirobai::Cop::Layout::MultilineMethodCallIndentation, :config do
   PENDING = [
-    "when EnforcedStyle is aligned accepts correctly aligned methods in operands",
-    "when EnforcedStyle is aligned accepts indented and aligned methods in binary operation",
     "when EnforcedStyle is aligned registers an offense and corrects misaligned methods in multiline block chain",
     "when EnforcedStyle is aligned accepts aligned methods in multiline block chain",
     "when EnforcedStyle is aligned accepts aligned methods in multiline numbered block chain",
@@ -33,14 +31,6 @@ RSpec.describe Shirobai::Cop::Layout::MultilineMethodCallIndentation, :config do
     "when EnforcedStyle is aligned for semantic alignment when inside a hash pair in a multiline chain method call still registers an offense for same-line chain with hash pair",
     "when EnforcedStyle is aligned for semantic alignment when inside a hash pair with block receiver accepts method chain after do-end block inside hash pair",
     "when EnforcedStyle is aligned for semantic alignment when inside a hash pair with block receiver registers an offense for misaligned method chain after do-end block in hash pair",
-    "when EnforcedStyle is indented_relative_to_receiver does not register an offense when multiline method chain has expected indent width and the method is preceded by splat",
-    "when EnforcedStyle is indented_relative_to_receiver does not register an offense when multiline method chain with block has expected indent width and the method is preceded by splat",
-    "when EnforcedStyle is indented_relative_to_receiver does not register an offense when multiline method chain with numbered block has expected indent width and the method is preceded by splat",
-    "when EnforcedStyle is indented_relative_to_receiver does not register an offense when multiline method chain with `it` block has expected indent width and the method is preceded by splat",
-    "when EnforcedStyle is indented_relative_to_receiver does not register an offense when multiline method chain has expected indent width and the method is preceded by double splat",
-    "when EnforcedStyle is indented_relative_to_receiver does not register an offense when multiline method chain with block has expected indent width and the method is preceded by double splat",
-    "when EnforcedStyle is indented_relative_to_receiver does not register an offense when multiline method chain with numbered block has expected indent width and the method is preceded by double splat",
-    "when EnforcedStyle is indented_relative_to_receiver does not register an offense when multiline method chain with `it` block has expected indent width and the method is preceded by double splat",
     "when EnforcedStyle is indented_relative_to_receiver accepts method chained after single-line block on both calls with receiver-relative indent",
     "when EnforcedStyle is indented_relative_to_receiver accepts method chained after single-line block only on first call with receiver-relative indent",
     "when EnforcedStyle is indented_relative_to_receiver accepts method chained after single-line block only on second call with receiver-relative indent",
