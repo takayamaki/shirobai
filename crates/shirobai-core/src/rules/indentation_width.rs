@@ -168,7 +168,7 @@ impl<'a> Visitor<'a> {
             let base_tabs = self.line_uses_tabs(base_off);
             let body_tabs = self.line_uses_tabs(body_off);
             if base_tabs || body_tabs {
-                return self.visual_column(base_off) - self.visual_column(body_off);
+                return self.visual_column(body_off) - self.visual_column(base_off);
             }
         }
         self.column(body_off) - self.column(base_off)
@@ -734,5 +734,30 @@ mod tests {
     #[test]
     fn correctly_indented_def_no_offense() {
         assert!(run("def test\n  func\nend\n").is_empty());
+    }
+
+    fn run_cfg(source: &str, mutate: impl FnOnce(&mut Config)) -> Vec<IndentationOffense> {
+        let mut cfg = default_config();
+        mutate(&mut cfg);
+        check_indentation_width(source.as_bytes(), cfg, &[])
+    }
+
+    #[test]
+    fn tabs_excessive_detected_not_corrected() {
+        let got = run_cfg("if cond\n\t\tfunc\nend\n", |c| {
+            c.use_tabs = true;
+            c.width = 4;
+        });
+        assert_eq!(got.len(), 1);
+        assert!(got[0].message.contains("Use 1 (not 2) tabs"));
+    }
+
+    #[test]
+    fn tabs_correct_no_offense() {
+        let got = run_cfg("if cond\n\tfunc\nend\n", |c| {
+            c.use_tabs = true;
+            c.width = 4;
+        });
+        assert!(got.is_empty());
     }
 }

@@ -10,8 +10,6 @@ RSpec.describe Shirobai::Cop::Layout::IndentationWidth, :config do
   STAGED_PENDING = [
     /with assignment/,                                   # CheckAssignment + EndAlignment base
     /when alignment style is keyword/,                   # CheckAssignment (keyword)
-    /with tabs indentation/,                             # tab visual columns / no-correct
-    /with mixed tabs and spaces/,
     /modifier and def are on the same line/,             # send adjacent-def-modifier
     /multiple modifiers and def are on the same line/,
     /EnforcedStyleAlignWith is relative_to_receiver/,    # method-chain block base
