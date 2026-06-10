@@ -351,6 +351,28 @@ fn check_line_end_concatenation(source: String) -> Vec<(usize, usize, String, us
         .collect()
 }
 
+/// Ruby entry point for `Layout/ArgumentAlignment`. Takes the source, the
+/// enforced style (0=with_first_argument, 1=with_fixed_indentation), the
+/// configured indentation width and whether autocorrect is incompatible with
+/// `Layout/HashAlignment`'s separator styles (which disables this cop's
+/// autocorrect). Returns `[[start, end, column_delta, autocorrect], ...]`.
+fn check_argument_alignment(
+    source: String,
+    style: u8,
+    indent_width: usize,
+    incompatible: bool,
+) -> Vec<(usize, usize, isize, bool)> {
+    shirobai_core::rules::argument_alignment::check_argument_alignment(
+        source.as_bytes(),
+        style,
+        indent_width,
+        incompatible,
+    )
+    .into_iter()
+    .map(|o| (o.start_offset, o.end_offset, o.column_delta, o.autocorrect))
+    .collect()
+}
+
 #[magnus::init(name = "shirobai")]
 fn init(ruby: &Ruby) -> Result<(), Error> {
     let module = ruby.define_module("Shirobai")?;
@@ -385,6 +407,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_multiline_bundle",
         function!(check_multiline_bundle, 3),
+    )?;
+    module.define_module_function(
+        "check_argument_alignment",
+        function!(check_argument_alignment, 4),
     )?;
     Ok(())
 }
