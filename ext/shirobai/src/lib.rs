@@ -49,11 +49,34 @@ fn check_complexity(source: String) -> Vec<(usize, usize, usize, String, usize, 
         .collect()
 }
 
+/// Ruby entry point for `Naming/VariableNumber`. Returns
+/// `[[[start, end, id_type, name, alt], ...], had_correct]`.
+#[allow(clippy::type_complexity)]
+fn check_variable_number(
+    source: String,
+    style: u8,
+    flags: u8,
+    allowed_identifiers: Vec<String>,
+) -> (Vec<(usize, usize, u8, String, u8)>, bool) {
+    let (offenses, had_correct) = shirobai_core::rules::variable_number::check_variable_number(
+        source.as_bytes(),
+        style,
+        flags,
+        &allowed_identifiers,
+    );
+    let offenses = offenses
+        .into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.identifier_type, o.name, o.alternative))
+        .collect();
+    (offenses, had_correct)
+}
+
 #[magnus::init(name = "shirobai")]
 fn init(ruby: &Ruby) -> Result<(), Error> {
     let module = ruby.define_module("Shirobai")?;
     module.define_module_function("check_debugger", function!(check_debugger, 3))?;
     module.define_module_function("check_block_length", function!(check_block_length, 4))?;
     module.define_module_function("check_complexity", function!(check_complexity, 1))?;
+    module.define_module_function("check_variable_number", function!(check_variable_number, 4))?;
     Ok(())
 }
