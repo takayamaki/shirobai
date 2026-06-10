@@ -10,7 +10,11 @@
 //! nested-offense rule (report-without-autocorrect for offenses already covered
 //! by a registered offense range) is replicated here over the pre-order walk.
 
+use std::rc::Rc;
+
 use ruby_prism::{CallNode, Location, Node};
+
+use super::line_index::LineIndex;
 
 /// One misaligned argument. `column_delta` is `base_column - actual_column`
 /// (display columns). `autocorrect` is false for offenses nested inside an
@@ -43,8 +47,10 @@ pub fn check_argument_alignment(
     if incompatible && style == Style::WithFirstArgument {
         return Vec::new();
     }
+    let line_index = super::line_index::with_line_index(source, |li| li.clone());
     let mut rule = Visitor {
         source,
+        line_index,
         style,
         indent: indent_width,
         offenses: Vec::new(),
@@ -55,6 +61,7 @@ pub fn check_argument_alignment(
 
 struct Visitor<'a> {
     source: &'a [u8],
+    line_index: Rc<LineIndex>,
     style: Style,
     indent: usize,
     offenses: Vec<ArgAlignOffense>,
@@ -66,24 +73,18 @@ fn loc(l: &Location<'_>) -> (usize, usize) {
 
 impl Visitor<'_> {
     fn line_start(&self, off: usize) -> usize {
-        match self.source[..off].iter().rposition(|&b| b == b'\n') {
-            Some(i) => i + 1,
-            None => 0,
-        }
+        self.line_index.line_start(off)
     }
 
     /// `Unicode::DisplayWidth.of(line[0, column])`: the display column of `off`
     /// (East-Asian wide characters count as two).
     fn display_column(&self, off: usize) -> usize {
-        let ls = self.line_start(off);
-        std::str::from_utf8(&self.source[ls..off])
-            .map(unicode_width::UnicodeWidthStr::width)
-            .unwrap_or(off - ls)
+        self.line_index.display_column(self.source, off)
     }
 
     /// 1-based line number of `off`.
     fn line_of(&self, off: usize) -> usize {
-        self.source[..off].iter().filter(|&&b| b == b'\n').count() + 1
+        self.line_index.line_of(off)
     }
 
     /// The indentation (`/\S.*/.match(line).begin(0)`) of the line `off` is on.

@@ -6,7 +6,11 @@
 //! exercises) to Rust: ancestor-stack bookkeeping replaces parser-gem's
 //! `each_ancestor`, since Prism nodes carry no parent pointer.
 
+use std::rc::Rc;
+
 use ruby_prism::{CallNode, Location, Node};
+
+use super::line_index::LineIndex;
 
 /// One misindented operand. `column_delta` is `correct_column - actual_column`
 /// (positive => the operand must move right). `message` is the fully formatted
@@ -52,8 +56,10 @@ pub(crate) fn build_rule(
     indent_width: usize,
     base_indent_width: usize,
 ) -> Visitor<'_> {
+    let line_index = super::line_index::with_line_index(source, |li| li.clone());
     Visitor {
         source,
+        line_index,
         style: Style::from_u8(style),
         indent: indent_width,
         base: base_indent_width,
@@ -129,6 +135,7 @@ enum FrameKind {
 
 pub(crate) struct Visitor<'a> {
     source: &'a [u8],
+    line_index: Rc<LineIndex>,
     style: Style,
     indent: usize,
     base: usize,
@@ -147,18 +154,12 @@ fn within((is, ie): (usize, usize), (os, oe): (usize, usize)) -> bool {
 impl<'a> Visitor<'a> {
     /// Start offset of the line containing `off`.
     fn line_start(&self, off: usize) -> usize {
-        match self.source[..off].iter().rposition(|&b| b == b'\n') {
-            Some(i) => i + 1,
-            None => 0,
-        }
+        self.line_index.line_start(off)
     }
 
     /// Column (codepoint count from line start) of `off`.
     fn col(&self, off: usize) -> usize {
-        let ls = self.line_start(off);
-        std::str::from_utf8(&self.source[ls..off])
-            .map(|s| s.chars().count())
-            .unwrap_or(off - ls)
+        self.line_index.column(self.source, off)
     }
 
     /// `indentation(node)`: column of the first non-whitespace char of the line

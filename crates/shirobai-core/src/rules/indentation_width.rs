@@ -12,7 +12,11 @@
 //! block / method-chain handling is done explicitly rather than by 1:1 node
 //! translation.
 
+use std::rc::Rc;
+
 use ruby_prism::{Location, Node};
+
+use super::line_index::LineIndex;
 
 /// One indentation offense. `[start_offset, end_offset)` is the offense range
 /// (`offending_range`). `[correct_start, correct_end)` is the node range that
@@ -54,8 +58,10 @@ pub fn check_indentation_width(
     prior_ranges: &[(usize, usize)],
 ) -> Vec<IndentationOffense> {
     let bom = source.starts_with(&[0xef, 0xbb, 0xbf]);
+    let line_index = super::line_index::with_line_index(source, |li| li.clone());
     let mut rule = Visitor {
         source,
+        line_index,
         config,
         allowed_lines,
         bom,
@@ -73,6 +79,7 @@ pub fn check_indentation_width(
 
 struct Visitor<'a> {
     source: &'a [u8],
+    line_index: Rc<LineIndex>,
     config: Config,
     allowed_lines: &'a [usize],
     bom: bool,
@@ -117,24 +124,18 @@ fn loc(l: &Location<'_>) -> (usize, usize) {
 
 impl<'a> Visitor<'a> {
     fn line_start(&self, off: usize) -> usize {
-        match self.source[..off].iter().rposition(|&b| b == b'\n') {
-            Some(i) => i + 1,
-            None => 0,
-        }
+        self.line_index.line_start(off)
     }
 
     /// 1-based line number of `off`.
     fn line_of(&self, off: usize) -> usize {
-        self.source[..off].iter().filter(|&&b| b == b'\n').count() + 1
+        self.line_index.line_of(off)
     }
 
     /// `range.column`: number of characters from the line start to `off`,
     /// adjusted for a byte-order mark on line 1 (`effective_column`).
     fn column(&self, off: usize) -> isize {
-        let ls = self.line_start(off);
-        let chars = std::str::from_utf8(&self.source[ls..off])
-            .map(|s| s.chars().count())
-            .unwrap_or(off - ls);
+        let chars = self.line_index.column(self.source, off);
         let line = self.line_of(off);
         if line == 1 && self.bom {
             // BOM is one codepoint at the very start; effective_column subtracts 1.

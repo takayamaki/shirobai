@@ -3,7 +3,11 @@
 //! Checks the `.`/`&.` position in multi-line method calls (`leading` vs
 //! `trailing` style).
 
+use std::rc::Rc;
+
 use ruby_prism::{CallNode, Node, Visit};
+
+use super::line_index::LineIndex;
 
 /// One misplaced dot. `(start, end)` is the dot range (the offense highlight).
 /// `(remove_start, remove_end)` is the range autocorrect deletes (the dot, or
@@ -26,36 +30,37 @@ enum Style {
 
 pub fn check_dot_position(source: &[u8], style: u8) -> Vec<DotPositionOffense> {
     super::parse_cache::with_parsed(source, |source, node| {
-        let mut visitor = Visitor {
-            source,
-            style: if style == 1 {
-                Style::Trailing
-            } else {
-                Style::Leading
-            },
-            offenses: Vec::new(),
-        };
-        visitor.visit(node);
-        visitor.offenses
+        super::line_index::with_line_index(source, |line_index| {
+            let mut visitor = Visitor {
+                source,
+                line_index: line_index.clone(),
+                style: if style == 1 {
+                    Style::Trailing
+                } else {
+                    Style::Leading
+                },
+                offenses: Vec::new(),
+            };
+            visitor.visit(node);
+            visitor.offenses
+        })
     })
 }
 
 struct Visitor<'a> {
     source: &'a [u8],
+    line_index: Rc<LineIndex>,
     style: Style,
     offenses: Vec<DotPositionOffense>,
 }
 
 impl<'a> Visitor<'a> {
     fn line_of(&self, off: usize) -> usize {
-        self.source[..off].iter().filter(|&&b| b == b'\n').count() + 1
+        self.line_index.line_of(off)
     }
 
     fn line_start(&self, off: usize) -> usize {
-        match self.source[..off].iter().rposition(|&b| b == b'\n') {
-            Some(i) => i + 1,
-            None => 0,
-        }
+        self.line_index.line_start(off)
     }
 
     fn process_send(&mut self, call: &CallNode<'_>) {

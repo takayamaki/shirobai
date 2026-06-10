@@ -13,7 +13,11 @@
 //! `first_dot_alignment_base` incl. `after_multiline_block_base`) and
 //! block-aware autocorrect. The full vendor spec passes.
 
+use std::rc::Rc;
+
 use ruby_prism::{CallNode, Location, Node};
+
+use super::line_index::LineIndex;
 
 /// One misindented method-call selector. `column_delta` is
 /// `correct_column - actual_column`. `block_*` ranges (0 = none) tell the Ruby
@@ -64,8 +68,10 @@ pub(crate) fn build_rule(
     indent_width: usize,
     base_indent_width: usize,
 ) -> Visitor<'_> {
+    let line_index = super::line_index::with_line_index(source, |li| li.clone());
     Visitor {
         source,
+        line_index,
         style: Style::from_u8(style),
         indent: indent_width,
         base: base_indent_width,
@@ -163,6 +169,7 @@ struct CallInfo {
 
 pub(crate) struct Visitor<'a> {
     source: &'a [u8],
+    line_index: Rc<LineIndex>,
     style: Style,
     indent: usize,
     base: usize,
@@ -180,22 +187,16 @@ fn within((is, ie): (usize, usize), (os, oe): (usize, usize)) -> bool {
 
 impl<'a> Visitor<'a> {
     fn line_start(&self, off: usize) -> usize {
-        match self.source[..off].iter().rposition(|&b| b == b'\n') {
-            Some(i) => i + 1,
-            None => 0,
-        }
+        self.line_index.line_start(off)
     }
 
     fn col(&self, off: usize) -> usize {
-        let ls = self.line_start(off);
-        std::str::from_utf8(&self.source[ls..off])
-            .map(|s| s.chars().count())
-            .unwrap_or(off - ls)
+        self.line_index.column(self.source, off)
     }
 
     /// 1-based line number of `off`.
     fn line_of(&self, off: usize) -> usize {
-        self.source[..off].iter().filter(|&&b| b == b'\n').count() + 1
+        self.line_index.line_of(off)
     }
 
     fn indent_col(&self, off: usize) -> usize {
