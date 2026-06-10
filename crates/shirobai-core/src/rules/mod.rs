@@ -1,4 +1,5 @@
 pub mod block_length;
+pub mod block_nesting;
 pub mod bundle;
 pub mod complexity;
 pub mod debugger;

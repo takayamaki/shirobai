@@ -43,6 +43,29 @@ fn check_block_length(
     .collect()
 }
 
+/// Ruby entry point for `Metrics/BlockNesting`. Takes the source, the `Max`
+/// level and the `CountBlocks` / `CountModifierForms` flags. Returns
+/// `[[[start, end], ...], deepest_level]`: the reportable offense ranges and the
+/// deepest nesting level that exceeded `Max` (for `ExcludeLimit` bookkeeping).
+fn check_block_nesting(
+    source: String,
+    max: usize,
+    count_blocks: bool,
+    count_modifier_forms: bool,
+) -> (Vec<(usize, usize)>, usize) {
+    let (offenses, deepest) = shirobai_core::rules::block_nesting::check_block_nesting(
+        source.as_bytes(),
+        max,
+        count_blocks,
+        count_modifier_forms,
+    );
+    let offenses = offenses
+        .into_iter()
+        .map(|o| (o.start_offset, o.end_offset))
+        .collect();
+    (offenses, deepest)
+}
+
 /// Ruby entry point for the complexity cops. Returns one entry per method:
 /// `[[start, end, head_end, name, cyclomatic, perceived], ...]`.
 #[allow(clippy::type_complexity)]
@@ -241,6 +264,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function("check_debugger", function!(check_debugger, 3))?;
     module.define_module_function("check_block_length", function!(check_block_length, 4))?;
     module.define_module_function("check_complexity", function!(check_complexity, 1))?;
+    module.define_module_function("check_block_nesting", function!(check_block_nesting, 4))?;
     module.define_module_function("check_variable_number", function!(check_variable_number, 4))?;
     module.define_module_function(
         "check_safe_navigation_chain",
