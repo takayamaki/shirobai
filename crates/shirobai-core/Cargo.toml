@@ -14,3 +14,7 @@ libc = "0.2"
 [[bin]]
 name = "walk_profile"
 path = "src/bin/walk_profile.rs"
+
+[[bin]]
+name = "analysis_profile"
+path = "src/bin/analysis_profile.rs"
