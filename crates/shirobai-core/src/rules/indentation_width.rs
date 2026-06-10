@@ -535,8 +535,18 @@ impl<'a> Visitor<'a> {
     }
 
     /// First statement of a Prism body node (statements / begin), or the node
-    /// itself. Returns `(begin_pos, full_range, is_begin_with_multiple)`.
+    /// itself. Returns `(begin_pos, full_range)`.
     fn body_first_stmt(&self, body: &Node<'_>) -> (usize, (usize, usize)) {
+        // An implicit `begin` (def/block body with rescue/ensure but no `begin`
+        // keyword) is transparent: parser-gem reports `node.body` as the rescue
+        // node whose range starts at the protected body, so descend to the
+        // protected statements' first node.
+        if let Some(bn) = body.as_begin_node()
+            && bn.begin_keyword_loc().is_none()
+            && let Some(st) = bn.statements()
+        {
+            return self.body_first_stmt(&st.as_node());
+        }
         if let Some(st) = body.as_statements_node() {
             let stmts: Vec<_> = st.body().iter().collect();
             if let Some(first) = stmts.first() {
@@ -553,6 +563,14 @@ impl<'a> Visitor<'a> {
     /// Build a `BodyRef` for a body node. `correct_first_stmt` mirrors
     /// `offense`: a `begin`-type body corrects only its first statement.
     fn make_body(&self, body: &Node<'_>) -> BodyRef {
+        // Unwrap an implicit `begin` to its protected statements (see
+        // `body_first_stmt`).
+        if let Some(bn) = body.as_begin_node()
+            && bn.begin_keyword_loc().is_none()
+            && let Some(st) = bn.statements()
+        {
+            return self.make_body(&st.as_node());
+        }
         let (start, _full) = self.body_first_stmt(body);
         // correction range: first statement of the body (begin -> first child).
         let correct_range = if let Some(st) = body.as_statements_node() {

@@ -12,8 +12,7 @@ RSpec.describe Shirobai::Cop::Layout::IndentationWidth, :config do
     /with begin\/rescue\/else\/ensure\/end/,             # multi-pass rescue-node correction
     %r{with block.*`do` \.\.\. `ensure`},
     /with block when consistency style is indented_internal_methods/,
-    /handles lines with only whitespace/,
-    /bad indentation of begin\/end\/while/
+    /bad indentation of begin\/end\/while/               # do-while + assignment interaction
   ].freeze
 
   VendorSpecHelper.load_vendor_spec(
