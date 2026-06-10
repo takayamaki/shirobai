@@ -51,6 +51,11 @@ pub fn compute_breakables_filtered(
     split_strings: bool,
     candidate_lines: Option<&HashSet<usize>>,
 ) -> Vec<Breakable> {
+    // No candidate line can become an offense, so no breakable is ever
+    // consumed. Skip the parse + AST walk + byte scans entirely.
+    if candidate_lines.is_some_and(|c| c.is_empty()) {
+        return Vec::new();
+    }
     super::parse_cache::with_parsed(source, |source, node| {
         // Collect literal/comment ranges from the already-parsed AST (we must
         // not re-enter the parse cache while it is borrowed).
