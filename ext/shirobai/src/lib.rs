@@ -136,6 +136,41 @@ fn check_multiline_operation_indentation(
     .collect()
 }
 
+/// Ruby entry point for `Layout/MultilineMethodCallIndentation`. Takes the
+/// source, the enforced style (0=aligned, 1=indented,
+/// 2=indented_relative_to_receiver), the configured indentation width and the
+/// base `Layout/IndentationWidth` width. Returns `[[start, end, column_delta,
+/// message, block_body_start, block_body_end, block_end_start, block_end_end],
+/// ...]` (block fields are `0` when the call has no multiline block).
+#[allow(clippy::type_complexity)]
+fn check_multiline_method_call_indentation(
+    source: String,
+    style: u8,
+    indent_width: usize,
+    base_indent_width: usize,
+) -> Vec<(usize, usize, isize, String, usize, usize, usize, usize)> {
+    shirobai_core::rules::multiline_method_call_indentation::check_multiline_method_call_indentation(
+        source.as_bytes(),
+        style,
+        indent_width,
+        base_indent_width,
+    )
+    .into_iter()
+    .map(|o| {
+        (
+            o.start_offset,
+            o.end_offset,
+            o.column_delta,
+            o.message,
+            o.block_body_start,
+            o.block_body_end,
+            o.block_end_start,
+            o.block_end_end,
+        )
+    })
+    .collect()
+}
+
 #[magnus::init(name = "shirobai")]
 fn init(ruby: &Ruby) -> Result<(), Error> {
     let module = ruby.define_module("Shirobai")?;
@@ -150,6 +185,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_multiline_operation_indentation",
         function!(check_multiline_operation_indentation, 4),
+    )?;
+    module.define_module_function(
+        "check_multiline_method_call_indentation",
+        function!(check_multiline_method_call_indentation, 4),
     )?;
     Ok(())
 }
