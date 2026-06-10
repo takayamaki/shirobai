@@ -36,7 +36,16 @@ fn check_block_length(
 fn check_complexity(source: String) -> Vec<(usize, usize, usize, String, usize, usize)> {
     shirobai_core::rules::complexity::check_complexity(source.as_bytes())
         .into_iter()
-        .map(|m| (m.start_offset, m.end_offset, m.head_end, m.method_name, m.cyclomatic, m.perceived))
+        .map(|m| {
+            (
+                m.start_offset,
+                m.end_offset,
+                m.head_end,
+                m.method_name,
+                m.cyclomatic,
+                m.perceived,
+            )
+        })
         .collect()
 }
 
