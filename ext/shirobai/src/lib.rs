@@ -425,9 +425,6 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         "check_argument_alignment",
         function!(check_argument_alignment, 4),
     )?;
-    module.define_module_function(
-        "check_redundant_self",
-        function!(check_redundant_self, 2),
-    )?;
+    module.define_module_function("check_redundant_self", function!(check_redundant_self, 2))?;
     Ok(())
 }
