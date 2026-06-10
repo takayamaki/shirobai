@@ -28,16 +28,16 @@ module Shirobai
         def on_new_investigation
           source = processed_source.raw_source
           Shirobai.check_line_length(source, max, tab_indentation_width || 0).each do |candidate|
-            line_index, length, _line_start, _line_end, _indent_diff, heredoc_delimiter = candidate
+            line_index, length, _line_start, _line_end, _indent_diff, heredoc_delimiters = candidate
             line = processed_source.lines[line_index]
-            check_candidate(line, line_index, length, heredoc_delimiter)
+            check_candidate(line, line_index, length, heredoc_delimiters)
           end
         end
 
         private
 
-        def check_candidate(line, line_index, length, heredoc_delimiter)
-          return if allowed_candidate?(line, line_index, heredoc_delimiter)
+        def check_candidate(line, line_index, length, heredoc_delimiters)
+          return if allowed_candidate?(line, line_index, heredoc_delimiters)
 
           if allow_rbs_inline_annotation? && rbs_inline_annotation_on_source_line?(line_index)
             return
@@ -54,17 +54,18 @@ module Shirobai
           register_offense(excess_range(nil, line, line_index), line, line_index, length: length)
         end
 
-        def allowed_candidate?(line, line_index, heredoc_delimiter)
+        def allowed_candidate?(line, line_index, heredoc_delimiters)
           matches_allowed_pattern?(line) ||
             shebang?(line, line_index) ||
-            permitted_heredoc?(heredoc_delimiter)
+            permitted_heredoc?(heredoc_delimiters)
         end
 
-        def permitted_heredoc?(heredoc_delimiter)
-          return false if heredoc_delimiter.empty?
+        def permitted_heredoc?(heredoc_delimiters)
+          return false if heredoc_delimiters.empty?
           return false unless allowed_heredoc
 
-          allowed_heredoc == true || allowed_heredoc.include?(heredoc_delimiter)
+          allowed_heredoc == true ||
+            heredoc_delimiters.any? { |delimiter| allowed_heredoc.include?(delimiter) }
         end
 
         def shebang?(line, line_index)
@@ -73,7 +74,12 @@ module Shirobai
 
         def register_offense(loc, line, line_index, length: line_length(line))
           message = format(MSG, length: length, max: max)
-          add_offense(loc, message: message)
+          add_offense(loc, message: message) do
+            # Record the longest offending line so `--auto-gen-config` can
+            # propose a `Max` value (upstream does this from its corrector
+            # block; the auto-correction itself is not yet ported).
+            self.max = length
+          end
         end
 
         def excess_range(uri_range, line, line_index)
