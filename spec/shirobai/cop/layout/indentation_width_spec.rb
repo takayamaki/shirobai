@@ -9,13 +9,11 @@ RSpec.describe Shirobai::Cop::Layout::IndentationWidth, :config do
   # are marked pending so the suite stays green between commits.
   STAGED_PENDING = [
     /EnforcedStyleAlignWith is relative_to_receiver/,    # method-chain block base
-    /with ignored patterns set/,                         # AllowedPatterns
-    /bad indentation of begin\/end\/while/,              # begin/end/while
-    /handles lines with only whitespace/,
-    /with begin\/rescue\/else\/ensure\/end/,             # begin rescue/else/ensure indents
-    %r{with block.*`do` \.\.\. `ensure`},                # do/ensure block
+    /with begin\/rescue\/else\/ensure\/end/,             # multi-pass rescue-node correction
+    %r{with block.*`do` \.\.\. `ensure`},
     /with block when consistency style is indented_internal_methods/,
-    /with block when using safe navigation operator registers an offense for an if with setter/
+    /handles lines with only whitespace/,
+    /bad indentation of begin\/end\/while/
   ].freeze
 
   VendorSpecHelper.load_vendor_spec(

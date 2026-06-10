@@ -116,7 +116,7 @@ module Shirobai
           return [] if patterns.empty?
 
           source.lines.each_with_index.filter_map do |line, idx|
-            (idx + 1) if patterns.any? { |p| p.match?(line) }
+            (idx + 1) if matches_allowed_pattern?(line.chomp)
           end
         end
       end

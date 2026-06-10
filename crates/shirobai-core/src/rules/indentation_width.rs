@@ -726,10 +726,42 @@ impl<'a> Visitor<'a> {
     }
 
     fn on_begin_node(&mut self, n: &ruby_prism::BeginNode<'_>) {
-        // rescue / ensure handling within a begin.
+        // on_kwbegin: an explicit `begin ... end` checks its protected body
+        // against the `end` keyword, but only when `end` begins its line.
+        if let (Some(_begin_kw), Some(end_loc)) = (n.begin_keyword_loc(), n.end_keyword_loc()) {
+            let end_start = end_loc.start_offset();
+            if self.begins_its_line(end_start)
+                && let Some(body) = n.statements()
+            {
+                let mut bref = self.make_body(&body.as_node());
+                // `node.children.first` is the whole rescue node when the
+                // begin has handlers: realigning it shifts the rescue/else/
+                // ensure keyword lines too. Extend the correction range from
+                // the protected body to the line before `end`.
+                if n.rescue_clause().is_some() || n.ensure_clause().is_some() {
+                    let end_line_start = self.line_start(end_start);
+                    if end_line_start > bref.correct_range.0 {
+                        bref.correct_range.1 = end_line_start - 1;
+                    }
+                }
+                self.check_indentation(end_start, Some(bref), false);
+            }
+        }
+        // on_resbody: each rescue clause body against its keyword.
         if let Some(rescue) = n.rescue_clause() {
             self.on_rescue_chain(&rescue);
         }
+        // on_rescue: the rescue's else branch against the `else` keyword.
+        if n.rescue_clause().is_some()
+            && let Some(els) = n.else_clause()
+        {
+            let else_kw = els.else_keyword_loc().start_offset();
+            if let Some(body) = els.statements() {
+                let bref = self.make_body(&body.as_node());
+                self.check_indentation(else_kw, Some(bref), false);
+            }
+        }
+        // on_ensure: the ensure body against the `ensure` keyword.
         if let Some(ensure) = n.ensure_clause() {
             self.on_ensure(&ensure);
         }
