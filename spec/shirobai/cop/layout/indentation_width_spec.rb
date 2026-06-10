@@ -8,8 +8,6 @@ RSpec.describe Shirobai::Cop::Layout::IndentationWidth, :config do
   # consistency styles) are ported. The groups below are still being ported and
   # are marked pending so the suite stays green between commits.
   STAGED_PENDING = [
-    /modifier and def are on the same line/,             # send adjacent-def-modifier
-    /multiple modifiers and def are on the same line/,
     /EnforcedStyleAlignWith is relative_to_receiver/,    # method-chain block base
     /with ignored patterns set/,                         # AllowedPatterns
     /bad indentation of begin\/end\/while/,              # begin/end/while

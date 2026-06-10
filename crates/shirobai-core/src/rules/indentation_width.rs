@@ -62,6 +62,7 @@ pub fn check_indentation_width(
         offense_ranges: Vec::new(),
         offenses: Vec::new(),
         ignored: Vec::new(),
+        bare_send_stack: Vec::new(),
     };
     super::dispatch::run(source, &mut [&mut rule]);
     rule.offenses
@@ -79,6 +80,20 @@ struct Visitor<'a> {
     offenses: Vec<IndentationOffense>,
     /// Node ranges that have been `ignore_node`'d (assignment rhs, def under modifier).
     ignored: Vec<(usize, usize)>,
+    /// Ancestor stack used to resolve `leftmost_modifier_of` for `foo def` /
+    /// `public foo def` chains. `ArgumentsNode` is transparent (parser-gem has
+    /// no such wrapper), so the climb skips it.
+    bare_send_stack: Vec<SendFrame>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum SendFrame {
+    /// A receiver-less `send` ancestor, with its start offset.
+    BareSend(usize),
+    /// An `arguments` wrapper, transparent to the modifier climb.
+    Arguments,
+    /// Any other node; breaks the modifier climb.
+    Other,
 }
 
 fn loc(l: &Location<'_>) -> (usize, usize) {
@@ -340,15 +355,33 @@ struct BodyRef {
 impl super::dispatch::Rule for Visitor<'_> {
     fn enter(&mut self, node: &Node<'_>) {
         self.dispatch(node);
+        // Maintain the ancestor stack used by `leftmost_modifier_of`. Push for
+        // every branch node so `leave` pops symmetrically.
+        let frame = if node.as_arguments_node().is_some() {
+            SendFrame::Arguments
+        } else if let Some(c) = node.as_call_node() {
+            if c.receiver().is_none() {
+                SendFrame::BareSend(node.location().start_offset())
+            } else {
+                SendFrame::Other
+            }
+        } else {
+            SendFrame::Other
+        };
+        self.bare_send_stack.push(frame);
     }
 
-    fn leave(&mut self) {}
+    fn leave(&mut self) {
+        self.bare_send_stack.pop();
+    }
 }
 
 impl<'a> Visitor<'a> {
     fn dispatch(&mut self, node: &Node<'_>) {
         if let Some(n) = node.as_def_node() {
-            self.on_def(n.def_keyword_loc().start_offset(), n.body().as_ref());
+            if !self.is_ignored(loc(&n.as_node().location())) {
+                self.on_def(n.def_keyword_loc().start_offset(), n.body().as_ref());
+            }
         } else if let Some(n) = node.as_class_node() {
             self.on_class(n.class_keyword_loc().start_offset(), n.body().as_ref());
         } else if let Some(n) = node.as_module_node() {
@@ -377,9 +410,64 @@ impl<'a> Visitor<'a> {
             self.on_block_node(node, &n);
         } else if let Some(n) = node.as_begin_node() {
             self.on_begin_node(&n);
+        } else if let Some(c) = node.as_call_node() {
+            self.on_send(node, &c);
         } else if let Some((assign_start, value)) = assignment_value(node) {
             self.on_assignment(assign_start, &value);
         }
+    }
+
+    /// `on_send`: handle `adjacent_def_modifier?` (`foo def`) and otherwise the
+    /// `CheckAssignment` attribute-write path.
+    fn on_send(&mut self, node: &Node<'_>, c: &ruby_prism::CallNode<'_>) {
+        // adjacent_def_modifier?: (send nil? _ (any_def ...)).
+        if c.receiver().is_none()
+            && let Some(args) = c.arguments()
+        {
+            let arg_list: Vec<_> = args.arguments().iter().collect();
+            if arg_list.len() == 1
+                && let Some(def) = arg_list[0].as_def_node()
+            {
+                self.on_adjacent_def_modifier(node, &def);
+                return;
+            }
+        }
+        // CheckAssignment#on_send: attribute/index write with an if/while rhs.
+        if let Some((assign_start, value)) = assignment_value(node) {
+            self.on_assignment(assign_start, &value);
+        }
+    }
+
+    /// `foo def test` / `public foo def test`: check the def body against the
+    /// leftmost modifier (start_of_line) or the def itself (DefEndAlignment def).
+    fn on_adjacent_def_modifier(&mut self, send: &Node<'_>, def: &ruby_prism::DefNode<'_>) {
+        let send_range = loc(&send.location());
+        let base_off = if self.config.def_end_align_def {
+            def.def_keyword_loc().start_offset()
+        } else {
+            self.leftmost_modifier_of(send_range.0)
+        };
+        if let Some(body) = def.body() {
+            let bref = self.make_body(&body);
+            self.check_indentation(base_off, Some(bref), false);
+        }
+        // ignore_node(def): the normal on_def must skip it.
+        self.ignored.push(loc(&def.as_node().location()));
+    }
+
+    /// `leftmost_modifier_of(node)`: climb receiver-less send ancestors to the
+    /// outermost one. The ancestor stack holds only ancestors of the current
+    /// node (its own frame is pushed after dispatch).
+    fn leftmost_modifier_of(&self, send_start: usize) -> usize {
+        let mut leftmost = send_start;
+        for &frame in self.bare_send_stack.iter().rev() {
+            match frame {
+                SendFrame::Arguments => continue,
+                SendFrame::BareSend(start) => leftmost = start,
+                SendFrame::Other => break,
+            }
+        }
+        leftmost
     }
 
     /// `check_assignment(node, rhs)`: the rhs `if`/`while`/`until` is checked
@@ -957,6 +1045,20 @@ mod tests {
     #[test]
     fn assignment_if_aligned_with_variable_accepted() {
         assert!(run("var = if a\n  0\nend\n").is_empty());
+    }
+
+    #[test]
+    fn adjacent_def_modifier_offense() {
+        // `foo def test\n      something\n  end`: body should align to col 2
+        // (start_of_line: leftmost modifier `foo` at col 0).
+        let got = run("foo def test\n      something\n  end\n");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].column_delta, -4);
+    }
+
+    #[test]
+    fn adjacent_def_modifier_accepted() {
+        assert!(run("foo def test\n  something\nend\n").is_empty());
     }
 
     #[test]
