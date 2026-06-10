@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 ruby-prism = "1.9.0"
 self_cell = "1"
+unicode-width = "0.2"

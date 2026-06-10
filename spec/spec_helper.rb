@@ -9,6 +9,8 @@ require "shirobai"
 # Vendor spec support helpers used by the upstream cop specs we re-run verbatim
 # (e.g. `trailing_whitespace`).
 require_relative "../vendor/rubocop/spec/support/misc_helper"
+# `strip_margin` is used by some upstream cop specs to build indented fixtures.
+require_relative "../vendor/rubocop/spec/core_ext/string"
 
 RSpec.configure do |config|
   config.expect_with :rspec do |expectations|
