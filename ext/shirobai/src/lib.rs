@@ -30,10 +30,21 @@ fn check_block_length(
     .collect()
 }
 
+/// Ruby entry point for the complexity cops. Returns one entry per method:
+/// `[[start, end, head_end, name, cyclomatic, perceived], ...]`.
+#[allow(clippy::type_complexity)]
+fn check_complexity(source: String) -> Vec<(usize, usize, usize, String, usize, usize)> {
+    shirobai_core::rules::complexity::check_complexity(source.as_bytes())
+        .into_iter()
+        .map(|m| (m.start_offset, m.end_offset, m.head_end, m.method_name, m.cyclomatic, m.perceived))
+        .collect()
+}
+
 #[magnus::init(name = "shirobai")]
 fn init(ruby: &Ruby) -> Result<(), Error> {
     let module = ruby.define_module("Shirobai")?;
     module.define_module_function("check_debugger", function!(check_debugger, 3))?;
     module.define_module_function("check_block_length", function!(check_block_length, 4))?;
+    module.define_module_function("check_complexity", function!(check_complexity, 1))?;
     Ok(())
 }
