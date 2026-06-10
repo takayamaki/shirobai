@@ -86,6 +86,27 @@ fn check_safe_navigation_chain(
     .collect()
 }
 
+/// Ruby entry point for `Layout/MultilineOperationIndentation`. Takes the
+/// source, the enforced style (0=aligned, 1=indented), the configured
+/// indentation width and the base `Layout/IndentationWidth` width. Returns
+/// `[[start, end, column_delta, message], ...]`.
+fn check_multiline_operation_indentation(
+    source: String,
+    style: u8,
+    indent_width: usize,
+    base_indent_width: usize,
+) -> Vec<(usize, usize, isize, String)> {
+    shirobai_core::rules::multiline_operation_indentation::check_multiline_operation_indentation(
+        source.as_bytes(),
+        style,
+        indent_width,
+        base_indent_width,
+    )
+    .into_iter()
+    .map(|o| (o.start_offset, o.end_offset, o.column_delta, o.message))
+    .collect()
+}
+
 #[magnus::init(name = "shirobai")]
 fn init(ruby: &Ruby) -> Result<(), Error> {
     let module = ruby.define_module("Shirobai")?;
@@ -96,6 +117,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_safe_navigation_chain",
         function!(check_safe_navigation_chain, 2),
+    )?;
+    module.define_module_function(
+        "check_multiline_operation_indentation",
+        function!(check_multiline_operation_indentation, 4),
     )?;
     Ok(())
 }
