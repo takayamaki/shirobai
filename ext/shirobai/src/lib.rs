@@ -115,6 +115,32 @@ fn check_variable_number(
     (offenses, had_correct)
 }
 
+/// Ruby entry point for `Naming/MethodName`. Returns one entry per method-name
+/// site: `[[start, end, name, valid, alt, fb_start, fb_end, fb_name], ...]`.
+/// AllowedPatterns / Forbidden filtering and style bookkeeping stay on the Ruby
+/// side.
+#[allow(clippy::type_complexity)]
+fn check_method_name(
+    source: String,
+    style: u8,
+) -> Vec<(usize, usize, String, bool, u8, usize, usize, String)> {
+    shirobai_core::rules::method_name::check_method_name(source.as_bytes(), style)
+        .into_iter()
+        .map(|c| {
+            (
+                c.start_offset,
+                c.end_offset,
+                c.name,
+                c.valid,
+                c.alternative,
+                c.forbidden_start,
+                c.forbidden_end,
+                c.forbidden_name,
+            )
+        })
+        .collect()
+}
+
 /// Ruby entry point for `Lint/SafeNavigationChain`. Returns
 /// `[[start, end, replacement, wrap_start, wrap_end], ...]`.
 fn check_safe_navigation_chain(
@@ -279,6 +305,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         function!(check_multiline_method_call_indentation, 4),
     )?;
     module.define_module_function("check_dot_position", function!(check_dot_position, 2))?;
+    module.define_module_function("check_method_name", function!(check_method_name, 2))?;
     module.define_module_function(
         "check_multiline_bundle",
         function!(check_multiline_bundle, 3),
