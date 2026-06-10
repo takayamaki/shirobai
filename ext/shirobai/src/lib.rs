@@ -332,6 +332,25 @@ fn check_line_length_breakables(
     .collect()
 }
 
+/// Ruby entry point for `Style/LineEndConcatenation`. Returns one entry per
+/// offense: `[[op_start, op_end, operator, replace_start, replace_end], ...]`.
+/// `[op_start, op_end)` is the offense range; `[replace_start, replace_end)` is
+/// the range Ruby replaces with `\`.
+fn check_line_end_concatenation(source: String) -> Vec<(usize, usize, String, usize, usize)> {
+    shirobai_core::rules::line_end_concatenation::check_line_end_concatenation(source.as_bytes())
+        .into_iter()
+        .map(|o| {
+            (
+                o.start_offset,
+                o.end_offset,
+                o.operator,
+                o.replace_start,
+                o.replace_end,
+            )
+        })
+        .collect()
+}
+
 #[magnus::init(name = "shirobai")]
 fn init(ruby: &Ruby) -> Result<(), Error> {
     let module = ruby.define_module("Shirobai")?;
@@ -359,6 +378,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         function!(check_line_length_breakables, 3),
     )?;
     module.define_module_function("check_method_name", function!(check_method_name, 2))?;
+    module.define_module_function(
+        "check_line_end_concatenation",
+        function!(check_line_end_concatenation, 1),
+    )?;
     module.define_module_function(
         "check_multiline_bundle",
         function!(check_multiline_bundle, 3),
