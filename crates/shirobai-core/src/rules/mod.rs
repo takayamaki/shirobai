@@ -9,6 +9,7 @@ pub mod dot_position;
 pub mod first_argument_indentation;
 pub mod indentation_width;
 pub mod line_end_concatenation;
+pub mod line_index;
 pub mod line_length;
 pub mod line_length_breakable;
 pub mod method_name;
