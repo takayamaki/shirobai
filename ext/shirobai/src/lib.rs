@@ -3,7 +3,11 @@ use magnus::{Error, Ruby, function};
 /// Ruby entry point for `Lint/Debugger`. Takes the source, the flattened
 /// `DebuggerMethods` list and the flattened `DebuggerRequires` list, and
 /// returns `[[start_offset, end_offset], ...]`.
-fn check_debugger(source: String, methods: Vec<String>, requires: Vec<String>) -> Vec<(usize, usize)> {
+fn check_debugger(
+    source: String,
+    methods: Vec<String>,
+    requires: Vec<String>,
+) -> Vec<(usize, usize)> {
     shirobai_core::rules::debugger::check_debugger(source.as_bytes(), &methods, &requires)
         .into_iter()
         .map(|o| (o.start_offset, o.end_offset))
@@ -26,7 +30,16 @@ fn check_block_length(
         &count_as_one,
     )
     .into_iter()
-    .map(|c| (c.start_offset, c.end_offset, c.head_end, c.length, c.method_name, c.receiver))
+    .map(|c| {
+        (
+            c.start_offset,
+            c.end_offset,
+            c.head_end,
+            c.length,
+            c.method_name,
+            c.receiver,
+        )
+    })
     .collect()
 }
 
@@ -66,7 +79,15 @@ fn check_variable_number(
     );
     let offenses = offenses
         .into_iter()
-        .map(|o| (o.start_offset, o.end_offset, o.identifier_type, o.name, o.alternative))
+        .map(|o| {
+            (
+                o.start_offset,
+                o.end_offset,
+                o.identifier_type,
+                o.name,
+                o.alternative,
+            )
+        })
         .collect();
     (offenses, had_correct)
 }
@@ -82,7 +103,15 @@ fn check_safe_navigation_chain(
         &nil_methods,
     )
     .into_iter()
-    .map(|o| (o.start_offset, o.end_offset, o.replacement, o.wrap_start, o.wrap_end))
+    .map(|o| {
+        (
+            o.start_offset,
+            o.end_offset,
+            o.replacement,
+            o.wrap_start,
+            o.wrap_end,
+        )
+    })
     .collect()
 }
 
