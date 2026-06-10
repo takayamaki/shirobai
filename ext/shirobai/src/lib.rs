@@ -71,6 +71,21 @@ fn check_variable_number(
     (offenses, had_correct)
 }
 
+/// Ruby entry point for `Lint/SafeNavigationChain`. Returns
+/// `[[start, end, replacement, wrap_start, wrap_end], ...]`.
+fn check_safe_navigation_chain(
+    source: String,
+    nil_methods: Vec<String>,
+) -> Vec<(usize, usize, String, usize, usize)> {
+    shirobai_core::rules::safe_navigation_chain::check_safe_navigation_chain(
+        source.as_bytes(),
+        &nil_methods,
+    )
+    .into_iter()
+    .map(|o| (o.start_offset, o.end_offset, o.replacement, o.wrap_start, o.wrap_end))
+    .collect()
+}
+
 #[magnus::init(name = "shirobai")]
 fn init(ruby: &Ruby) -> Result<(), Error> {
     let module = ruby.define_module("Shirobai")?;
@@ -78,5 +93,9 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function("check_block_length", function!(check_block_length, 4))?;
     module.define_module_function("check_complexity", function!(check_complexity, 1))?;
     module.define_module_function("check_variable_number", function!(check_variable_number, 4))?;
+    module.define_module_function(
+        "check_safe_navigation_chain",
+        function!(check_safe_navigation_chain, 2),
+    )?;
     Ok(())
 }
