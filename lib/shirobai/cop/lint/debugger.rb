@@ -15,7 +15,19 @@ module Shirobai
         def self.badge = RuboCop::Cop::Badge.parse("Lint/Debugger")
 
         def on_new_investigation
-          # not implemented yet
+          source = processed_source.raw_source
+          Shirobai.check_debugger(source, debugger_methods).each do |start_offset, end_offset|
+            range = Parser::Source::Range.new(processed_source.buffer, start_offset, end_offset)
+            add_offense(range, message: format(MSG, source: range.source))
+          end
+        end
+
+        private
+
+        def debugger_methods
+          config = cop_config.fetch("DebuggerMethods", [])
+          list = config.is_a?(Array) ? config : config.values.flatten
+          list.grep(String)
         end
       end
     end
