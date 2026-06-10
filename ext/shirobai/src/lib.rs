@@ -316,16 +316,22 @@ fn check_line_length(
 /// per source line that can be broken: `[[line_index, insert_offset,
 /// delimiter], ...]`. `insert_offset` is the byte offset before which a break is
 /// inserted; `delimiter` is empty for an ordinary newline break or the string
-/// quote for a `SplitStrings` continuation.
+/// quote for a `SplitStrings` continuation. `candidate_lines` is the set of
+/// 0-based line indexes that exceed `Max` (the `LineLength` candidates); only
+/// those lines' breakables are computed, since a non-candidate line can never
+/// become an offense and therefore never consumes a breakable range.
 fn check_line_length_breakables(
     source: String,
     max: usize,
     split_strings: bool,
+    candidate_lines: Vec<usize>,
 ) -> Vec<(usize, usize, String)> {
-    shirobai_core::rules::line_length_breakable::compute_breakables(
+    let candidates: std::collections::HashSet<usize> = candidate_lines.into_iter().collect();
+    shirobai_core::rules::line_length_breakable::compute_breakables_filtered(
         source.as_bytes(),
         max,
         split_strings,
+        Some(&candidates),
     )
     .into_iter()
     .map(|b| (b.line_index, b.insert_offset, b.delimiter))
@@ -491,7 +497,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function("check_line_length", function!(check_line_length, 3))?;
     module.define_module_function(
         "check_line_length_breakables",
-        function!(check_line_length_breakables, 3),
+        function!(check_line_length_breakables, 4),
     )?;
     module.define_module_function("check_method_name", function!(check_method_name, 2))?;
     module.define_module_function(

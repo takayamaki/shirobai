@@ -27,8 +27,16 @@ module Shirobai
 
         def on_new_investigation
           source = processed_source.raw_source
-          compute_breakables(source)
-          Shirobai.check_line_length(source, max, tab_indentation_width || 0).each do |candidate|
+          candidates = Shirobai.check_line_length(source, max, tab_indentation_width || 0)
+
+          # Breakable (autocorrection) data is only ever consumed for lines that
+          # become offenses, and only candidate lines (length > Max) can. So we
+          # restrict the expensive break-point computation to candidate lines —
+          # the result for those lines is identical to computing it for all.
+          candidate_line_indexes = candidates.map { |candidate| candidate[0] }
+          compute_breakables(source, candidate_line_indexes)
+
+          candidates.each do |candidate|
             line_index, length, _line_start, _line_end, _indent_diff, heredoc_delimiters = candidate
             line = processed_source.lines[line_index]
             check_candidate(line, line_index, length, heredoc_delimiters)
@@ -38,13 +46,17 @@ module Shirobai
         private
 
         # Build the per-line autocorrection data (insertion byte offset and,
-        # for `SplitStrings`, the string delimiter). Mirrors upstream's
-        # `breakable_range_by_line_index` / `breakable_string_delimiters`.
-        def compute_breakables(source)
+        # for `SplitStrings`, the string delimiter) for the given candidate
+        # lines. Mirrors upstream's `breakable_range_by_line_index` /
+        # `breakable_string_delimiters`.
+        def compute_breakables(source, candidate_line_indexes)
           buffer = processed_source.buffer
           @breakable_range_by_line_index = {}
           @breakable_string_delimiters = {}
-          Shirobai.check_line_length_breakables(source, max, !!allow_string_split?).each do |entry|
+          breakables = Shirobai.check_line_length_breakables(
+            source, max, !!allow_string_split?, candidate_line_indexes
+          )
+          breakables.each do |entry|
             line_index, insert_offset, delimiter = entry
             @breakable_range_by_line_index[line_index] =
               Parser::Source::Range.new(buffer, insert_offset, insert_offset + 1)

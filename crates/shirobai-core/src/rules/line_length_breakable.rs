@@ -17,6 +17,7 @@
 //! and `RuboCop::Cop::CheckLineBreakable`.
 
 use ruby_prism::{Node, Visit};
+use std::collections::HashSet;
 
 /// A break that may be inserted on a particular source line. At most one per
 /// line (the first builder to claim a line wins, matching upstream's
@@ -33,6 +34,23 @@ pub struct Breakable {
 /// `max` is the configured `Max`; `split_strings` is the `SplitStrings` option
 /// (when false, string/dstr splitting is disabled, matching upstream).
 pub fn compute_breakables(source: &[u8], max: usize, split_strings: bool) -> Vec<Breakable> {
+    compute_breakables_filtered(source, max, split_strings, None)
+}
+
+/// Like [`compute_breakables`], but when `candidate_lines` is `Some`, only the
+/// breakable on a line whose 0-based index is in the set is computed.
+///
+/// The AST is still walked in full (the walk is cheap), but the expensive
+/// break-point extraction is skipped for any node whose claim line is not a
+/// candidate. Because a line that is not a `LineLength` candidate (length ≤
+/// `Max`) can never become an offense, it can never consume a breakable range,
+/// so the output for candidate lines is identical to the unfiltered output.
+pub fn compute_breakables_filtered(
+    source: &[u8],
+    max: usize,
+    split_strings: bool,
+    candidate_lines: Option<&HashSet<usize>>,
+) -> Vec<Breakable> {
     super::parse_cache::with_parsed(source, |source, node| {
         // Collect literal/comment ranges from the already-parsed AST (we must
         // not re-enter the parse cache while it is borrowed).
@@ -45,6 +63,7 @@ pub fn compute_breakables(source: &[u8], max: usize, split_strings: bool) -> Vec
             source,
             max,
             split_strings,
+            candidate_lines,
             stack: Vec::new(),
             ranges: std::collections::BTreeMap::new(),
             delimiters: std::collections::BTreeMap::new(),
@@ -141,6 +160,9 @@ struct BreakableVisitor<'a> {
     source: &'a [u8],
     max: usize,
     split_strings: bool,
+    /// When `Some`, only lines whose 0-based index is in the set may produce a
+    /// breakable; other lines are skipped before the expensive extraction.
+    candidate_lines: Option<&'a HashSet<usize>>,
     stack: Vec<Frame>,
     ranges: std::collections::BTreeMap<usize, usize>,
     delimiters: std::collections::BTreeMap<usize, String>,
@@ -165,6 +187,15 @@ impl BreakableVisitor<'_> {
                     .unwrap_or_default(),
             })
             .collect()
+    }
+
+    /// Whether the given 0-based line index may produce a breakable. Always
+    /// true when no candidate filter is active.
+    fn is_candidate(&self, line_index: usize) -> bool {
+        match self.candidate_lines {
+            Some(set) => set.contains(&line_index),
+            None => true,
+        }
     }
 
     fn claim(&mut self, line_index: usize, insert_offset: usize) {
@@ -211,6 +242,9 @@ impl BreakableVisitor<'_> {
                 continue;
             }
             let line_index = line_of(self.source, semi) - 1;
+            if !self.is_candidate(line_index) {
+                continue;
+            }
             // Overwrite (semicolons win and overwrite earlier semicolons).
             self.ranges.insert(line_index, end_pos);
         }
@@ -531,13 +565,16 @@ impl<'pr> BreakableVisitor<'_> {
         if expr_first_line != bl || bf != expr_first_line {
             return;
         }
+        let line_index = expr_first_line - 1;
+        if !self.is_candidate(line_index) {
+            return;
+        }
         if let Some(r) = receiver
             && receiver_contains_heredoc(self.source, r)
         {
             return;
         }
 
-        let line_index = expr_first_line - 1;
         let begin_pos = self.breakable_block_range_begin(block, is_lambda);
         self.claim(line_index, begin_pos + 1);
     }
@@ -550,6 +587,9 @@ impl<'pr> BreakableVisitor<'_> {
         let (lf, ll) = node_lines(self.source, &lambda.as_node());
         let expr_first_line = line_of(self.source, block_expr_start);
         if lf != ll || lf != expr_first_line {
+            return;
+        }
+        if !self.is_candidate(expr_first_line - 1) {
             return;
         }
         // Lambdas always use `{ }` / `do end`; `breakable_block_range` for a
@@ -609,6 +649,9 @@ impl<'pr> BreakableVisitor<'_> {
     ) {
         let line_index = line_of(self.source, node.location().start_offset()) - 1;
         if self.ranges.contains_key(&line_index) {
+            return;
+        }
+        if !self.is_candidate(line_index) {
             return;
         }
         if !self.breakable_string(node, s) {
@@ -812,6 +855,9 @@ impl<'pr> BreakableVisitor<'_> {
         if self.ranges.contains_key(&line_index) {
             return;
         }
+        if !self.is_candidate(line_index) {
+            return;
+        }
         for part in &parts {
             if let Some(embed) = part.as_embedded_statements_node() {
                 let loc = embed.as_node().location();
@@ -847,9 +893,23 @@ impl<'pr> BreakableVisitor<'_> {
     // --- breakable node -------------------------------------------------
 
     fn check_for_breakable_node(&mut self, node: &Node<'pr>) {
+        // Cheap pre-filter: a breakable node is only extracted when the
+        // container's first line exceeds `max` (see
+        // `extract_breakable_node_from_elements`), which means that line is a
+        // `LineLength` candidate. If it is not, no claim can happen, so skip the
+        // expensive extraction entirely.
+        if self.candidate_lines.is_some() {
+            let (first_line, _) = node_lines(self.source, node);
+            if !self.is_candidate(first_line - 1) {
+                return;
+            }
+        }
         if let Some(bn) = self.extract_breakable_node(node) {
             let start = bn.location().start_offset();
             let line_index = line_of(self.source, start) - 1;
+            if !self.is_candidate(line_index) {
+                return;
+            }
             self.claim(line_index, start);
         }
     }
@@ -1195,6 +1255,83 @@ mod tests {
             .into_iter()
             .map(|b| (b.line_index, b.insert_offset, b.delimiter))
             .collect()
+    }
+
+    fn run_filtered(
+        src: &str,
+        max: usize,
+        split: bool,
+        candidates: &HashSet<usize>,
+    ) -> Vec<(usize, usize, String)> {
+        compute_breakables_filtered(src.as_bytes(), max, split, Some(candidates))
+            .into_iter()
+            .map(|b| (b.line_index, b.insert_offset, b.delimiter))
+            .collect()
+    }
+
+    /// The real candidate set: lines whose visible length exceeds `max`.
+    fn candidate_lines(src: &str, max: usize) -> HashSet<usize> {
+        super::super::line_length::check_line_length(src.as_bytes(), max, 0)
+            .into_iter()
+            .map(|c| c.line_index)
+            .collect()
+    }
+
+    /// For an arbitrary source, the filtered output (using the real candidate
+    /// set) must equal the unfiltered output restricted to candidate lines.
+    fn assert_filter_parity(src: &str, max: usize, split: bool) {
+        let candidates = candidate_lines(src, max);
+        let unfiltered: Vec<_> = run(src, max, split)
+            .into_iter()
+            .filter(|(li, _, _)| candidates.contains(li))
+            .collect();
+        let filtered = run_filtered(src, max, split, &candidates);
+        assert_eq!(filtered, unfiltered, "filter parity failed for:\n{src}");
+    }
+
+    // Filtering to the real candidate set is identical to the unfiltered output
+    // restricted to candidate lines, across a variety of breakable shapes.
+    #[test]
+    fn filter_parity_mixed() {
+        let long_hash = "{abc: \"100000\", def: \"100000\", ghi: \"100000\", jkl: \"100000\", mno: \"100000\"}\n";
+        let short = "x = 1\n";
+        let call = format!("method_call {}, abc\n", "x".repeat(28));
+        let block = "foo.select { |bar| 4444000039123123129993912312312999199291203123123 }\n";
+        let semi = "{foo: 1, bar: \"2\"}; a = 400000000000 + 500000000000000\n";
+        let split_str = "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbb'\n";
+
+        // A file mixing candidate and non-candidate lines.
+        let combined = format!("{short}{long_hash}{short}{call}{block}{semi}{short}");
+        assert_filter_parity(&combined, 40, false);
+        assert_filter_parity(&combined, 40, true);
+
+        assert_filter_parity(long_hash, 40, false);
+        assert_filter_parity(&call, 40, false);
+        assert_filter_parity(block, 40, false);
+        assert_filter_parity(semi, 40, false);
+        assert_filter_parity(split_str, 40, true);
+    }
+
+    // A multi-line / heredoc breakable: the claim line must still match between
+    // filtered and unfiltered.
+    #[test]
+    fn filter_parity_heredoc() {
+        let src = "foo(<<~SQL, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)\n  SELECT 1\nSQL\n";
+        assert_filter_parity(src, 40, false);
+
+        let dstr = "x = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa#{bbbbbbbbbbbbbbbbbbbbbbbbbb}cccc\"\n";
+        assert_filter_parity(dstr, 40, true);
+    }
+
+    // When the candidate set is empty, no breakables are produced even though
+    // the unfiltered run would find some.
+    #[test]
+    fn empty_candidate_set_yields_nothing() {
+        let src = "{abc: \"100000\", def: \"100000\", ghi: \"100000\", jkl: \"100000\", mno: \"100000\"}\n";
+        let empty = HashSet::new();
+        assert!(run_filtered(src, 40, false, &empty).is_empty());
+        // Sanity: unfiltered does find one.
+        assert_eq!(run(src, 40, false).len(), 1);
     }
 
     // Typical: a hash over the limit is broken before the element that crosses
