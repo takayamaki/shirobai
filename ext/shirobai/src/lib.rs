@@ -373,6 +373,19 @@ fn check_argument_alignment(
     .collect()
 }
 
+/// Ruby entry point for `Style/RedundantSelf`. Returns one entry per redundant
+/// `self` receiver: `[[self_start, self_end, dot_start, dot_end], ...]`. The
+/// `Kernel` method allow-list is supplied by Ruby.
+fn check_redundant_self(
+    source: String,
+    kernel_methods: Vec<String>,
+) -> Vec<(usize, usize, usize, usize)> {
+    shirobai_core::rules::redundant_self::check_redundant_self(source.as_bytes(), &kernel_methods)
+        .into_iter()
+        .map(|o| (o.self_start, o.self_end, o.dot_start, o.dot_end))
+        .collect()
+}
+
 #[magnus::init(name = "shirobai")]
 fn init(ruby: &Ruby) -> Result<(), Error> {
     let module = ruby.define_module("Shirobai")?;
@@ -411,6 +424,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_argument_alignment",
         function!(check_argument_alignment, 4),
+    )?;
+    module.define_module_function(
+        "check_redundant_self",
+        function!(check_redundant_self, 2),
     )?;
     Ok(())
 }
