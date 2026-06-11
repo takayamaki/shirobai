@@ -259,6 +259,13 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         cfg.block_length_filtered,
     );
     let mut cx_rule = complexity::build_rule(source, cfg.max_cyclomatic, cfg.max_perceived);
+    let mut bn_rule = block_nesting::build_rule(
+        source,
+        cfg.block_nesting_max,
+        cfg.block_nesting_count_blocks,
+        cfg.block_nesting_count_modifier_forms,
+    );
+    let mut heredoc_rule = line_length::build_heredoc_rule(source);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -272,6 +279,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut lec_rule,
         &mut bl_rule,
         &mut cx_rule,
+        &mut bn_rule,
+        &mut heredoc_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -294,19 +303,18 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let line_end_concatenation = lec_rule.offenses;
     let block_length = bl_rule.out;
     let complexity = cx_rule.out;
+    let block_nesting = (bn_rule.out, bn_rule.deepest);
 
-    // --- Cops not (yet) on the shared walk. ---
-    let block_nesting = block_nesting::check_block_nesting(
-        source,
-        cfg.block_nesting_max,
-        cfg.block_nesting_count_blocks,
-        cfg.block_nesting_count_modifier_forms,
-    );
+    // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
     // config needs the unfiltered one takes the fallback path on the Ruby side.
     let method_name = method_name::check_method_name_filtered(source, cfg.method_name_style, true);
-    let line_length =
-        line_length::check_line_length(source, cfg.line_length_max, cfg.line_length_tab_width);
+    let line_length = line_length::check_line_length_with_heredocs(
+        source,
+        cfg.line_length_max,
+        cfg.line_length_tab_width,
+        &heredoc_rule.ranges,
+    );
     let candidate_lines: HashSet<usize> = line_length.iter().map(|c| c.line_index).collect();
     let line_length_breakables = line_length_breakable::compute_breakables_filtered(
         source,
@@ -698,6 +706,105 @@ mod tests {
                     b.cyclomatic,
                     b.perceived,
                     &b.method_name
+                )
+            );
+        }
+    }
+
+    /// `Metrics/BlockNesting` merged into the shared walk must report exactly
+    /// what its standalone entry reports, over a source exercising the rescue
+    /// hooks (chained `rescue` clauses are siblings, each a counted level) and
+    /// plain nesting (if/while/case with an over-deep chain).
+    #[test]
+    fn shared_walk_matches_standalone_block_nesting() {
+        let src = "def f\n\
+                   \x20 begin\n\
+                   \x20   x\n\
+                   \x20 rescue A\n\
+                   \x20   if a\n\
+                   \x20     while b\n\
+                   \x20       case c\n\
+                   \x20       when 1 then d\n\
+                   \x20       end\n\
+                   \x20     end\n\
+                   \x20   end\n\
+                   \x20 rescue B\n\
+                   \x20   y\n\
+                   \x20 end\n\
+                   end\n";
+        let (mut nums, lists) = default_packed();
+        nums[3] = 2; // block_nesting max
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let (bn_alone, deepest_alone) = super::block_nesting::check_block_nesting(
+            src.as_bytes(),
+            cfg.block_nesting_max,
+            cfg.block_nesting_count_blocks,
+            cfg.block_nesting_count_modifier_forms,
+        );
+        assert!(!bn_alone.is_empty());
+        assert_eq!(bundle.block_nesting.0.len(), bn_alone.len());
+        assert_eq!(bundle.block_nesting.1, deepest_alone);
+        for (a, b) in bundle.block_nesting.0.iter().zip(&bn_alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset),
+                (b.start_offset, b.end_offset)
+            );
+        }
+    }
+
+    /// `Layout/LineLength` with its heredoc collection on the shared walk must
+    /// report exactly what the standalone entry reports, including the heredoc
+    /// delimiters of over-long lines inside plain, interpolated and stacked
+    /// heredoc bodies.
+    #[test]
+    fn shared_walk_matches_standalone_line_length_heredocs() {
+        let long = "x".repeat(130);
+        let src = format!(
+            "a = <<~SQL\n\
+             \x20 {long}\n\
+             SQL\n\
+             b = <<~MSG\n\
+             \x20 #{{q}} {long}\n\
+             MSG\n\
+             c = [<<~ONE, <<~TWO]\n\
+             \x20 {long}\n\
+             ONE\n\
+             \x20 plain\n\
+             TWO\n\
+             d = '{long}'\n"
+        );
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let ll_alone = super::line_length::check_line_length(
+            src.as_bytes(),
+            cfg.line_length_max,
+            cfg.line_length_tab_width,
+        );
+        // The three heredoc lines and the plain string line are all over Max.
+        assert!(ll_alone.len() >= 4);
+        assert!(ll_alone.iter().any(|c| !c.heredoc_delimiters.is_empty()));
+        assert_eq!(bundle.line_length.len(), ll_alone.len());
+        for (a, b) in bundle.line_length.iter().zip(&ll_alone) {
+            assert_eq!(
+                (
+                    a.line_index,
+                    a.length,
+                    a.line_start,
+                    a.line_end,
+                    a.indentation_difference,
+                    &a.heredoc_delimiters
+                ),
+                (
+                    b.line_index,
+                    b.length,
+                    b.line_start,
+                    b.line_end,
+                    b.indentation_difference,
+                    &b.heredoc_delimiters
                 )
             );
         }

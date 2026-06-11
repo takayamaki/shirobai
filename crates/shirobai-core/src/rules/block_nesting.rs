@@ -31,21 +31,29 @@ pub fn check_block_nesting(
     count_blocks: bool,
     count_modifier_forms: bool,
 ) -> (Vec<BlockNestingOffense>, usize) {
-    super::parse_cache::with_parsed(source, |source, node| {
-        let mut checker = Checker {
-            source,
-            max,
-            count_blocks,
-            count_modifier_forms,
-            out: Vec::new(),
-            deepest: 0,
-            current_level: 0,
-            ignore_depth: 0,
-            stack: Vec::new(),
-        };
-        checker.visit(node);
-        (checker.out, checker.deepest)
-    })
+    let mut checker = build_rule(source, max, count_blocks, count_modifier_forms);
+    super::parse_cache::with_parsed(source, |_source, node| checker.visit(node));
+    (checker.out, checker.deepest)
+}
+
+/// Build the rule for use standalone or in a shared-walk bundle.
+pub(crate) fn build_rule(
+    source: &[u8],
+    max: usize,
+    count_blocks: bool,
+    count_modifier_forms: bool,
+) -> Checker<'_> {
+    Checker {
+        source,
+        max,
+        count_blocks,
+        count_modifier_forms,
+        out: Vec::new(),
+        deepest: 0,
+        current_level: 0,
+        ignore_depth: 0,
+        stack: Vec::new(),
+    }
 }
 
 /// What a considered node contributes, mirroring RuboCop's `count_if_block?`.
@@ -69,13 +77,13 @@ struct Frame {
     opened_ignore: bool,
 }
 
-struct Checker<'a> {
+pub(crate) struct Checker<'a> {
     source: &'a [u8],
     max: usize,
     count_blocks: bool,
     count_modifier_forms: bool,
-    out: Vec<BlockNestingOffense>,
-    deepest: usize,
+    pub(crate) out: Vec<BlockNestingOffense>,
+    pub(crate) deepest: usize,
     current_level: usize,
     /// `0` when not suppressing; otherwise the stack length at which the
     /// suppressing ancestor was entered (its subtree is ignored).
@@ -175,6 +183,28 @@ impl Checker<'_> {
                 self.ignore_depth = 0;
             }
         }
+    }
+}
+
+/// Shared-walk driver. The rescue hooks mirror the standalone
+/// `visit_rescue_node` override below: each `rescue` clause is a counted level
+/// around its own children, while the chained `subsequent` clause is a sibling
+/// outside the frame (the walker visits it after `leave_rescue`).
+impl super::dispatch::Rule for Checker<'_> {
+    fn enter(&mut self, node: &Node<'_>) {
+        Checker::enter(self, node);
+    }
+
+    fn leave(&mut self) {
+        Checker::leave(self);
+    }
+
+    fn enter_rescue(&mut self, node: &Node<'_>) {
+        Checker::enter(self, node);
+    }
+
+    fn leave_rescue(&mut self) {
+        Checker::leave(self);
     }
 }
 

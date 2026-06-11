@@ -9,7 +9,7 @@
 //! Line length is measured in characters (`chars().count()`), not bytes, with a
 //! tab-width adjustment matching RuboCop's `indentation_difference`.
 
-use ruby_prism::Visit;
+use ruby_prism::{Node, Visit};
 
 /// A line that exceeds `Max`. Ruby decides whether it is ultimately exempt.
 pub struct LineLengthCandidate {
@@ -63,6 +63,18 @@ fn char_count(line: &[u8]) -> usize {
 /// tab adjustment.
 pub fn check_line_length(source: &[u8], max: usize, tab_width: usize) -> Vec<LineLengthCandidate> {
     let heredocs = collect_heredocs(source);
+    check_line_length_with_heredocs(source, max, tab_width, &heredocs)
+}
+
+/// The per-line scan with the heredoc body ranges already collected (the only
+/// AST-dependent input). The bundle gathers the ranges on its shared walk and
+/// calls this directly; [`check_line_length`] collects them with its own walk.
+pub(crate) fn check_line_length_with_heredocs(
+    source: &[u8],
+    max: usize,
+    tab_width: usize,
+    heredocs: &[(usize, usize, String)],
+) -> Vec<LineLengthCandidate> {
     let end_line = end_marker_line(source);
 
     let mut candidates = Vec::new();
@@ -150,23 +162,27 @@ fn end_marker_line(source: &[u8]) -> Option<usize> {
 /// `body.first_line...body.last_line` covers the content lines, and the
 /// delimiter is the stripped end-marker source.
 fn collect_heredocs(source: &[u8]) -> Vec<(usize, usize, String)> {
-    super::parse_cache::with_parsed(source, |source, node| {
-        let mut visitor = HeredocVisitor {
-            source,
-            ranges: Vec::new(),
-        };
-        visitor.visit(node);
-        visitor.ranges
-    })
+    let mut visitor = build_heredoc_rule(source);
+    super::parse_cache::with_parsed(source, |_source, node| visitor.visit(node));
+    visitor.ranges
+}
+
+/// Build the heredoc-range collector for use standalone or in a shared-walk
+/// bundle.
+pub(crate) fn build_heredoc_rule(source: &[u8]) -> HeredocVisitor<'_> {
+    HeredocVisitor {
+        source,
+        ranges: Vec::new(),
+    }
 }
 
 fn line_of(source: &[u8], off: usize) -> usize {
     source[..off].iter().filter(|&&b| b == b'\n').count() + 1
 }
 
-struct HeredocVisitor<'a> {
+pub(crate) struct HeredocVisitor<'a> {
     source: &'a [u8],
-    ranges: Vec<(usize, usize, String)>,
+    pub(crate) ranges: Vec<(usize, usize, String)>,
 }
 
 impl HeredocVisitor<'_> {
@@ -198,8 +214,8 @@ impl HeredocVisitor<'_> {
     }
 }
 
-impl<'pr> Visit<'pr> for HeredocVisitor<'pr> {
-    fn visit_string_node(&mut self, node: &ruby_prism::StringNode<'pr>) {
+impl HeredocVisitor<'_> {
+    fn process_string(&mut self, node: &ruby_prism::StringNode<'_>) {
         if let (Some(opening), Some(closing)) = (node.opening_loc(), node.closing_loc()) {
             let content = node.content_loc();
             self.record(
@@ -211,7 +227,7 @@ impl<'pr> Visit<'pr> for HeredocVisitor<'pr> {
         }
     }
 
-    fn visit_interpolated_string_node(&mut self, node: &ruby_prism::InterpolatedStringNode<'pr>) {
+    fn process_interpolated_string(&mut self, node: &ruby_prism::InterpolatedStringNode<'_>) {
         if let (Some(opening), Some(closing)) = (node.opening_loc(), node.closing_loc())
             && let Some(first) = node.parts().iter().next()
         {
@@ -225,12 +241,9 @@ impl<'pr> Visit<'pr> for HeredocVisitor<'pr> {
                 closing,
             );
         }
-        for part in node.parts().iter() {
-            self.visit(&part);
-        }
     }
 
-    fn visit_x_string_node(&mut self, node: &ruby_prism::XStringNode<'pr>) {
+    fn process_x_string(&mut self, node: &ruby_prism::XStringNode<'_>) {
         let content = node.content_loc();
         self.record(
             node.opening_loc(),
@@ -240,10 +253,7 @@ impl<'pr> Visit<'pr> for HeredocVisitor<'pr> {
         );
     }
 
-    fn visit_interpolated_x_string_node(
-        &mut self,
-        node: &ruby_prism::InterpolatedXStringNode<'pr>,
-    ) {
+    fn process_interpolated_x_string(&mut self, node: &ruby_prism::InterpolatedXStringNode<'_>) {
         if let Some(first) = node.parts().iter().next() {
             let closing = node.closing_loc();
             self.record(
@@ -253,8 +263,55 @@ impl<'pr> Visit<'pr> for HeredocVisitor<'pr> {
                 closing,
             );
         }
+    }
+}
+
+impl<'pr> Visit<'pr> for HeredocVisitor<'_> {
+    fn visit_string_node(&mut self, node: &ruby_prism::StringNode<'pr>) {
+        self.process_string(node);
+    }
+
+    fn visit_interpolated_string_node(&mut self, node: &ruby_prism::InterpolatedStringNode<'pr>) {
+        self.process_interpolated_string(node);
         for part in node.parts().iter() {
             self.visit(&part);
+        }
+    }
+
+    fn visit_x_string_node(&mut self, node: &ruby_prism::XStringNode<'pr>) {
+        self.process_x_string(node);
+    }
+
+    fn visit_interpolated_x_string_node(
+        &mut self,
+        node: &ruby_prism::InterpolatedXStringNode<'pr>,
+    ) {
+        self.process_interpolated_x_string(node);
+        for part in node.parts().iter() {
+            self.visit(&part);
+        }
+    }
+}
+
+/// Shared-walk driver. Plain / `%x` string nodes are leaves (the leaf hook);
+/// their interpolated counterparts are branch nodes whose parts the shared
+/// walk recurses into, exactly like the typed visits above.
+impl super::dispatch::Rule for HeredocVisitor<'_> {
+    fn enter(&mut self, node: &Node<'_>) {
+        if let Some(s) = node.as_interpolated_string_node() {
+            self.process_interpolated_string(&s);
+        } else if let Some(s) = node.as_interpolated_x_string_node() {
+            self.process_interpolated_x_string(&s);
+        }
+    }
+
+    fn leave(&mut self) {}
+
+    fn enter_leaf(&mut self, node: &Node<'_>) {
+        if let Some(s) = node.as_string_node() {
+            self.process_string(&s);
+        } else if let Some(s) = node.as_x_string_node() {
+            self.process_x_string(&s);
         }
     }
 }
