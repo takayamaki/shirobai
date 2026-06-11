@@ -1,9 +1,9 @@
 use ruby_prism::{Node, Visit, visit_call_node, visit_lambda_node};
 
-/// A block whose body length exceeds `Max`. The cheap, config-driven filtering
-/// (`AllowedMethods` / `AllowedPatterns` / receiver exclusion) is left to the
-/// Ruby side, which has the exact regexp semantics; Rust only does the costly
-/// parsing and line counting and reports the candidates.
+/// A block whose body length exceeds `Max`. On the default fast path the
+/// `AllowedMethods` exclusion (incl. receiver-qualified entries) is applied
+/// here too; the regex-based `AllowedPatterns` filtering always stays on the
+/// Ruby side, which has the exact regexp semantics.
 pub struct BlockLengthCandidate {
     pub start_offset: usize,
     pub end_offset: usize,
@@ -21,6 +21,23 @@ pub fn check_block_length(
     count_comments: bool,
     count_as_one: &[String],
 ) -> Vec<BlockLengthCandidate> {
+    check_block_length_filtered(source, max, count_comments, count_as_one, &[], false)
+}
+
+/// Like [`check_block_length`], but when `filtered` is set the `AllowedMethods`
+/// exclusion (exact-name entries and receiver-qualified `Foo.bar` entries) is
+/// applied here, byte-for-byte like the Ruby wrapper's `allowed_method?` +
+/// `method_receiver_excluded?`, so allowlisted blocks never cross back into
+/// Ruby. The regex-based `AllowedPatterns` cannot move here; when patterns are
+/// configured the Ruby side passes `filtered: false` and keeps the full path.
+pub fn check_block_length_filtered(
+    source: &[u8],
+    max: usize,
+    count_comments: bool,
+    count_as_one: &[String],
+    allowed_methods: &[String],
+    filtered: bool,
+) -> Vec<BlockLengthCandidate> {
     let fold = Fold::from_types(count_as_one);
     super::parse_cache::with_parsed(source, |source, node| {
         let mut visitor = Visitor {
@@ -28,6 +45,8 @@ pub fn check_block_length(
             max,
             count_comments,
             fold,
+            allowed_methods,
+            filtered,
             out: Vec::new(),
         };
         visitor.visit(node);
@@ -70,6 +89,8 @@ struct Visitor<'a> {
     max: usize,
     count_comments: bool,
     fold: Fold,
+    allowed_methods: &'a [String],
+    filtered: bool,
     out: Vec<BlockLengthCandidate>,
 }
 
@@ -185,6 +206,36 @@ impl Visitor<'_> {
         }
     }
 
+    /// Fast-path port of the Ruby wrapper's `allowed_method?` +
+    /// `method_receiver_excluded?` (themselves ports of stock `BlockLength`).
+    /// `allowed_method?` matches the whole entry against the method name;
+    /// `method_receiver_excluded?` splits each entry Ruby-style on `"."` — a
+    /// dotless entry is method-only and matches any receiver, otherwise the
+    /// receiver part must equal the whitespace-stripped receiver source.
+    fn excluded(&self, method_name: &str, receiver: &str) -> bool {
+        if !self.filtered || self.allowed_methods.is_empty() {
+            return false;
+        }
+        if self.allowed_methods.iter().any(|e| e == method_name) {
+            return true;
+        }
+        // `node_receiver.empty? ? nil : node_receiver.gsub(/\s+/, "")`.
+        let node_receiver: Option<String> = if receiver.is_empty() {
+            None
+        } else {
+            Some(receiver.chars().filter(|c| !is_ruby_space(*c)).collect())
+        };
+        self.allowed_methods.iter().any(|entry| {
+            let (first, second) = split_dot_first_two(entry);
+            let (cfg_receiver, cfg_method) = match second {
+                Some(method) => (first, Some(method)),
+                // Dotless entry: method-only, matches any receiver.
+                None => (node_receiver.as_deref(), first),
+            };
+            cfg_method == Some(method_name) && cfg_receiver == node_receiver.as_deref()
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn push_candidate(
         &mut self,
@@ -204,6 +255,24 @@ impl Visitor<'_> {
             receiver,
         });
     }
+}
+
+/// Ruby `\s` (the ASCII whitespace class incl. vertical tab), as matched by
+/// the `gsub(/\s+/, "")` receiver normalization.
+fn is_ruby_space(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\r' | '\n' | '\u{b}' | '\u{c}')
+}
+
+/// Ruby-compatible `entry.split(".")` limited to the first two parts: trailing
+/// empty strings are dropped (`"a." → ["a"]`, `"" → []`), embedded empties are
+/// kept (`".b" → ["", "b"]`) and parts beyond the second are ignored
+/// (`"a.b.c"` → `("a", "b")`), exactly like the Ruby destructuring assignment.
+fn split_dot_first_two(entry: &str) -> (Option<&str>, Option<&str>) {
+    let mut parts: Vec<&str> = entry.split('.').collect();
+    while parts.last().is_some_and(|p| p.is_empty()) {
+        parts.pop();
+    }
+    (parts.first().copied(), parts.get(1).copied())
 }
 
 /// Returns the constant name when `node` is a top-level constant (`Foo` or
@@ -284,14 +353,16 @@ impl<'pr> Visit<'pr> for Visitor<'_> {
                 let loc = node.location();
                 let method_name = String::from_utf8_lossy(node.name().as_slice()).into_owned();
                 let receiver = self.receiver_source(node);
-                self.push_candidate(
-                    loc.start_offset(),
-                    loc.end_offset(),
-                    block_node.opening_loc().end_offset(),
-                    length,
-                    method_name,
-                    receiver,
-                );
+                if !self.excluded(&method_name, &receiver) {
+                    self.push_candidate(
+                        loc.start_offset(),
+                        loc.end_offset(),
+                        block_node.opening_loc().end_offset(),
+                        length,
+                        method_name,
+                        receiver,
+                    );
+                }
             }
         }
         visit_call_node(self, node);
@@ -299,7 +370,7 @@ impl<'pr> Visit<'pr> for Visitor<'_> {
 
     fn visit_lambda_node(&mut self, node: &ruby_prism::LambdaNode<'pr>) {
         let length = self.body_length(node.body());
-        if length > self.max {
+        if length > self.max && !self.excluded("lambda", "") {
             let loc = node.location();
             self.push_candidate(
                 loc.start_offset(),
@@ -482,5 +553,91 @@ mod tests {
         let got = run(src, 2, false);
         assert_eq!(got.methods, vec!["baz"]);
         assert_eq!(got.receivers, vec!["Foo::Bar"]);
+    }
+
+    fn run_allowed(source: &str, allowed: &[&str]) -> Vec<String> {
+        let allowed: Vec<String> = allowed.iter().map(|s| s.to_string()).collect();
+        check_block_length_filtered(source.as_bytes(), 2, false, &[], &allowed, true)
+            .into_iter()
+            .map(|c| c.method_name)
+            .collect()
+    }
+
+    const LONG_BLOCK: &str = "foo.refine do\n  a = 1\n  a = 2\n  a = 3\nend";
+
+    // allowed_method?: a whole entry equal to the method name excludes it.
+    #[test]
+    fn allowed_method_exact_name() {
+        assert!(run_allowed(LONG_BLOCK, &["refine"]).is_empty());
+        assert_eq!(run_allowed(LONG_BLOCK, &["refine2"]), vec!["refine"]);
+    }
+
+    // Receiver-qualified entry: receiver must equal the whitespace-stripped
+    // receiver source, method must equal the method name.
+    #[test]
+    fn receiver_qualified_entry() {
+        assert!(run_allowed(LONG_BLOCK, &["foo.refine"]).is_empty());
+        assert_eq!(run_allowed(LONG_BLOCK, &["bar.refine"]), vec!["refine"]);
+        assert_eq!(run_allowed(LONG_BLOCK, &["foo.other"]), vec!["refine"]);
+    }
+
+    // The node receiver is whitespace-stripped before comparing; the entry is
+    // not (it is cut at every dot instead).
+    #[test]
+    fn whitespace_stripped_receiver() {
+        let src = "[1, 2].each do\n  a = 1\n  a = 2\n  a = 3\nend";
+        assert!(run_allowed(src, &["[1,2].each"]).is_empty());
+        assert_eq!(run_allowed(src, &["[1, 2].each"]), vec!["each"]);
+    }
+
+    // A dotted receiver can only be excluded by a dotless (method-only) entry,
+    // because Ruby's split(".") cuts the entry at every dot ("Foo.bar.baz"
+    // yields receiver "Foo", method "bar" — never receiver "Foo.bar").
+    #[test]
+    fn dotted_receiver_split_at_every_dot() {
+        let src = "Foo\n  .bar\n  .baz do\n  a = 1\n  a = 2\n  a = 3\nend";
+        assert_eq!(run_allowed(src, &["Foo.bar.baz"]), vec!["baz"]);
+        assert_eq!(run_allowed(src, &["Foo.baz"]), vec!["baz"]);
+        assert!(run_allowed(src, &["baz"]).is_empty());
+    }
+
+    // A receiver-qualified entry never matches a receiverless block, and a
+    // dotless entry matches regardless of receiver (stock semantics).
+    #[test]
+    fn receiverless_block_vs_qualified_entry() {
+        let src = "something do\n  a = 1\n  a = 2\n  a = 3\nend";
+        assert_eq!(run_allowed(src, &["Foo.something"]), vec!["something"]);
+        assert!(run_allowed(src, &["something"]).is_empty());
+        assert!(run_allowed(LONG_BLOCK, &["refine"]).is_empty());
+    }
+
+    // Ruby split(".") edge cases: trailing dots are dropped ("refine." is
+    // method-only), parts beyond the second are ignored ("a.b.c" => ("a","b")),
+    // and an empty entry matches nothing.
+    #[test]
+    fn split_edge_cases() {
+        assert!(run_allowed(LONG_BLOCK, &["refine."]).is_empty());
+        let src = "a.b do\n  x = 1\n  x = 2\n  x = 3\nend";
+        assert!(run_allowed(src, &["a.b.c"]).is_empty());
+        assert_eq!(run_allowed(src, &[""]), vec!["b"]);
+        assert_eq!(run_allowed(src, &["."]), vec!["b"]);
+    }
+
+    // Lambdas are matched as method "lambda" with no receiver.
+    #[test]
+    fn lambda_allowed_by_name() {
+        let src = "-> {\n  a = 1\n  a = 2\n  a = 3\n}";
+        assert_eq!(run_allowed(src, &[]), vec!["lambda"]);
+        assert!(run_allowed(src, &["lambda"]).is_empty());
+        assert_eq!(run_allowed(src, &["Foo.lambda"]), vec!["lambda"]);
+    }
+
+    // filtered: false ignores the allowlist entirely (slow path).
+    #[test]
+    fn unfiltered_ignores_allowlist() {
+        let allowed = vec!["refine".to_string()];
+        let got =
+            check_block_length_filtered(LONG_BLOCK.as_bytes(), 2, false, &[], &allowed, false);
+        assert_eq!(got.len(), 1);
     }
 }

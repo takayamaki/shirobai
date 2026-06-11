@@ -25,19 +25,25 @@ fn check_debugger(
 }
 
 /// Ruby entry point for `Metrics/BlockLength`. Returns one entry per block
-/// whose body exceeds `max`: `[[start, end, length, method_name, receiver], ...]`.
-/// Config-driven allow filtering is applied on the Ruby side.
+/// whose body exceeds `max`: `[[start, end, head_end, length, method_name,
+/// receiver], ...]`. With `filtered` (no AllowedPatterns configured) the
+/// `AllowedMethods` exclusion is applied in Rust from the String entries in
+/// `allowed_methods`; otherwise all allow filtering stays on the Ruby side.
 fn check_block_length(
     source: RString,
     max: usize,
     count_comments: bool,
     count_as_one: Vec<String>,
+    allowed_methods: Vec<String>,
+    filtered: bool,
 ) -> Vec<(usize, usize, usize, usize, String, String)> {
-    shirobai_core::rules::block_length::check_block_length(
+    shirobai_core::rules::block_length::check_block_length_filtered(
         bytes(&source),
         max,
         count_comments,
         &count_as_one,
+        &allowed_methods,
+        filtered,
     )
     .into_iter()
     .map(|c| {
@@ -508,7 +514,7 @@ fn check_indentation_width(
 fn init(ruby: &Ruby) -> Result<(), Error> {
     let module = ruby.define_module("Shirobai")?;
     module.define_module_function("check_debugger", function!(check_debugger, 3))?;
-    module.define_module_function("check_block_length", function!(check_block_length, 4))?;
+    module.define_module_function("check_block_length", function!(check_block_length, 6))?;
     module.define_module_function("check_complexity", function!(check_complexity, 3))?;
     module.define_module_function("check_block_nesting", function!(check_block_nesting, 4))?;
     module.define_module_function("check_variable_number", function!(check_variable_number, 4))?;
