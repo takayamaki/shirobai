@@ -16,6 +16,7 @@
 //! `check_for_breakable_node` / `_block` / `_semicolons` / `_str` / `_dstr`
 //! and `RuboCop::Cop::CheckLineBreakable`.
 
+use super::line_index::LineIndex;
 use ruby_prism::{Node, Visit};
 use std::collections::HashSet;
 
@@ -56,16 +57,20 @@ pub fn compute_breakables_filtered(
     if candidate_lines.is_some_and(|c| c.is_empty()) {
         return Vec::new();
     }
+    let line_index = super::line_index::with_line_index(source, |li| li.clone());
     super::parse_cache::with_parsed(source, |source, node| {
         // Collect literal/comment ranges from the already-parsed AST (we must
         // not re-enter the parse cache while it is borrowed).
         let literals = collect_literal_ranges(node);
         let comments = comment_byte_ranges_with(source, &literals);
-        let comment_lines: std::collections::BTreeSet<usize> =
-            comments.iter().map(|&(s, _)| line_of(source, s)).collect();
+        let comment_lines: std::collections::BTreeSet<usize> = comments
+            .iter()
+            .map(|&(s, _)| line_index.line_of(s))
+            .collect();
 
         let mut v = BreakableVisitor {
             source,
+            line_index: &line_index,
             max,
             split_strings,
             candidate_lines,
@@ -86,26 +91,6 @@ pub fn compute_breakables_filtered(
     })
 }
 
-/// Byte offset of the start of the line containing `off`.
-fn line_start_of(source: &[u8], off: usize) -> usize {
-    source[..off]
-        .iter()
-        .rposition(|&b| b == b'\n')
-        .map(|p| p + 1)
-        .unwrap_or(0)
-}
-
-/// Character column of `off` within its line (0-based).
-fn col_of(source: &[u8], off: usize) -> usize {
-    let start = line_start_of(source, off);
-    char_count(&source[start..off])
-}
-
-/// One-based line number of `off`.
-fn line_of(source: &[u8], off: usize) -> usize {
-    source[..off].iter().filter(|&&b| b == b'\n').count() + 1
-}
-
 fn char_count(bytes: &[u8]) -> usize {
     match std::str::from_utf8(bytes) {
         Ok(s) => s.chars().count(),
@@ -115,8 +100,8 @@ fn char_count(bytes: &[u8]) -> usize {
 
 /// Last column (0-based char column of the end offset) on the node's *last*
 /// line. Mirrors `source_range.last_column`.
-fn last_column(source: &[u8], end_off: usize) -> usize {
-    col_of(source, end_off)
+fn last_column(li: &LineIndex, source: &[u8], end_off: usize) -> usize {
+    li.column(source, end_off)
 }
 
 /// Lightweight ancestor frame. Prism has no parent pointers, so we track the
@@ -163,6 +148,7 @@ struct ElemLoc {
 
 struct BreakableVisitor<'a> {
     source: &'a [u8],
+    line_index: &'a LineIndex,
     max: usize,
     split_strings: bool,
     /// When `Some`, only lines whose 0-based index is in the set may produce a
@@ -246,7 +232,7 @@ impl BreakableVisitor<'_> {
             if next == b';' {
                 continue;
             }
-            let line_index = line_of(self.source, semi) - 1;
+            let line_index = self.line_index.line_of(semi) - 1;
             if !self.is_candidate(line_index) {
                 continue;
             }
@@ -419,17 +405,14 @@ fn breakable_collection(node: &Node<'_>, elements: &[Node<'_>]) -> bool {
 }
 
 /// One-based first/last line of a node's location.
-fn node_lines(source: &[u8], node: &Node<'_>) -> (usize, usize) {
+fn node_lines(li: &LineIndex, node: &Node<'_>) -> (usize, usize) {
     let loc = node.location();
-    (
-        line_of(source, loc.start_offset()),
-        line_of(source, loc.end_offset()),
-    )
+    (li.line_of(loc.start_offset()), li.line_of(loc.end_offset()))
 }
 
 /// `node.multiline?`
-fn multiline(source: &[u8], node: &Node<'_>) -> bool {
-    let (f, l) = node_lines(source, node);
+fn multiline(li: &LineIndex, node: &Node<'_>) -> bool {
+    let (f, l) = node_lines(li, node);
     f != l
 }
 
@@ -459,7 +442,7 @@ fn first_argument_is_heredoc(source: &[u8], call: &ruby_prism::CallNode<'_>) -> 
 impl<'pr> Visit<'pr> for BreakableVisitor<'_> {
     fn visit_branch_node_enter(&mut self, node: Node<'pr>) {
         self.on_enter(&node);
-        let (first_line, _) = node_lines(self.source, &node);
+        let (first_line, _) = node_lines(self.line_index, &node);
         let kind = self.frame_kind_for(&node);
         let parent_info = parent_info_for(self.source, &node);
         self.stack.push(Frame {
@@ -516,7 +499,7 @@ impl<'pr> BreakableVisitor<'_> {
             let elems = elements
                 .iter()
                 .map(|e| {
-                    let (f, l) = node_lines(self.source, e);
+                    let (f, l) = node_lines(self.line_index, e);
                     ElemLoc {
                         first_line: f,
                         last_line: l,
@@ -563,10 +546,10 @@ impl<'pr> BreakableVisitor<'_> {
         is_lambda: bool,
     ) {
         // `block_node.single_line?`
-        let (bf, bl) = node_lines(self.source, &block.as_node());
+        let (bf, bl) = node_lines(self.line_index, &block.as_node());
         // single_line? is over the whole block expression, whose first line is
         // the receiver/call line.
-        let expr_first_line = line_of(self.source, block_expr_start);
+        let expr_first_line = self.line_index.line_of(block_expr_start);
         if expr_first_line != bl || bf != expr_first_line {
             return;
         }
@@ -589,8 +572,8 @@ impl<'pr> BreakableVisitor<'_> {
         block_expr_start: usize,
         lambda: &ruby_prism::LambdaNode<'pr>,
     ) {
-        let (lf, ll) = node_lines(self.source, &lambda.as_node());
-        let expr_first_line = line_of(self.source, block_expr_start);
+        let (lf, ll) = node_lines(self.line_index, &lambda.as_node());
+        let expr_first_line = self.line_index.line_of(block_expr_start);
         if lf != ll || lf != expr_first_line {
             return;
         }
@@ -652,7 +635,7 @@ impl<'pr> BreakableVisitor<'_> {
         s: &ruby_prism::StringNode<'pr>,
         parent_quote: Option<u8>,
     ) {
-        let line_index = line_of(self.source, node.location().start_offset()) - 1;
+        let line_index = self.line_index.line_of(node.location().start_offset()) - 1;
         if self.ranges.contains_key(&line_index) {
             return;
         }
@@ -675,7 +658,7 @@ impl<'pr> BreakableVisitor<'_> {
     /// gates on `self.split_strings`).
     fn breakable_string(&self, node: &Node<'pr>, _s: &ruby_prism::StringNode<'pr>) -> bool {
         // single_line?
-        if multiline(self.source, node) {
+        if multiline(self.line_index, node) {
             return false;
         }
         // !heredoc?
@@ -723,7 +706,7 @@ impl<'pr> BreakableVisitor<'_> {
     ) -> Option<usize> {
         let (range_begin, range_end) = self.string_source_range(node, parent_quote);
         // return if source_range.last_column < max
-        if last_column(self.source, range_end) < self.max {
+        if last_column(self.line_index, self.source, range_end) < self.max {
             return None;
         }
         let break_end = self.breakable_string_range(node, parent_quote, range_begin, range_end)?;
@@ -779,7 +762,7 @@ impl<'pr> BreakableVisitor<'_> {
             ));
         }
         // adjustment = max - source_range.last_column - 3
-        let last_col = last_column(self.source, range_end) as isize;
+        let last_col = last_column(self.line_index, self.source, range_end) as isize;
         let adjustment = self.max as isize - last_col - 3;
         let size = char_count(&self.source[range_begin..range_end]) as isize;
         if adjustment.abs() > size {
@@ -804,10 +787,12 @@ impl<'pr> BreakableVisitor<'_> {
         // same_line?(node, node.parent): offset by the column difference.
         let parent_start = self.parent_start_offset();
         if let Some(p) = parent_start
-            && line_of(self.source, range_begin) == line_of(self.source, p)
+            && self.line_index.line_of(range_begin) == self.line_index.line_of(p)
         {
-            let node_col = col_of(self.source, node.location().start_offset()) as isize;
-            let parent_col = col_of(self.source, p) as isize;
+            let node_col =
+                self.line_index
+                    .column(self.source, node.location().start_offset()) as isize;
+            let parent_col = self.line_index.column(self.source, p) as isize;
             max_length -= node_col - parent_col;
         }
         let _ = parent_quote;
@@ -856,7 +841,7 @@ impl<'pr> BreakableVisitor<'_> {
         let Some(delimiter) = parent_quote.filter(|q| *q == b'\'' || *q == b'"') else {
             return;
         };
-        let line_index = line_of(self.source, node.location().start_offset()) - 1;
+        let line_index = self.line_index.line_of(node.location().start_offset()) - 1;
         if self.ranges.contains_key(&line_index) {
             return;
         }
@@ -867,8 +852,8 @@ impl<'pr> BreakableVisitor<'_> {
             if let Some(embed) = part.as_embedded_statements_node() {
                 let loc = embed.as_node().location();
                 let begin = loc.start_offset();
-                let col = col_of(self.source, begin);
-                let last_col = last_column(self.source, loc.end_offset());
+                let col = self.line_index.column(self.source, begin);
+                let last_col = last_column(self.line_index, self.source, loc.end_offset());
                 if col < self.max && last_col >= self.max {
                     self.claim_string(line_index, begin, (delimiter as char).to_string());
                     break;
@@ -878,7 +863,7 @@ impl<'pr> BreakableVisitor<'_> {
     }
 
     fn dstr_breakable(&self, node: &Node<'pr>, parts: &[Node<'pr>]) -> bool {
-        if multiline(self.source, node) {
+        if multiline(self.line_index, node) {
             return false;
         }
         if is_heredoc(self.source, node) {
@@ -904,14 +889,14 @@ impl<'pr> BreakableVisitor<'_> {
         // `LineLength` candidate. If it is not, no claim can happen, so skip the
         // expensive extraction entirely.
         if self.candidate_lines.is_some() {
-            let (first_line, _) = node_lines(self.source, node);
+            let (first_line, _) = node_lines(self.line_index, node);
             if !self.is_candidate(first_line - 1) {
                 return;
             }
         }
         if let Some(bn) = self.extract_breakable_node(node) {
             let start = bn.location().start_offset();
-            let line_index = line_of(self.source, start) - 1;
+            let line_index = self.line_index.line_of(start) - 1;
             if !self.is_candidate(line_index) {
                 return;
             }
@@ -954,7 +939,7 @@ impl<'pr> BreakableVisitor<'_> {
         if self.safe_to_ignore(node, is_def) {
             return None;
         }
-        let (first_line, _) = node_lines(self.source, node);
+        let (first_line, _) = node_lines(self.line_index, node);
         if self.line_with_comment(first_line) {
             return None;
         }
@@ -970,7 +955,7 @@ impl<'pr> BreakableVisitor<'_> {
         mut elements: Vec<Node<'pr>>,
         is_call: bool,
     ) -> Option<Node<'pr>> {
-        let (line, _) = node_lines(self.source, node);
+        let (line, _) = node_lines(self.line_index, node);
 
         if is_call {
             let call = node.as_call_node().unwrap();
@@ -998,8 +983,10 @@ impl<'pr> BreakableVisitor<'_> {
     fn within_column_limit(&self, element: Option<&Node<'pr>>, line: usize) -> bool {
         match element {
             Some(e) => {
-                let col = col_of(self.source, e.location().start_offset());
-                let (f, _) = node_lines(self.source, e);
+                let col = self
+                    .line_index
+                    .column(self.source, e.location().start_offset());
+                let (f, _) = node_lines(self.line_index, e);
                 col <= self.max && f == line
             }
             None => false,
@@ -1048,22 +1035,22 @@ impl<'pr> BreakableVisitor<'_> {
     fn already_on_multiple_lines(&self, node: &Node<'pr>, is_def: bool) -> bool {
         if is_def {
             let def = node.as_def_node().unwrap();
-            let (first_line, _) = node_lines(self.source, node);
+            let (first_line, _) = node_lines(self.line_index, node);
             let last_param_last_line = def
                 .parameters()
                 .map(|p| def_params(&p))
-                .and_then(|ps| ps.last().map(|p| node_lines(self.source, p).1));
+                .and_then(|ps| ps.last().map(|p| node_lines(self.line_index, p).1));
             return match last_param_last_line {
                 Some(ll) => first_line != ll,
                 // No parameters: parser raises; treat as not multiline.
                 None => false,
             };
         }
-        multiline(self.source, node)
+        multiline(self.line_index, node)
     }
 
     fn contained_by_breakable_collection_on_same_line(&self, node: &Node<'pr>) -> bool {
-        let (node_first_line, _) = node_lines(self.source, node);
+        let (node_first_line, _) = node_lines(self.line_index, node);
         for frame in self.stack.iter().rev() {
             if frame.first_line != node_first_line {
                 break;
