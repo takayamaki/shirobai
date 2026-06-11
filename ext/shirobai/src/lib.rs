@@ -285,6 +285,26 @@ fn map_hash_each_methods(
         .collect()
 }
 
+#[allow(clippy::type_complexity)]
+fn map_void(
+    v: Vec<shirobai_core::rules::void::VoidOffense>,
+) -> Vec<(usize, usize, String, usize, usize, String, usize, usize)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.start_offset,
+                o.end_offset,
+                o.message,
+                o.replace_start,
+                o.replace_end,
+                o.replacement,
+                o.remove_start,
+                o.remove_end,
+            )
+        })
+        .collect()
+}
+
 fn map_predicate_prefix(
     v: Vec<shirobai_core::rules::predicate_prefix::PredicatePrefixCandidate>,
 ) -> Vec<(usize, usize, String, bool, bool)> {
@@ -356,7 +376,7 @@ fn register_bundle_config(
 
 /// Ruby entry point for the all-cop bundle: computes every cop's result for
 /// `source` in one call, using the config registered under `token`. Returns a
-/// fixed-order 21-slot Array; each slot carries that cop's existing tuple-array
+/// fixed-order 22-slot Array; each slot carries that cop's existing tuple-array
 /// shape (identical to the standalone entry point's return value). The slot
 /// order is mirrored by `Shirobai::Dispatch::SLOTS` on the Ruby side:
 ///
@@ -367,7 +387,7 @@ fn register_bundle_config(
 /// 13 argument_alignment / 14 first_argument_indentation / 15 redundant_self /
 /// 16 indentation_width / 17 predicate_prefix /
 /// 18 closing_parenthesis_indentation / 19 first_array_element_indentation /
-/// 20 hash_each_methods
+/// 20 hash_each_methods / 21 void
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -378,7 +398,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(21);
+        let ary = ruby.ary_new_capa(22);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -404,6 +424,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             r.first_array_element_indentation,
         ))?;
         ary.push(map_hash_each_methods(r.hash_each_methods))?;
+        ary.push(map_void(r.void))?;
         Ok(ary)
     })
 }
@@ -805,6 +826,23 @@ fn check_hash_each_methods(
     )
 }
 
+/// Ruby entry point for `Lint/Void`. Takes the source and the
+/// `CheckForMethodsWithNoSideEffects` flag. Returns one entry per offense:
+/// `[[start, end, message, replace_start, replace_end, replacement,
+/// remove_start, remove_end], ...]` — Ruby replaces `[replace_start,
+/// replace_end)` with `replacement` and removes `[remove_start, remove_end)`
+/// when non-empty (both empty for the stock no-correction cases).
+#[allow(clippy::type_complexity)]
+fn check_void(
+    source: RString,
+    check_nonmutating: bool,
+) -> Vec<(usize, usize, String, usize, usize, String, usize, usize)> {
+    map_void(shirobai_core::rules::void::check_void(
+        bytes(&source),
+        check_nonmutating,
+    ))
+}
+
 /// Ruby entry point for `Style/RedundantSelf`. Returns one entry per redundant
 /// `self` receiver: `[[self_start, self_end, dot_start, dot_end], ...]`. The
 /// `Kernel` method allow-list is supplied by Ruby.
@@ -921,5 +959,6 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         "check_hash_each_methods",
         function!(check_hash_each_methods, 2),
     )?;
+    module.define_module_function("check_void", function!(check_void, 2))?;
     Ok(())
 }

@@ -13,7 +13,7 @@ use super::{
     debugger, dot_position, first_argument_indentation, first_array_element_indentation,
     hash_each_methods, indentation_width, line_end_concatenation, line_length,
     line_length_breakable, method_name, predicate_prefix, redundant_self, safe_navigation_chain,
-    variable_number,
+    variable_number, void,
 };
 
 /// Run `Layout/MultilineOperationIndentation` and
@@ -68,6 +68,7 @@ pub fn check_multiline_bundle(
 /// | 27-33 | indentation_width width / relative_to_receiver / access_modifier_outdent / indented_internal_methods / end_align / def_end_align_def / use_tabs |
 /// | 34  | closing_paren_indent |
 /// | 35-37 | first_array_element style / indent / enforce_fixed_indentation |
+/// | 38  | void_check_nonmutating (`CheckForMethodsWithNoSideEffects`) |
 ///
 /// `lists` (`Vec<String>`), 10 entries:
 ///
@@ -126,9 +127,10 @@ pub struct BundleConfig {
     pub predicate_prefix_name_prefixes: Vec<String>,
     pub predicate_prefix_macros: Vec<String>,
     pub hash_each_allowed_receivers: Vec<String>,
+    pub void_check_nonmutating: bool,
 }
 
-const NUMS_LEN: usize = 38;
+const NUMS_LEN: usize = 39;
 const LISTS_LEN: usize = 10;
 
 impl BundleConfig {
@@ -197,6 +199,7 @@ impl BundleConfig {
             predicate_prefix_name_prefixes: next_list(),
             predicate_prefix_macros: next_list(),
             hash_each_allowed_receivers: next_list(),
+            void_check_nonmutating: nums[38] != 0,
         })
     }
 }
@@ -226,6 +229,7 @@ pub struct BundleResult {
     pub first_array_element_indentation:
         Vec<first_array_element_indentation::FirstArrayElemIndentOffense>,
     pub hash_each_methods: Vec<hash_each_methods::HashEachOffense>,
+    pub void: Vec<void::VoidOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -307,6 +311,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         cfg.first_array_element_enforce_fixed,
     );
     let mut hem_rule = hash_each_methods::build_rule(source, &cfg.hash_each_allowed_receivers);
+    let mut void_rule = void::build_rule(source, cfg.void_check_nonmutating);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -325,6 +330,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut pp_rule,
         &mut cpi_rule,
         &mut hem_rule,
+        &mut void_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -355,6 +361,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let closing_parenthesis_indentation = cpi_rule.offenses;
     let first_array_element_indentation = fae_rule.map(|r| r.offenses).unwrap_or_default();
     let hash_each_methods = hem_rule.offenses;
+    let void = void_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -395,6 +402,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         closing_parenthesis_indentation,
         first_array_element_indentation,
         hash_each_methods,
+        void,
     }
 }
 
@@ -445,6 +453,7 @@ mod tests {
             2, 0, 0, 0, 0, 0, 0, // indentation_width
             2, // closing_paren_indent
             0, 2, 0, // first_array_element_indentation
+            0, // void_check_nonmutating
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -1064,6 +1073,66 @@ mod tests {
         assert!(hem_alone.iter().any(|o| o.remove_end > o.remove_start));
         assert_eq!(bundle.hash_each_methods.len(), hem_alone.len());
         for (a, b) in bundle.hash_each_methods.iter().zip(&hem_alone) {
+            assert_eq!(
+                (
+                    a.start_offset,
+                    a.end_offset,
+                    &a.message,
+                    a.replace_start,
+                    a.replace_end,
+                    &a.replacement,
+                    a.remove_start,
+                    a.remove_end
+                ),
+                (
+                    b.start_offset,
+                    b.end_offset,
+                    &b.message,
+                    b.replace_start,
+                    b.replace_end,
+                    &b.replacement,
+                    b.remove_start,
+                    b.remove_end
+                )
+            );
+        }
+    }
+
+    /// `Lint/Void` merged into the shared walk must report exactly what its
+    /// standalone entry point reports, over a source exercising the
+    /// context-sensitive paths: a void operator and literal in a sequence, an
+    /// `initialize` body (void context), an `each` block (operator checks
+    /// suppressed) and a conditional branch body (offense without correction).
+    #[test]
+    fn shared_walk_matches_standalone_void() {
+        let src = "a == b\n\
+                   42\n\
+                   def initialize\n\
+                   \x20 @x\n\
+                   \x20 @x\n\
+                   end\n\
+                   arr.each do |x|\n\
+                   \x20 x == 1\n\
+                   \x20 7\n\
+                   \x20 done\n\
+                   end\n\
+                   8 unless cond\n\
+                   top\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let void_alone = super::void::check_void(src.as_bytes(), cfg.void_check_nonmutating);
+        assert!(void_alone.len() >= 5);
+        assert!(void_alone.iter().any(|o| o.message.contains("Operator")));
+        assert!(void_alone.iter().any(|o| o.message.contains("Variable")));
+        assert!(
+            void_alone
+                .iter()
+                .any(|o| o.remove_end == 0 && o.replace_end == 0)
+        );
+        assert_eq!(bundle.void.len(), void_alone.len());
+        for (a, b) in bundle.void.iter().zip(&void_alone) {
             assert_eq!(
                 (
                     a.start_offset,

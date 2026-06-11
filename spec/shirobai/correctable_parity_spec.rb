@@ -68,6 +68,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Style::HashEachMethods,
       Shirobai::Cop::Style::HashEachMethods,
       "foo.keys.each { |k| p k }\nbar.each { |unused_key, v| p v }\n"
+    ],
+    # One corrected offense (`self`) plus one whose corrector block stays
+    # empty (a literal in a modifier-conditional branch): both statuses must
+    # match stock.
+    "Lint/Void" => [
+      RuboCop::Cop::Lint::Void,
+      Shirobai::Cop::Lint::Void,
+      "self; top\n42 unless condition\nfoo\n"
     ]
   }
 
