@@ -13,6 +13,10 @@ module Shirobai
 
         MSG = "Redundant `self` detected."
 
+        # Same timing as stock (`KERNEL_METHODS = Kernel.methods(false)`):
+        # snapshot once at load, not per investigation.
+        KERNEL_METHODS = Kernel.methods(false).map(&:to_s).freeze
+
         def self.cop_name = "Style/RedundantSelf"
         def self.badge = RuboCop::Cop::Badge.parse("Style/RedundantSelf")
 
@@ -23,9 +27,8 @@ module Shirobai
         def on_new_investigation
           source = processed_source.raw_source
           buffer = processed_source.buffer
-          kernel_methods = Kernel.methods(false).map(&:to_s)
 
-          Shirobai.check_redundant_self(source, kernel_methods).each do |self_start, self_end, dot_start, dot_end|
+          Shirobai.check_redundant_self(source, KERNEL_METHODS).each do |self_start, self_end, dot_start, dot_end|
             range = Parser::Source::Range.new(buffer, self_start, self_end)
             add_offense(range) do |corrector|
               corrector.remove(range)

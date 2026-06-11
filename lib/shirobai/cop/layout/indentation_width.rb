@@ -78,8 +78,9 @@ module Shirobai
           found
         end
 
+        # Config-derived and stable for the life of the instance.
         def packed_config
-          [
+          @packed_config ||= [
             configured_indentation_width,
             (cop_config["EnforcedStyleAlignWith"] == "relative_to_receiver") ? 1 : 0,
             access_modifier_indentation_style == "outdent" ? 1 : 0,
@@ -126,8 +127,8 @@ module Shirobai
 
         # 1-based line numbers whose content matches an `AllowedPatterns` entry.
         def allowed_line_numbers(source)
-          patterns = allowed_patterns
-          return [] if patterns.empty?
+          @allowed_patterns_list ||= allowed_patterns
+          return [] if @allowed_patterns_list.empty?
 
           source.lines.each_with_index.filter_map do |line, idx|
             (idx + 1) if matches_allowed_pattern?(line.chomp)

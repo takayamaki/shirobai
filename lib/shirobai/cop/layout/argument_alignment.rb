@@ -50,11 +50,20 @@ module Shirobai
         private
 
         def offenses_for_source
-          style = fixed_indentation? ? 1 : 0
-          incompatible = with_first_argument_style? && enforce_hash_argument_with_separator?
           Shirobai.check_argument_alignment(
-            processed_source.raw_source, style, configured_indentation_width, incompatible
+            processed_source.raw_source, style_u8, configured_indentation_width, incompatible?
           )
+        end
+
+        # Config-derived and stable for the life of the instance.
+        def style_u8
+          @style_u8 ||= fixed_indentation? ? 1 : 0
+        end
+
+        def incompatible?
+          return @incompatible if defined?(@incompatible)
+
+          @incompatible = with_first_argument_style? && enforce_hash_argument_with_separator?
         end
 
         def fixed_indentation?

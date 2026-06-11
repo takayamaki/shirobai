@@ -69,17 +69,18 @@ module Shirobai
         end
 
         def count_as_one
-          Array(cop_config["CountAsOne"]).map(&:to_s)
+          @count_as_one ||= Array(cop_config["CountAsOne"]).map(&:to_s)
         end
 
         # Mirror the lazy `RuboCop::Warning` the calculator raises for an unknown
-        # `CountAsOne` type once a block is actually counted.
+        # `CountAsOne` type once a block is actually counted. The unknown set is
+        # config-derived, so compute it once per instance.
         def validate_count_as_one!
-          unknown = count_as_one - FOLDABLE_TYPES
-          return if unknown.empty?
+          @unknown_count_as_one ||= count_as_one - FOLDABLE_TYPES
+          return if @unknown_count_as_one.empty?
 
           raise RuboCop::Warning,
-                "Unknown foldable type: #{unknown.first.to_sym.inspect}. " \
+                "Unknown foldable type: #{@unknown_count_as_one.first.to_sym.inspect}. " \
                 "Valid foldable types are: #{FOLDABLE_TYPES.join(', ')}."
         end
       end

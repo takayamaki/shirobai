@@ -24,12 +24,14 @@ module Shirobai
 
         private
 
+        # The flattened lists are config-derived and an instance's config never
+        # changes, so build them once instead of per file.
         def debugger_methods
-          flatten_config("DebuggerMethods")
+          @debugger_methods ||= flatten_config("DebuggerMethods")
         end
 
         def debugger_requires
-          flatten_config("DebuggerRequires")
+          @debugger_requires ||= flatten_config("DebuggerRequires")
         end
 
         def flatten_config(key)

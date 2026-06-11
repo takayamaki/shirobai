@@ -61,8 +61,12 @@ module Shirobai
           )
         end
 
+        # Config-derived and stable for the life of the instance.
         def enforce_fixed_with_no_line_break?
-          enforce_first_argument_with_fixed_indentation? &&
+          return @enforce_fixed_with_no_line_break if defined?(@enforce_fixed_with_no_line_break)
+
+          @enforce_fixed_with_no_line_break =
+            enforce_first_argument_with_fixed_indentation? &&
             !enable_layout_first_method_argument_line_break?
         end
 

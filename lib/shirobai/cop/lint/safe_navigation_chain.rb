@@ -20,7 +20,7 @@ module Shirobai
 
         def on_new_investigation
           source = processed_source.raw_source
-          methods = nil_methods.map(&:to_s)
+          methods = nil_method_names
           buffer = processed_source.buffer
 
           Shirobai.check_safe_navigation_chain(source, methods).each do |start, fin, replacement, wrap_start, wrap_end|
@@ -36,6 +36,13 @@ module Shirobai
               end
             end
           end
+        end
+
+        private
+
+        # Config-derived and stable for the life of the instance.
+        def nil_method_names
+          @nil_method_names ||= nil_methods.map(&:to_s)
         end
       end
     end
