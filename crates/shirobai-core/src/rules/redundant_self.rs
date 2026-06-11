@@ -95,23 +95,26 @@ const OPERATOR_METHODS: &[&[u8]] = &[
 type Loc = (usize, usize);
 
 pub fn check_redundant_self(source: &[u8], kernel_methods: &[String]) -> Vec<RedundantSelfOffense> {
-    super::parse_cache::with_parsed(source, |_source, node| {
-        let mut visitor = Visitor {
-            kernel_methods,
-            owner_arrays: Vec::new(),
-            subtree: HashMap::new(),
-            block_empty_params: HashMap::new(),
-            ancestors: Vec::new(),
-            mlhs_locs: HashSet::new(),
-            pushed_owner: Vec::new(),
-            offenses: Vec::new(),
-        };
-        visitor.visit(node);
-        visitor.offenses
-    })
+    let mut visitor = build_rule(kernel_methods);
+    super::parse_cache::with_parsed(source, |_source, node| visitor.visit(node));
+    visitor.offenses
 }
 
-struct Visitor<'a> {
+/// Build the rule for use standalone or in a shared-walk bundle.
+pub(crate) fn build_rule(kernel_methods: &[String]) -> Visitor<'_> {
+    Visitor {
+        kernel_methods,
+        owner_arrays: Vec::new(),
+        subtree: HashMap::new(),
+        block_empty_params: HashMap::new(),
+        ancestors: Vec::new(),
+        mlhs_locs: HashSet::new(),
+        pushed_owner: Vec::new(),
+        offenses: Vec::new(),
+    }
+}
+
+pub(crate) struct Visitor<'a> {
     kernel_methods: &'a [String],
     /// Shared scope arrays of the enclosing `def`/`block` owners (RuboCop's
     /// `add_scope`: all descendants of an owner share one array). A `def` pushes
@@ -135,7 +138,7 @@ struct Visitor<'a> {
     /// Per-entered-branch-node flag: whether it pushed an owner array (so
     /// `handle_leave` knows whether to pop one).
     pushed_owner: Vec<bool>,
-    offenses: Vec<RedundantSelfOffense>,
+    pub(crate) offenses: Vec<RedundantSelfOffense>,
 }
 
 impl Visitor<'_> {
@@ -425,20 +428,30 @@ fn multi_targets<'pr>(node: &Node<'pr>) -> Vec<Node<'pr>> {
     out
 }
 
+impl super::dispatch::Rule for Visitor<'_> {
+    /// Fired for every branch node before its children are visited. We run the
+    /// matching RuboCop `on_*` handler here (with the ancestor stack still
+    /// excluding this node, mirroring `node.parent` / `each_ancestor`), then
+    /// push this node so its descendants see it as an ancestor. `leave` pops it
+    /// again.
+    fn enter(&mut self, node: &Node<'_>) {
+        self.handle_enter(node);
+        self.ancestors.push(Self::loc_of(node));
+    }
+
+    fn leave(&mut self) {
+        self.ancestors.pop();
+        self.handle_leave();
+    }
+}
+
 impl<'pr> Visit<'pr> for Visitor<'_> {
-    /// Single generic hook fired for every branch node before its children are
-    /// visited. We run the matching RuboCop `on_*` handler here (with the
-    /// ancestor stack still excluding this node, mirroring `node.parent` /
-    /// `each_ancestor`), then push this node so its descendants see it as an
-    /// ancestor. `visit_branch_node_leave` pops it again.
     fn visit_branch_node_enter(&mut self, node: Node<'pr>) {
-        self.handle_enter(&node);
-        self.ancestors.push(Self::loc_of(&node));
+        super::dispatch::Rule::enter(self, &node);
     }
 
     fn visit_branch_node_leave(&mut self) {
-        self.ancestors.pop();
-        self.handle_leave();
+        super::dispatch::Rule::leave(self);
     }
 }
 

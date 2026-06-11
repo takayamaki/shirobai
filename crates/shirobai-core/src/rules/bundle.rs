@@ -239,9 +239,25 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     );
     let mut snc_rule = safe_navigation_chain::build_rule(source, &cfg.safe_navigation_nil_methods);
     let mut iw_rule = indentation_width::build_rule(source, cfg.indentation_width, &[], &[]);
+    let mut debugger_rule =
+        debugger::build_rule(source, &cfg.debugger_methods, &cfg.debugger_requires);
+    let mut rs_rule = redundant_self::build_rule(&cfg.redundant_self_kernel_methods);
+    let mut vn_rule = variable_number::build_rule(
+        source,
+        cfg.variable_number_style,
+        cfg.variable_number_flags,
+        &cfg.variable_number_allowed_identifiers,
+    );
 
-    let mut rules: Vec<&mut dyn super::dispatch::Rule> =
-        vec![&mut op_rule, &mut mc_rule, &mut snc_rule, &mut iw_rule];
+    let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
+        &mut op_rule,
+        &mut mc_rule,
+        &mut snc_rule,
+        &mut iw_rule,
+        &mut debugger_rule,
+        &mut rs_rule,
+        &mut vn_rule,
+    ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
     }
@@ -256,9 +272,11 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let first_argument_indentation = fa_rule.map(|r| r.offenses).unwrap_or_default();
     let safe_navigation_chain = snc_rule.offenses;
     let indentation_width = iw_rule.offenses;
+    let debugger = debugger_rule.offenses;
+    let redundant_self = rs_rule.offenses;
+    let variable_number = (vn_rule.offenses, vn_rule.had_correct);
 
     // --- Cops not (yet) on the shared walk. ---
-    let debugger = debugger::check_debugger(source, &cfg.debugger_methods, &cfg.debugger_requires);
     let block_length = block_length::check_block_length_filtered(
         source,
         cfg.block_length_max,
@@ -275,12 +293,6 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     );
     let complexity =
         complexity::check_complexity_exceeding(source, cfg.max_cyclomatic, cfg.max_perceived);
-    let variable_number = variable_number::check_variable_number(
-        source,
-        cfg.variable_number_style,
-        cfg.variable_number_flags,
-        &cfg.variable_number_allowed_identifiers,
-    );
     // The bundle always computes the filtered flavor; a `MethodName` whose
     // config needs the unfiltered one takes the fallback path on the Ruby side.
     let method_name = method_name::check_method_name_filtered(source, cfg.method_name_style, true);
@@ -295,8 +307,6 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         Some(&candidate_lines),
     );
     let line_end_concatenation = line_end_concatenation::check_line_end_concatenation(source);
-    let redundant_self =
-        redundant_self::check_redundant_self(source, &cfg.redundant_self_kernel_methods);
     BundleResult {
         debugger,
         block_length,
@@ -500,6 +510,78 @@ mod tests {
             assert_eq!(
                 (a.start_offset, a.end_offset, a.column_delta, &a.message),
                 (b.start_offset, b.end_offset, b.column_delta, &b.message)
+            );
+        }
+    }
+
+    /// The ancestor-stack cops merged into the shared walk (`Lint/Debugger`,
+    /// `Style/RedundantSelf`, `Naming/VariableNumber`) must report exactly what
+    /// their standalone entry points report, over a source exercising their
+    /// context-sensitive paths: debugger calls as arguments vs. statements,
+    /// `self.` with parameter/local/condition shadowing, and identifiers in
+    /// branch (writes) and leaf (symbols, params) positions.
+    #[test]
+    fn shared_walk_matches_standalone_stack_family() {
+        let src = "def f(allowed1, other)\n\
+                   \x20 self.allowed1\n\
+                   \x20 self.flagged\n\
+                   \x20 local_1 = self.other\n\
+                   \x20 binding.pry\n\
+                   \x20 take(binding.pry)\n\
+                   \x20 list.each { custom_debugger }\n\
+                   \x20 if (self.cond_var)\n\
+                   \x20   cond_var = 1\n\
+                   \x20 end\n\
+                   \x20 :sym1\n\
+                   end\n\
+                   x.y = custom_debugger\n\
+                   bad1 = 1\n\
+                   @ivar2 = 2\n";
+        let (nums, lists) = default_packed();
+        let mut cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        cfg.debugger_methods.push("custom_debugger".to_string());
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let debugger_alone = super::debugger::check_debugger(
+            src.as_bytes(),
+            &cfg.debugger_methods,
+            &cfg.debugger_requires,
+        );
+        assert!(!debugger_alone.is_empty());
+        assert_eq!(bundle.debugger.len(), debugger_alone.len());
+        for (a, b) in bundle.debugger.iter().zip(&debugger_alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset),
+                (b.start_offset, b.end_offset)
+            );
+        }
+
+        let rs_alone = super::redundant_self::check_redundant_self(
+            src.as_bytes(),
+            &cfg.redundant_self_kernel_methods,
+        );
+        assert!(!rs_alone.is_empty());
+        assert_eq!(bundle.redundant_self.len(), rs_alone.len());
+        for (a, b) in bundle.redundant_self.iter().zip(&rs_alone) {
+            assert_eq!(
+                (a.self_start, a.self_end, a.dot_start, a.dot_end),
+                (b.self_start, b.self_end, b.dot_start, b.dot_end)
+            );
+        }
+
+        let (vn_alone, vn_had_correct) = super::variable_number::check_variable_number(
+            src.as_bytes(),
+            cfg.variable_number_style,
+            cfg.variable_number_flags,
+            &cfg.variable_number_allowed_identifiers,
+        );
+        assert!(!vn_alone.is_empty());
+        assert_eq!(bundle.variable_number.0.len(), vn_alone.len());
+        assert_eq!(bundle.variable_number.1, vn_had_correct);
+        for (a, b) in bundle.variable_number.0.iter().zip(&vn_alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.identifier_type, &a.name),
+                (b.start_offset, b.end_offset, b.identifier_type, &b.name)
             );
         }
     }

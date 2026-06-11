@@ -71,29 +71,37 @@ pub fn check_variable_number(
     flags: u8,
     allowed_identifiers: &[String],
 ) -> (Vec<VariableNumberOffense>, bool) {
-    super::parse_cache::with_parsed(source, |source, node| {
-        let mut visitor = Visitor {
-            source,
-            style,
-            check_symbols: flags & 1 != 0,
-            check_method_names: flags & 2 != 0,
-            allowed_identifiers,
-            offenses: Vec::new(),
-            had_correct: false,
-        };
-        visitor.visit(node);
-        (visitor.offenses, visitor.had_correct)
-    })
+    let mut visitor = build_rule(source, style, flags, allowed_identifiers);
+    super::parse_cache::with_parsed(source, |_source, node| visitor.visit(node));
+    (visitor.offenses, visitor.had_correct)
 }
 
-struct Visitor<'a> {
+/// Build the rule for use standalone or in a shared-walk bundle.
+pub(crate) fn build_rule<'a>(
+    source: &'a [u8],
+    style: u8,
+    flags: u8,
+    allowed_identifiers: &'a [String],
+) -> Visitor<'a> {
+    Visitor {
+        source,
+        style,
+        check_symbols: flags & 1 != 0,
+        check_method_names: flags & 2 != 0,
+        allowed_identifiers,
+        offenses: Vec::new(),
+        had_correct: false,
+    }
+}
+
+pub(crate) struct Visitor<'a> {
     source: &'a [u8],
     style: u8,
     check_symbols: bool,
     check_method_names: bool,
     allowed_identifiers: &'a [String],
-    offenses: Vec<VariableNumberOffense>,
-    had_correct: bool,
+    pub(crate) offenses: Vec<VariableNumberOffense>,
+    pub(crate) had_correct: bool,
 }
 
 impl Visitor<'_> {
@@ -157,13 +165,25 @@ impl Visitor<'_> {
     }
 }
 
+impl super::dispatch::Rule for Visitor<'_> {
+    fn enter(&mut self, node: &Node<'_>) {
+        self.process(node);
+    }
+
+    fn leave(&mut self) {}
+
+    fn enter_leaf(&mut self, node: &Node<'_>) {
+        self.process(node);
+    }
+}
+
 impl<'pr> Visit<'pr> for Visitor<'_> {
     fn visit_branch_node_enter(&mut self, node: Node<'pr>) {
-        self.process(&node);
+        super::dispatch::Rule::enter(self, &node);
     }
 
     fn visit_leaf_node_enter(&mut self, node: Node<'pr>) {
-        self.process(&node);
+        super::dispatch::Rule::enter_leaf(self, &node);
     }
 }
 

@@ -16,17 +16,24 @@ pub fn check_debugger(
     methods: &[String],
     requires: &[String],
 ) -> Vec<DebuggerOffense> {
-    super::parse_cache::with_parsed(source, |source, node| {
-        let mut visitor = DebuggerVisitor {
-            source,
-            methods,
-            requires,
-            stack: Vec::new(),
-            offenses: Vec::new(),
-        };
-        visitor.visit(node);
-        visitor.offenses
-    })
+    let mut visitor = build_rule(source, methods, requires);
+    super::parse_cache::with_parsed(source, |_source, node| visitor.visit(node));
+    visitor.offenses
+}
+
+/// Build the rule for use standalone or in a shared-walk bundle.
+pub(crate) fn build_rule<'a>(
+    source: &'a [u8],
+    methods: &'a [String],
+    requires: &'a [String],
+) -> DebuggerVisitor<'a> {
+    DebuggerVisitor {
+        source,
+        methods,
+        requires,
+        stack: Vec::new(),
+        offenses: Vec::new(),
+    }
 }
 
 /// Coarse classification of an ancestor node, mirroring the predicates RuboCop's
@@ -63,13 +70,13 @@ fn kind_of(node: &Node<'_>) -> Kind {
     }
 }
 
-struct DebuggerVisitor<'a> {
+pub(crate) struct DebuggerVisitor<'a> {
     source: &'a [u8],
     methods: &'a [String],
     requires: &'a [String],
     /// Ancestor kinds of the node currently being visited (self not included).
     stack: Vec<Kind>,
-    offenses: Vec<DebuggerOffense>,
+    pub(crate) offenses: Vec<DebuggerOffense>,
 }
 
 impl DebuggerVisitor<'_> {
@@ -204,16 +211,26 @@ impl DebuggerVisitor<'_> {
     }
 }
 
-impl<'pr> Visit<'pr> for DebuggerVisitor<'_> {
-    fn visit_branch_node_enter(&mut self, node: Node<'pr>) {
+impl super::dispatch::Rule for DebuggerVisitor<'_> {
+    fn enter(&mut self, node: &Node<'_>) {
         if let Some(call) = node.as_call_node() {
             self.check_call(&call);
         }
-        self.stack.push(kind_of(&node));
+        self.stack.push(kind_of(node));
+    }
+
+    fn leave(&mut self) {
+        self.stack.pop();
+    }
+}
+
+impl<'pr> Visit<'pr> for DebuggerVisitor<'_> {
+    fn visit_branch_node_enter(&mut self, node: Node<'pr>) {
+        super::dispatch::Rule::enter(self, &node);
     }
 
     fn visit_branch_node_leave(&mut self) {
-        self.stack.pop();
+        super::dispatch::Rule::leave(self);
     }
 }
 
