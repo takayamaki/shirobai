@@ -16,6 +16,7 @@ pub mod method_name;
 pub mod multiline_method_call_indentation;
 pub mod multiline_operation_indentation;
 pub mod parse_cache;
+pub mod predicate_prefix;
 pub mod redundant_self;
 pub mod safe_navigation_chain;
 pub mod variable_number;

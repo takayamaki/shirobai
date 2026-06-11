@@ -34,7 +34,8 @@ module Shirobai
       argument_alignment: 13,
       first_argument_indentation: 14,
       redundant_self: 15,
-      indentation_width: 16
+      indentation_width: 16,
+      predicate_prefix: 17
     }.freeze
 
     class << self
@@ -83,6 +84,7 @@ module Shirobai
         fai = Cop::Layout::FirstArgumentIndentation.bundle_args(config)
         iw = Cop::Layout::IndentationWidth.bundle_args(config)
         rs = Cop::Style::RedundantSelf.bundle_args(config)
+        pp = Cop::Naming::PredicatePrefix.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -98,7 +100,7 @@ module Shirobai
           fai[0], fai[1], num(fai[2]),   # FirstArgumentIndentation style / indent / enforce flag
           *iw                            # IndentationWidth packed config (7 nums)
         ]
-        lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0]]
+        lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1]]
         [nums, lists]
       end
 

@@ -11,7 +11,8 @@ use super::multiline_operation_indentation::{self as op, OperationIndentOffense}
 use super::{
     argument_alignment, block_length, block_nesting, complexity, debugger, dot_position,
     first_argument_indentation, indentation_width, line_end_concatenation, line_length,
-    line_length_breakable, method_name, redundant_self, safe_navigation_chain, variable_number,
+    line_length_breakable, method_name, predicate_prefix, redundant_self, safe_navigation_chain,
+    variable_number,
 };
 
 /// Run `Layout/MultilineOperationIndentation` and
@@ -65,7 +66,7 @@ pub fn check_multiline_bundle(
 /// | 24-26 | first_argument_indentation style / indent / enforce_fixed_no_line_break |
 /// | 27-33 | indentation_width width / relative_to_receiver / access_modifier_outdent / indented_internal_methods / end_align / def_end_align_def / use_tabs |
 ///
-/// `lists` (`Vec<String>`), 7 entries:
+/// `lists` (`Vec<String>`), 9 entries:
 ///
 /// | idx | field |
 /// |-----|-------|
@@ -76,6 +77,8 @@ pub fn check_multiline_bundle(
 /// |  4  | variable_number_allowed_identifiers |
 /// |  5  | safe_navigation_nil_methods |
 /// |  6  | redundant_self_kernel_methods |
+/// |  7  | predicate_prefix_name_prefixes |
+/// |  8  | predicate_prefix_macros |
 ///
 /// `Layout/IndentationWidth`'s `allowed_lines` and `prior_ranges` are fixed to
 /// empty in the bundle: the non-empty cases (configured `AllowedPatterns`,
@@ -112,10 +115,12 @@ pub struct BundleConfig {
     pub first_argument_enforce_fixed_no_line_break: bool,
     pub indentation_width: indentation_width::Config,
     pub redundant_self_kernel_methods: Vec<String>,
+    pub predicate_prefix_name_prefixes: Vec<String>,
+    pub predicate_prefix_macros: Vec<String>,
 }
 
 const NUMS_LEN: usize = 34;
-const LISTS_LEN: usize = 7;
+const LISTS_LEN: usize = 9;
 
 impl BundleConfig {
     /// Build a config from the flat wire format (see the struct docs for the
@@ -176,6 +181,8 @@ impl BundleConfig {
                 use_tabs: nums[33] != 0,
             },
             redundant_self_kernel_methods: next_list(),
+            predicate_prefix_name_prefixes: next_list(),
+            predicate_prefix_macros: next_list(),
         })
     }
 }
@@ -199,6 +206,7 @@ pub struct BundleResult {
     pub first_argument_indentation: Vec<first_argument_indentation::FirstArgIndentOffense>,
     pub redundant_self: Vec<redundant_self::RedundantSelfOffense>,
     pub indentation_width: Vec<indentation_width::IndentationOffense>,
+    pub predicate_prefix: Vec<predicate_prefix::PredicatePrefixCandidate>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -266,6 +274,11 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         cfg.block_nesting_count_modifier_forms,
     );
     let mut heredoc_rule = line_length::build_heredoc_rule(source);
+    let mut pp_rule = predicate_prefix::build_rule(
+        source,
+        &cfg.predicate_prefix_name_prefixes,
+        &cfg.predicate_prefix_macros,
+    );
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -281,6 +294,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut cx_rule,
         &mut bn_rule,
         &mut heredoc_rule,
+        &mut pp_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -304,6 +318,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let block_length = bl_rule.out;
     let complexity = cx_rule.out;
     let block_nesting = (bn_rule.out, bn_rule.deepest);
+    let predicate_prefix = pp_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -340,6 +355,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         first_argument_indentation,
         redundant_self,
         indentation_width,
+        predicate_prefix,
     }
 }
 
@@ -397,6 +413,10 @@ mod tests {
             vec![],
             vec!["to_s".to_string()],
             vec!["puts".to_string()],
+            ["is_", "has_", "have_", "does_"].map(String::from).to_vec(),
+            ["define_method", "define_singleton_method"]
+                .map(String::from)
+                .to_vec(),
         ];
         (nums, lists)
     }
@@ -421,6 +441,14 @@ mod tests {
         assert_eq!(cfg.debugger_methods, vec!["binding.pry", "debugger"]);
         assert_eq!(cfg.safe_navigation_nil_methods, vec!["to_s"]);
         assert_eq!(cfg.redundant_self_kernel_methods, vec!["puts"]);
+        assert_eq!(
+            cfg.predicate_prefix_name_prefixes,
+            vec!["is_", "has_", "have_", "does_"]
+        );
+        assert_eq!(
+            cfg.predicate_prefix_macros,
+            vec!["define_method", "define_singleton_method"]
+        );
     }
 
     #[test]
@@ -805,6 +833,54 @@ mod tests {
                     b.line_end,
                     b.indentation_difference,
                     &b.heredoc_delimiters
+                )
+            );
+        }
+    }
+
+    /// `Naming/PredicatePrefix` merged into the shared walk must report exactly
+    /// what its standalone entry point reports, over a source exercising the
+    /// sibling-sensitive Sorbet-sig pairing (sig'd and unsig'd defs), a nested
+    /// class body and a `MethodDefinitionMacros` call.
+    #[test]
+    fn shared_walk_matches_standalone_predicate_prefix() {
+        let src = "sig { returns(T::Boolean) }\n\
+                   def is_attr; end\n\
+                   def has_attr; end\n\
+                   class Foo\n\
+                   \x20 sig { returns(String) }\n\
+                   \x20 def have_name; end\n\
+                   end\n\
+                   define_method(:does_work) do |x|\n\
+                   end\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let pp_alone = super::predicate_prefix::check_predicate_prefix(
+            src.as_bytes(),
+            &cfg.predicate_prefix_name_prefixes,
+            &cfg.predicate_prefix_macros,
+        );
+        assert_eq!(pp_alone.len(), 4);
+        assert!(pp_alone.iter().any(|c| c.sorbet_boolean_sig));
+        assert!(pp_alone.iter().any(|c| !c.is_def));
+        assert_eq!(bundle.predicate_prefix.len(), pp_alone.len());
+        for (a, b) in bundle.predicate_prefix.iter().zip(&pp_alone) {
+            assert_eq!(
+                (
+                    a.start_offset,
+                    a.end_offset,
+                    &a.name,
+                    a.is_def,
+                    a.sorbet_boolean_sig
+                ),
+                (
+                    b.start_offset,
+                    b.end_offset,
+                    &b.name,
+                    b.is_def,
+                    b.sorbet_boolean_sig
                 )
             );
         }
