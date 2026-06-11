@@ -38,6 +38,21 @@ pub fn check_argument_alignment(
     indent_width: usize,
     incompatible: bool,
 ) -> Vec<ArgAlignOffense> {
+    let Some(mut rule) = build_rule(source, style, indent_width, incompatible) else {
+        return Vec::new();
+    };
+    super::dispatch::run(source, &mut [&mut rule]);
+    rule.offenses
+}
+
+/// Build the rule for use standalone or in a shared-walk bundle. `None` when
+/// the cop is disabled outright (`autocorrect_incompatible_with_other_cops?`).
+pub(crate) fn build_rule(
+    source: &[u8],
+    style: u8,
+    indent_width: usize,
+    incompatible: bool,
+) -> Option<Visitor<'_>> {
     let style = if style == 1 {
         Style::WithFixedIndentation
     } else {
@@ -45,26 +60,24 @@ pub fn check_argument_alignment(
     };
     // `autocorrect_incompatible_with_other_cops?`: disables the cop entirely.
     if incompatible && style == Style::WithFirstArgument {
-        return Vec::new();
+        return None;
     }
     let line_index = super::line_index::with_line_index(source, |li| li.clone());
-    let mut rule = Visitor {
+    Some(Visitor {
         source,
         line_index,
         style,
         indent: indent_width,
         offenses: Vec::new(),
-    };
-    super::dispatch::run(source, &mut [&mut rule]);
-    rule.offenses
+    })
 }
 
-struct Visitor<'a> {
+pub(crate) struct Visitor<'a> {
     source: &'a [u8],
     line_index: Rc<LineIndex>,
     style: Style,
     indent: usize,
-    offenses: Vec<ArgAlignOffense>,
+    pub(crate) offenses: Vec<ArgAlignOffense>,
 }
 
 fn loc(l: &Location<'_>) -> (usize, usize) {

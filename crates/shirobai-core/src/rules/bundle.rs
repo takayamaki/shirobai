@@ -201,16 +201,63 @@ pub struct BundleResult {
     pub indentation_width: Vec<indentation_width::IndentationOffense>,
 }
 
-/// Run every cop's existing check function over one source in a single call.
+/// Run every cop over one source in a single call, sharing one parse *and*
+/// (for most cops) one AST walk.
 ///
-/// The first check parses through `parse_cache`; every subsequent check reuses
-/// that parse. No walk merging happens here (each check keeps its own
-/// traversal) — the point of this entry is to collapse the per-cop FFI calls
-/// and config marshaling into one Ruby→Rust round trip per file. The
-/// `LineLength` breakables are derived internally from the `LineLength`
-/// candidates (the `line_index` of every candidate), exactly like the Ruby
-/// wrapper does on the direct path.
+/// The walk-merged cops are built as [`dispatch::Rule`](super::dispatch::Rule)s
+/// and driven together through one `dispatch::run`. Each rule is the same
+/// implementation the cop's standalone `check_*` entry point drives, so the
+/// bundled results are identical to the per-cop results. Cops that cannot share
+/// the generic walk keep their own traversal:
+///
+/// - `Naming/MethodName` deliberately prunes its walk (it skips `def`
+///   parameters and a class' constant path / superclass), so the full shared
+///   walk would feed it nodes its standalone walk never sees.
+/// - The `LineLength` breakables depend on the `LineLength` candidates and
+///   skip their walk entirely when no line is over the limit (the common case).
+///
+/// The line-based `LineLength` scan is not a walk at all; its heredoc
+/// collection (the only AST-dependent part) joins the shared walk. The
+/// breakables are derived from the `LineLength` candidates (the `line_index`
+/// of every candidate), exactly like the Ruby wrapper does on the direct path.
 pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
+    // --- Shared-walk rules, one per merged cop. ---
+    let (op_cfg, mc_cfg) = (cfg.multiline_operation, cfg.multiline_method_call);
+    let mut op_rule = op::build_rule(source, op_cfg.0, op_cfg.1, op_cfg.2);
+    let mut mc_rule = mc::build_rule(source, mc_cfg.0, mc_cfg.1, mc_cfg.2);
+    let mut aa_rule = argument_alignment::build_rule(
+        source,
+        cfg.argument_alignment_style,
+        cfg.argument_alignment_indent,
+        cfg.argument_alignment_incompatible,
+    );
+    let mut fa_rule = first_argument_indentation::build_rule(
+        source,
+        cfg.first_argument_style,
+        cfg.first_argument_indent,
+        cfg.first_argument_enforce_fixed_no_line_break,
+    );
+    let mut snc_rule = safe_navigation_chain::build_rule(source, &cfg.safe_navigation_nil_methods);
+    let mut iw_rule = indentation_width::build_rule(source, cfg.indentation_width, &[], &[]);
+
+    let mut rules: Vec<&mut dyn super::dispatch::Rule> =
+        vec![&mut op_rule, &mut mc_rule, &mut snc_rule, &mut iw_rule];
+    if let Some(rule) = aa_rule.as_mut() {
+        rules.push(rule);
+    }
+    if let Some(rule) = fa_rule.as_mut() {
+        rules.push(rule);
+    }
+    super::dispatch::run(source, &mut rules);
+
+    let multiline_operation = op_rule.offenses;
+    let multiline_method_call = mc_rule.offenses;
+    let argument_alignment = aa_rule.map(|r| r.offenses).unwrap_or_default();
+    let first_argument_indentation = fa_rule.map(|r| r.offenses).unwrap_or_default();
+    let safe_navigation_chain = snc_rule.offenses;
+    let indentation_width = iw_rule.offenses;
+
+    // --- Cops not (yet) on the shared walk. ---
     let debugger = debugger::check_debugger(source, &cfg.debugger_methods, &cfg.debugger_requires);
     let block_length = block_length::check_block_length_filtered(
         source,
@@ -237,14 +284,6 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // The bundle always computes the filtered flavor; a `MethodName` whose
     // config needs the unfiltered one takes the fallback path on the Ruby side.
     let method_name = method_name::check_method_name_filtered(source, cfg.method_name_style, true);
-    let safe_navigation_chain = safe_navigation_chain::check_safe_navigation_chain(
-        source,
-        &cfg.safe_navigation_nil_methods,
-    );
-    let (op_cfg, mc_cfg) = (cfg.multiline_operation, cfg.multiline_method_call);
-    let (multiline_operation, multiline_method_call) = check_multiline_bundle(
-        source, op_cfg.0, op_cfg.1, op_cfg.2, mc_cfg.0, mc_cfg.1, mc_cfg.2,
-    );
     let dot_position = dot_position::check_dot_position(source, cfg.dot_position_style);
     let line_length =
         line_length::check_line_length(source, cfg.line_length_max, cfg.line_length_tab_width);
@@ -256,22 +295,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         Some(&candidate_lines),
     );
     let line_end_concatenation = line_end_concatenation::check_line_end_concatenation(source);
-    let argument_alignment = argument_alignment::check_argument_alignment(
-        source,
-        cfg.argument_alignment_style,
-        cfg.argument_alignment_indent,
-        cfg.argument_alignment_incompatible,
-    );
-    let first_argument_indentation = first_argument_indentation::check_first_argument_indentation(
-        source,
-        cfg.first_argument_style,
-        cfg.first_argument_indent,
-        cfg.first_argument_enforce_fixed_no_line_break,
-    );
     let redundant_self =
         redundant_self::check_redundant_self(source, &cfg.redundant_self_kernel_methods);
-    let indentation_width =
-        indentation_width::check_indentation_width(source, cfg.indentation_width, &[], &[]);
     BundleResult {
         debugger,
         block_length,
@@ -379,6 +404,118 @@ mod tests {
         assert!(BundleConfig::from_packed(&nums[..NUMS_LEN - 1], lists).is_err());
         let (nums, lists) = default_packed();
         assert!(BundleConfig::from_packed(&nums, lists[..LISTS_LEN - 1].to_vec()).is_err());
+    }
+
+    /// The six dispatch-family cops merged into the shared walk must report
+    /// exactly what their standalone entry points report, over a source that
+    /// triggers each of them (multiline operation, multiline method chain,
+    /// misaligned arguments, misindented first argument, safe-navigation chain
+    /// and body misindentation).
+    #[test]
+    fn shared_walk_matches_standalone_dispatch_family() {
+        let src = "def f(x)\n\
+                   \x20     y = x&.a.b\n\
+                   \x20 foo(bar,\n\
+                   \x20       baz)\n\
+                   \x20 z = a +\n\
+                   \x20       b\n\
+                   \x20 qux(\n\
+                   \x20         arg)\n\
+                   end\n\
+                   Foo.a\n\
+                   \x20    .b\n\
+                   \x20     .c\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let op_alone = op::check_multiline_operation_indentation(src.as_bytes(), 0, 2, 2);
+        assert!(!op_alone.is_empty());
+        assert_eq!(bundle.multiline_operation.len(), op_alone.len());
+        for (a, b) in bundle.multiline_operation.iter().zip(&op_alone) {
+            assert_eq!(
+                (a.start_offset, a.column_delta),
+                (b.start_offset, b.column_delta)
+            );
+        }
+
+        let mc_alone = mc::check_multiline_method_call_indentation(src.as_bytes(), 0, 2, 2);
+        assert!(!mc_alone.is_empty());
+        assert_eq!(bundle.multiline_method_call.len(), mc_alone.len());
+        for (a, b) in bundle.multiline_method_call.iter().zip(&mc_alone) {
+            assert_eq!(
+                (a.start_offset, a.column_delta),
+                (b.start_offset, b.column_delta)
+            );
+        }
+
+        let aa_alone =
+            super::argument_alignment::check_argument_alignment(src.as_bytes(), 0, 2, false);
+        assert!(!aa_alone.is_empty());
+        assert_eq!(bundle.argument_alignment.len(), aa_alone.len());
+        for (a, b) in bundle.argument_alignment.iter().zip(&aa_alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.column_delta, a.autocorrect),
+                (b.start_offset, b.end_offset, b.column_delta, b.autocorrect)
+            );
+        }
+
+        let fa_alone = super::first_argument_indentation::check_first_argument_indentation(
+            src.as_bytes(),
+            0,
+            2,
+            false,
+        );
+        assert!(!fa_alone.is_empty());
+        assert_eq!(bundle.first_argument_indentation.len(), fa_alone.len());
+        for (a, b) in bundle.first_argument_indentation.iter().zip(&fa_alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.column_delta, &a.message),
+                (b.start_offset, b.end_offset, b.column_delta, &b.message)
+            );
+        }
+
+        let snc_alone = super::safe_navigation_chain::check_safe_navigation_chain(
+            src.as_bytes(),
+            &cfg.safe_navigation_nil_methods,
+        );
+        assert!(!snc_alone.is_empty());
+        assert_eq!(bundle.safe_navigation_chain.len(), snc_alone.len());
+        for (a, b) in bundle.safe_navigation_chain.iter().zip(&snc_alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, &a.replacement),
+                (b.start_offset, b.end_offset, &b.replacement)
+            );
+        }
+
+        let iw_alone = super::indentation_width::check_indentation_width(
+            src.as_bytes(),
+            cfg.indentation_width,
+            &[],
+            &[],
+        );
+        assert!(!iw_alone.is_empty());
+        assert_eq!(bundle.indentation_width.len(), iw_alone.len());
+        for (a, b) in bundle.indentation_width.iter().zip(&iw_alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.column_delta, &a.message),
+                (b.start_offset, b.end_offset, b.column_delta, &b.message)
+            );
+        }
+    }
+
+    /// A disabled-by-config dispatch-family cop must stay disabled in the
+    /// bundle (its `build_rule` returns `None` and it joins no walk).
+    #[test]
+    fn shared_walk_respects_disabled_rules() {
+        let src = "foo(bar,\n  baz)\n";
+        let (mut nums, lists) = default_packed();
+        nums[23] = 1; // argument_alignment incompatible (with_first_argument)
+        nums[26] = 1; // first_argument enforce_fixed_no_line_break
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        assert!(bundle.argument_alignment.is_empty());
+        assert!(bundle.first_argument_indentation.is_empty());
     }
 
     #[test]

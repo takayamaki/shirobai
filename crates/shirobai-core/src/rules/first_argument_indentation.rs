@@ -58,11 +58,32 @@ pub fn check_first_argument_indentation(
     indent_width: usize,
     enforce_fixed_with_no_line_break: bool,
 ) -> Vec<FirstArgIndentOffense> {
-    if enforce_fixed_with_no_line_break {
+    let Some(mut rule) = build_rule(
+        source,
+        style,
+        indent_width,
+        enforce_fixed_with_no_line_break,
+    ) else {
         return Vec::new();
+    };
+    super::dispatch::run(source, &mut [&mut rule]);
+    rule.offenses
+}
+
+/// Build the rule for use standalone or in a shared-walk bundle. `None` when
+/// the cop is disabled outright (the `enforce_first_argument_with_fixed_indentation`
+/// + no-line-break fast path handled on the Ruby side).
+pub(crate) fn build_rule(
+    source: &[u8],
+    style: u8,
+    indent_width: usize,
+    enforce_fixed_with_no_line_break: bool,
+) -> Option<Visitor<'_>> {
+    if enforce_fixed_with_no_line_break {
+        return None;
     }
     let line_index = super::line_index::with_line_index(source, |li| li.clone());
-    let mut rule = Visitor {
+    Some(Visitor {
         source,
         line_index: line_index.clone(),
         style: Style::from_u8(style),
@@ -70,9 +91,7 @@ pub fn check_first_argument_indentation(
         stack: Vec::new(),
         comment_lines: comment_lines(source, &line_index),
         offenses: Vec::new(),
-    };
-    super::dispatch::run(source, &mut [&mut rule]);
-    rule.offenses
+    })
 }
 
 /// Lightweight ancestor frame. Wrapper kinds (`Arguments`/`Statements`/
@@ -99,7 +118,7 @@ struct Frame {
     kind: FrameKind,
 }
 
-struct Visitor<'a> {
+pub(crate) struct Visitor<'a> {
     source: &'a [u8],
     line_index: Rc<LineIndex>,
     style: Style,
@@ -107,7 +126,7 @@ struct Visitor<'a> {
     stack: Vec<Frame>,
     /// 1-based line numbers of lines that are a comment beginning the line.
     comment_lines: Vec<usize>,
-    offenses: Vec<FirstArgIndentOffense>,
+    pub(crate) offenses: Vec<FirstArgIndentOffense>,
 }
 
 fn loc(l: &Location<'_>) -> (usize, usize) {

@@ -20,14 +20,19 @@ pub fn check_safe_navigation_chain(
     source: &[u8],
     nil_methods: &[String],
 ) -> Vec<SafeNavChainOffense> {
-    let mut rule = Visitor {
+    let mut rule = build_rule(source, nil_methods);
+    super::dispatch::run(source, &mut [&mut rule]);
+    rule.offenses
+}
+
+/// Build the rule for use standalone or in a shared-walk bundle.
+pub(crate) fn build_rule<'a>(source: &'a [u8], nil_methods: &'a [String]) -> Visitor<'a> {
+    Visitor {
         source,
         nil_methods,
         stack: Vec::new(),
         offenses: Vec::new(),
-    };
-    super::dispatch::run(source, &mut [&mut rule]);
-    rule.offenses
+    }
 }
 
 enum TernaryKind {
@@ -59,11 +64,11 @@ enum Frame {
     Opaque,
 }
 
-struct Visitor<'a> {
+pub(crate) struct Visitor<'a> {
     source: &'a [u8],
     nil_methods: &'a [String],
     stack: Vec<Frame>,
-    offenses: Vec<SafeNavChainOffense>,
+    pub(crate) offenses: Vec<SafeNavChainOffense>,
 }
 
 impl<'a> Visitor<'a> {

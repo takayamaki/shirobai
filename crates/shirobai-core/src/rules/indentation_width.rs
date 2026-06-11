@@ -57,9 +57,21 @@ pub fn check_indentation_width(
     allowed_lines: &[usize],
     prior_ranges: &[(usize, usize)],
 ) -> Vec<IndentationOffense> {
+    let mut rule = build_rule(source, config, allowed_lines, prior_ranges);
+    super::dispatch::run(source, &mut [&mut rule]);
+    rule.offenses
+}
+
+/// Build the rule for use standalone or in a shared-walk bundle.
+pub(crate) fn build_rule<'a>(
+    source: &'a [u8],
+    config: Config,
+    allowed_lines: &'a [usize],
+    prior_ranges: &[(usize, usize)],
+) -> Visitor<'a> {
     let bom = source.starts_with(&[0xef, 0xbb, 0xbf]);
     let line_index = super::line_index::with_line_index(source, |li| li.clone());
-    let mut rule = Visitor {
+    Visitor {
         source,
         line_index,
         config,
@@ -72,12 +84,10 @@ pub fn check_indentation_width(
         offenses: Vec::new(),
         ignored: Vec::new(),
         bare_send_stack: Vec::new(),
-    };
-    super::dispatch::run(source, &mut [&mut rule]);
-    rule.offenses
+    }
 }
 
-struct Visitor<'a> {
+pub(crate) struct Visitor<'a> {
     source: &'a [u8],
     line_index: Rc<LineIndex>,
     config: Config,
@@ -85,7 +95,7 @@ struct Visitor<'a> {
     bom: bool,
     /// Registered correction ranges, for `other_offense_in_same_range?`.
     offense_ranges: Vec<(usize, usize)>,
-    offenses: Vec<IndentationOffense>,
+    pub(crate) offenses: Vec<IndentationOffense>,
     /// Node ranges that have been `ignore_node`'d (assignment rhs, def under modifier).
     ignored: Vec<(usize, usize)>,
     /// Ancestor stack used to resolve `leftmost_modifier_of` for `foo def` /
