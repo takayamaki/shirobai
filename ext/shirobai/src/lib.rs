@@ -1,4 +1,7 @@
-use magnus::{Error, RString, Ruby, function};
+use std::cell::RefCell;
+
+use magnus::{Error, RArray, RString, Ruby, function};
+use shirobai_core::rules::bundle::BundleConfig;
 
 /// Bytes of `source`, borrowed straight from the Ruby heap without copying.
 ///
@@ -10,71 +13,39 @@ fn bytes(source: &RString) -> &[u8] {
     unsafe { source.as_slice() }
 }
 
-/// Ruby entry point for `Lint/Debugger`. Takes the source, the flattened
-/// `DebuggerMethods` list and the flattened `DebuggerRequires` list, and
-/// returns `[[start_offset, end_offset], ...]`.
-fn check_debugger(
-    source: RString,
-    methods: Vec<String>,
-    requires: Vec<String>,
-) -> Vec<(usize, usize)> {
-    shirobai_core::rules::debugger::check_debugger(bytes(&source), &methods, &requires)
-        .into_iter()
+// Tuple mappers: one per cop, converting the core result type into the tuple
+// shape handed to Ruby. Shared by the standalone entry points and `check_all`
+// so the per-cop wire shape is defined in exactly one place.
+
+fn map_debugger(v: Vec<shirobai_core::rules::debugger::DebuggerOffense>) -> Vec<(usize, usize)> {
+    v.into_iter()
         .map(|o| (o.start_offset, o.end_offset))
         .collect()
 }
 
-/// Ruby entry point for `Metrics/BlockLength`. Returns one entry per block
-/// whose body exceeds `max`: `[[start, end, head_end, length, method_name,
-/// receiver], ...]`. With `filtered` (no AllowedPatterns configured) the
-/// `AllowedMethods` exclusion is applied in Rust from the String entries in
-/// `allowed_methods`; otherwise all allow filtering stays on the Ruby side.
-fn check_block_length(
-    source: RString,
-    max: usize,
-    count_comments: bool,
-    count_as_one: Vec<String>,
-    allowed_methods: Vec<String>,
-    filtered: bool,
+fn map_block_length(
+    v: Vec<shirobai_core::rules::block_length::BlockLengthCandidate>,
 ) -> Vec<(usize, usize, usize, usize, String, String)> {
-    shirobai_core::rules::block_length::check_block_length_filtered(
-        bytes(&source),
-        max,
-        count_comments,
-        &count_as_one,
-        &allowed_methods,
-        filtered,
-    )
-    .into_iter()
-    .map(|c| {
-        (
-            c.start_offset,
-            c.end_offset,
-            c.head_end,
-            c.length,
-            c.method_name,
-            c.receiver,
-        )
-    })
-    .collect()
+    v.into_iter()
+        .map(|c| {
+            (
+                c.start_offset,
+                c.end_offset,
+                c.head_end,
+                c.length,
+                c.method_name,
+                c.receiver,
+            )
+        })
+        .collect()
 }
 
-/// Ruby entry point for `Metrics/BlockNesting`. Takes the source, the `Max`
-/// level and the `CountBlocks` / `CountModifierForms` flags. Returns
-/// `[[[start, end], ...], deepest_level]`: the reportable offense ranges and the
-/// deepest nesting level that exceeded `Max` (for `ExcludeLimit` bookkeeping).
-fn check_block_nesting(
-    source: RString,
-    max: usize,
-    count_blocks: bool,
-    count_modifier_forms: bool,
+fn map_block_nesting(
+    (offenses, deepest): (
+        Vec<shirobai_core::rules::block_nesting::BlockNestingOffense>,
+        usize,
+    ),
 ) -> (Vec<(usize, usize)>, usize) {
-    let (offenses, deepest) = shirobai_core::rules::block_nesting::check_block_nesting(
-        bytes(&source),
-        max,
-        count_blocks,
-        count_modifier_forms,
-    );
     let offenses = offenses
         .into_iter()
         .map(|o| (o.start_offset, o.end_offset))
@@ -82,50 +53,30 @@ fn check_block_nesting(
     (offenses, deepest)
 }
 
-/// Ruby entry point for the complexity cops. Returns one entry per method
-/// whose score exceeds either threshold (`cyclomatic > max_cyclomatic ||
-/// perceived > max_perceived`; `0` disables a threshold since scores start at
-/// 1): `[[start, end, head_end, name, cyclomatic, perceived], ...]`.
-#[allow(clippy::type_complexity)]
-fn check_complexity(
-    source: RString,
-    max_cyclomatic: usize,
-    max_perceived: usize,
+fn map_complexity(
+    v: Vec<shirobai_core::rules::complexity::MethodComplexity>,
 ) -> Vec<(usize, usize, usize, String, usize, usize)> {
-    shirobai_core::rules::complexity::check_complexity_exceeding(
-        bytes(&source),
-        max_cyclomatic,
-        max_perceived,
-    )
-    .into_iter()
-    .map(|m| {
-        (
-            m.start_offset,
-            m.end_offset,
-            m.head_end,
-            m.method_name,
-            m.cyclomatic,
-            m.perceived,
-        )
-    })
-    .collect()
+    v.into_iter()
+        .map(|m| {
+            (
+                m.start_offset,
+                m.end_offset,
+                m.head_end,
+                m.method_name,
+                m.cyclomatic,
+                m.perceived,
+            )
+        })
+        .collect()
 }
 
-/// Ruby entry point for `Naming/VariableNumber`. Returns
-/// `[[[start, end, id_type, name, alt], ...], had_correct]`.
 #[allow(clippy::type_complexity)]
-fn check_variable_number(
-    source: RString,
-    style: u8,
-    flags: u8,
-    allowed_identifiers: Vec<String>,
+fn map_variable_number(
+    (offenses, had_correct): (
+        Vec<shirobai_core::rules::variable_number::VariableNumberOffense>,
+        bool,
+    ),
 ) -> (Vec<(usize, usize, u8, String, u8)>, bool) {
-    let (offenses, had_correct) = shirobai_core::rules::variable_number::check_variable_number(
-        bytes(&source),
-        style,
-        flags,
-        &allowed_identifiers,
-    );
     let offenses = offenses
         .into_iter()
         .map(|o| {
@@ -141,25 +92,16 @@ fn check_variable_number(
     (offenses, had_correct)
 }
 
-/// Ruby entry point for `Naming/MethodName`. Returns `[candidates, had_valid]`
-/// where each candidate is `[start, end, name, valid, alt, fb_start, fb_end,
-/// fb_name]`. With `filtered` (no AllowedPatterns / Forbidden* config) only the
-/// invalid sites are returned and `had_valid` carries the
-/// `correct_style_detected` bookkeeping; otherwise every site is returned.
 #[allow(clippy::type_complexity)]
-fn check_method_name(
-    source: RString,
-    style: u8,
-    filtered: bool,
+fn map_method_name(
+    (candidates, had_valid): (
+        Vec<shirobai_core::rules::method_name::MethodNameCandidate>,
+        bool,
+    ),
 ) -> (
     Vec<(usize, usize, String, bool, u8, usize, usize, String)>,
     bool,
 ) {
-    let (candidates, had_valid) = shirobai_core::rules::method_name::check_method_name_filtered(
-        bytes(&source),
-        style,
-        filtered,
-    );
     let candidates = candidates
         .into_iter()
         .map(|c| {
@@ -178,27 +120,363 @@ fn check_method_name(
     (candidates, had_valid)
 }
 
+fn map_safe_navigation_chain(
+    v: Vec<shirobai_core::rules::safe_navigation_chain::SafeNavChainOffense>,
+) -> Vec<(usize, usize, String, usize, usize)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.start_offset,
+                o.end_offset,
+                o.replacement,
+                o.wrap_start,
+                o.wrap_end,
+            )
+        })
+        .collect()
+}
+
+fn map_multiline_operation(
+    v: Vec<shirobai_core::rules::multiline_operation_indentation::OperationIndentOffense>,
+) -> Vec<(usize, usize, isize, String)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.column_delta, o.message))
+        .collect()
+}
+
+#[allow(clippy::type_complexity)]
+fn map_multiline_method_call(
+    v: Vec<shirobai_core::rules::multiline_method_call_indentation::MethodCallIndentOffense>,
+) -> Vec<(usize, usize, isize, String, usize, usize, usize, usize)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.start_offset,
+                o.end_offset,
+                o.column_delta,
+                o.message,
+                o.block_body_start,
+                o.block_body_end,
+                o.block_end_start,
+                o.block_end_end,
+            )
+        })
+        .collect()
+}
+
+fn map_dot_position(
+    v: Vec<shirobai_core::rules::dot_position::DotPositionOffense>,
+) -> Vec<(usize, usize, usize, usize, usize)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.start_offset,
+                o.end_offset,
+                o.remove_start,
+                o.remove_end,
+                o.insert_pos,
+            )
+        })
+        .collect()
+}
+
+#[allow(clippy::type_complexity)]
+fn map_line_length(
+    v: Vec<shirobai_core::rules::line_length::LineLengthCandidate>,
+) -> Vec<(usize, usize, usize, usize, usize, Vec<String>)> {
+    v.into_iter()
+        .map(|c| {
+            (
+                c.line_index,
+                c.length,
+                c.line_start,
+                c.line_end,
+                c.indentation_difference,
+                c.heredoc_delimiters,
+            )
+        })
+        .collect()
+}
+
+fn map_line_length_breakables(
+    v: Vec<shirobai_core::rules::line_length_breakable::Breakable>,
+) -> Vec<(usize, usize, String)> {
+    v.into_iter()
+        .map(|b| (b.line_index, b.insert_offset, b.delimiter))
+        .collect()
+}
+
+fn map_line_end_concatenation(
+    v: Vec<shirobai_core::rules::line_end_concatenation::LineEndConcatOffense>,
+) -> Vec<(usize, usize, String, usize, usize)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.start_offset,
+                o.end_offset,
+                o.operator,
+                o.replace_start,
+                o.replace_end,
+            )
+        })
+        .collect()
+}
+
+fn map_argument_alignment(
+    v: Vec<shirobai_core::rules::argument_alignment::ArgAlignOffense>,
+) -> Vec<(usize, usize, isize, bool)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.column_delta, o.autocorrect))
+        .collect()
+}
+
+#[allow(clippy::type_complexity)]
+fn map_first_argument_indentation(
+    v: Vec<shirobai_core::rules::first_argument_indentation::FirstArgIndentOffense>,
+) -> Vec<(usize, usize, isize, String, bool, usize, usize)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.start_offset,
+                o.end_offset,
+                o.column_delta,
+                o.message,
+                o.autocorrect,
+                o.correct_start,
+                o.correct_end,
+            )
+        })
+        .collect()
+}
+
+fn map_redundant_self(
+    v: Vec<shirobai_core::rules::redundant_self::RedundantSelfOffense>,
+) -> Vec<(usize, usize, usize, usize)> {
+    v.into_iter()
+        .map(|o| (o.self_start, o.self_end, o.dot_start, o.dot_end))
+        .collect()
+}
+
+#[allow(clippy::type_complexity)]
+fn map_indentation_width(
+    v: Vec<shirobai_core::rules::indentation_width::IndentationOffense>,
+) -> Vec<(usize, usize, isize, String, bool, usize, usize)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.start_offset,
+                o.end_offset,
+                o.column_delta,
+                o.message,
+                o.autocorrect,
+                o.correct_start,
+                o.correct_end,
+            )
+        })
+        .collect()
+}
+
+thread_local! {
+    /// Bundle configs registered by `register_bundle_config` (token = index,
+    /// no eviction: a lint run registers one entry per distinct `Config`
+    /// object, i.e. a handful). Thread-local under the same assumption as
+    /// `parse_cache`: an in-process RuboCop run drives its cops from a single
+    /// thread (`--parallel` forks processes instead).
+    static BUNDLE_CONFIGS: RefCell<Vec<BundleConfig>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Ruby entry point registering a packed [`BundleConfig`] for `check_all`.
+/// `nums` / `lists` follow the packing order documented on `BundleConfig`.
+/// Returns the token to pass to `check_all`.
+fn register_bundle_config(
+    ruby: &Ruby,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Result<usize, Error> {
+    let cfg = BundleConfig::from_packed(&nums, lists)
+        .map_err(|e| Error::new(ruby.exception_arg_error(), e))?;
+    Ok(BUNDLE_CONFIGS.with(|cell| {
+        let mut configs = cell.borrow_mut();
+        configs.push(cfg);
+        configs.len() - 1
+    }))
+}
+
+/// Ruby entry point for the all-cop bundle: computes every cop's result for
+/// `source` in one call, using the config registered under `token`. Returns a
+/// fixed-order 17-slot Array; each slot carries that cop's existing tuple-array
+/// shape (identical to the standalone entry point's return value). The slot
+/// order is mirrored by `Shirobai::Dispatch::SLOTS` on the Ruby side:
+///
+/// 0 debugger / 1 block_length / 2 block_nesting / 3 complexity /
+/// 4 variable_number / 5 method_name / 6 safe_navigation_chain /
+/// 7 multiline_operation / 8 multiline_method_call / 9 dot_position /
+/// 10 line_length / 11 line_length_breakables / 12 line_end_concatenation /
+/// 13 argument_alignment / 14 first_argument_indentation / 15 redundant_self /
+/// 16 indentation_width
+fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
+    BUNDLE_CONFIGS.with(|cell| {
+        let configs = cell.borrow();
+        let cfg = configs.get(token).ok_or_else(|| {
+            Error::new(
+                ruby.exception_arg_error(),
+                format!("unknown bundle config token {token}"),
+            )
+        })?;
+        let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
+        let ary = ruby.ary_new_capa(17);
+        ary.push(map_debugger(r.debugger))?;
+        ary.push(map_block_length(r.block_length))?;
+        ary.push(map_block_nesting(r.block_nesting))?;
+        ary.push(map_complexity(r.complexity))?;
+        ary.push(map_variable_number(r.variable_number))?;
+        ary.push(map_method_name(r.method_name))?;
+        ary.push(map_safe_navigation_chain(r.safe_navigation_chain))?;
+        ary.push(map_multiline_operation(r.multiline_operation))?;
+        ary.push(map_multiline_method_call(r.multiline_method_call))?;
+        ary.push(map_dot_position(r.dot_position))?;
+        ary.push(map_line_length(r.line_length))?;
+        ary.push(map_line_length_breakables(r.line_length_breakables))?;
+        ary.push(map_line_end_concatenation(r.line_end_concatenation))?;
+        ary.push(map_argument_alignment(r.argument_alignment))?;
+        ary.push(map_first_argument_indentation(r.first_argument_indentation))?;
+        ary.push(map_redundant_self(r.redundant_self))?;
+        ary.push(map_indentation_width(r.indentation_width))?;
+        Ok(ary)
+    })
+}
+
+/// Ruby entry point for `Lint/Debugger`. Takes the source, the flattened
+/// `DebuggerMethods` list and the flattened `DebuggerRequires` list, and
+/// returns `[[start_offset, end_offset], ...]`.
+fn check_debugger(
+    source: RString,
+    methods: Vec<String>,
+    requires: Vec<String>,
+) -> Vec<(usize, usize)> {
+    map_debugger(shirobai_core::rules::debugger::check_debugger(
+        bytes(&source),
+        &methods,
+        &requires,
+    ))
+}
+
+/// Ruby entry point for `Metrics/BlockLength`. Returns one entry per block
+/// whose body exceeds `max`: `[[start, end, head_end, length, method_name,
+/// receiver], ...]`. With `filtered` (no AllowedPatterns configured) the
+/// `AllowedMethods` exclusion is applied in Rust from the String entries in
+/// `allowed_methods`; otherwise all allow filtering stays on the Ruby side.
+fn check_block_length(
+    source: RString,
+    max: usize,
+    count_comments: bool,
+    count_as_one: Vec<String>,
+    allowed_methods: Vec<String>,
+    filtered: bool,
+) -> Vec<(usize, usize, usize, usize, String, String)> {
+    map_block_length(
+        shirobai_core::rules::block_length::check_block_length_filtered(
+            bytes(&source),
+            max,
+            count_comments,
+            &count_as_one,
+            &allowed_methods,
+            filtered,
+        ),
+    )
+}
+
+/// Ruby entry point for `Metrics/BlockNesting`. Takes the source, the `Max`
+/// level and the `CountBlocks` / `CountModifierForms` flags. Returns
+/// `[[[start, end], ...], deepest_level]`: the reportable offense ranges and the
+/// deepest nesting level that exceeded `Max` (for `ExcludeLimit` bookkeeping).
+fn check_block_nesting(
+    source: RString,
+    max: usize,
+    count_blocks: bool,
+    count_modifier_forms: bool,
+) -> (Vec<(usize, usize)>, usize) {
+    map_block_nesting(shirobai_core::rules::block_nesting::check_block_nesting(
+        bytes(&source),
+        max,
+        count_blocks,
+        count_modifier_forms,
+    ))
+}
+
+/// Ruby entry point for the complexity cops. Returns one entry per method
+/// whose score exceeds either threshold (`cyclomatic > max_cyclomatic ||
+/// perceived > max_perceived`; `0` disables a threshold since scores start at
+/// 1): `[[start, end, head_end, name, cyclomatic, perceived], ...]`.
+#[allow(clippy::type_complexity)]
+fn check_complexity(
+    source: RString,
+    max_cyclomatic: usize,
+    max_perceived: usize,
+) -> Vec<(usize, usize, usize, String, usize, usize)> {
+    map_complexity(
+        shirobai_core::rules::complexity::check_complexity_exceeding(
+            bytes(&source),
+            max_cyclomatic,
+            max_perceived,
+        ),
+    )
+}
+
+/// Ruby entry point for `Naming/VariableNumber`. Returns
+/// `[[[start, end, id_type, name, alt], ...], had_correct]`.
+#[allow(clippy::type_complexity)]
+fn check_variable_number(
+    source: RString,
+    style: u8,
+    flags: u8,
+    allowed_identifiers: Vec<String>,
+) -> (Vec<(usize, usize, u8, String, u8)>, bool) {
+    map_variable_number(
+        shirobai_core::rules::variable_number::check_variable_number(
+            bytes(&source),
+            style,
+            flags,
+            &allowed_identifiers,
+        ),
+    )
+}
+
+/// Ruby entry point for `Naming/MethodName`. Returns `[candidates, had_valid]`
+/// where each candidate is `[start, end, name, valid, alt, fb_start, fb_end,
+/// fb_name]`. With `filtered` (no AllowedPatterns / Forbidden* config) only the
+/// invalid sites are returned and `had_valid` carries the
+/// `correct_style_detected` bookkeeping; otherwise every site is returned.
+#[allow(clippy::type_complexity)]
+fn check_method_name(
+    source: RString,
+    style: u8,
+    filtered: bool,
+) -> (
+    Vec<(usize, usize, String, bool, u8, usize, usize, String)>,
+    bool,
+) {
+    map_method_name(
+        shirobai_core::rules::method_name::check_method_name_filtered(
+            bytes(&source),
+            style,
+            filtered,
+        ),
+    )
+}
+
 /// Ruby entry point for `Lint/SafeNavigationChain`. Returns
 /// `[[start, end, replacement, wrap_start, wrap_end], ...]`.
 fn check_safe_navigation_chain(
     source: RString,
     nil_methods: Vec<String>,
 ) -> Vec<(usize, usize, String, usize, usize)> {
-    shirobai_core::rules::safe_navigation_chain::check_safe_navigation_chain(
-        bytes(&source),
-        &nil_methods,
+    map_safe_navigation_chain(
+        shirobai_core::rules::safe_navigation_chain::check_safe_navigation_chain(
+            bytes(&source),
+            &nil_methods,
+        ),
     )
-    .into_iter()
-    .map(|o| {
-        (
-            o.start_offset,
-            o.end_offset,
-            o.replacement,
-            o.wrap_start,
-            o.wrap_end,
-        )
-    })
-    .collect()
 }
 
 /// Ruby entry point for `Layout/MultilineOperationIndentation`. Takes the
@@ -211,15 +489,14 @@ fn check_multiline_operation_indentation(
     indent_width: usize,
     base_indent_width: usize,
 ) -> Vec<(usize, usize, isize, String)> {
-    shirobai_core::rules::multiline_operation_indentation::check_multiline_operation_indentation(
-        bytes(&source),
-        style,
-        indent_width,
-        base_indent_width,
+    map_multiline_operation(
+        shirobai_core::rules::multiline_operation_indentation::check_multiline_operation_indentation(
+            bytes(&source),
+            style,
+            indent_width,
+            base_indent_width,
+        ),
     )
-    .into_iter()
-    .map(|o| (o.start_offset, o.end_offset, o.column_delta, o.message))
-    .collect()
 }
 
 /// Ruby entry point for `Layout/MultilineMethodCallIndentation`. Takes the
@@ -235,44 +512,24 @@ fn check_multiline_method_call_indentation(
     indent_width: usize,
     base_indent_width: usize,
 ) -> Vec<(usize, usize, isize, String, usize, usize, usize, usize)> {
-    shirobai_core::rules::multiline_method_call_indentation::check_multiline_method_call_indentation(
-        bytes(&source),
-        style,
-        indent_width,
-        base_indent_width,
+    map_multiline_method_call(
+        shirobai_core::rules::multiline_method_call_indentation::check_multiline_method_call_indentation(
+            bytes(&source),
+            style,
+            indent_width,
+            base_indent_width,
+        ),
     )
-    .into_iter()
-    .map(|o| {
-        (
-            o.start_offset,
-            o.end_offset,
-            o.column_delta,
-            o.message,
-            o.block_body_start,
-            o.block_body_end,
-            o.block_end_start,
-            o.block_end_end,
-        )
-    })
-    .collect()
 }
 
 /// Ruby entry point for `Layout/DotPosition`. Takes the source and the enforced
 /// style (0=leading, 1=trailing). Returns `[[dot_start, dot_end, remove_start,
 /// remove_end, insert_pos], ...]`.
 fn check_dot_position(source: RString, style: u8) -> Vec<(usize, usize, usize, usize, usize)> {
-    shirobai_core::rules::dot_position::check_dot_position(bytes(&source), style)
-        .into_iter()
-        .map(|o| {
-            (
-                o.start_offset,
-                o.end_offset,
-                o.remove_start,
-                o.remove_end,
-                o.insert_pos,
-            )
-        })
-        .collect()
+    map_dot_position(shirobai_core::rules::dot_position::check_dot_position(
+        bytes(&source),
+        style,
+    ))
 }
 
 /// Ruby entry point for the multiline-indentation bundle: runs
@@ -299,26 +556,10 @@ fn check_multiline_bundle(
         mc.1,
         mc.2,
     );
-    let op_off = op_off
-        .into_iter()
-        .map(|o| (o.start_offset, o.end_offset, o.column_delta, o.message))
-        .collect();
-    let mc_off = mc_off
-        .into_iter()
-        .map(|o| {
-            (
-                o.start_offset,
-                o.end_offset,
-                o.column_delta,
-                o.message,
-                o.block_body_start,
-                o.block_body_end,
-                o.block_end_start,
-                o.block_end_end,
-            )
-        })
-        .collect();
-    (op_off, mc_off)
+    (
+        map_multiline_operation(op_off),
+        map_multiline_method_call(mc_off),
+    )
 }
 
 /// Ruby entry point for `Layout/LineLength`. Walks every line and returns one
@@ -334,19 +575,11 @@ fn check_line_length(
     max: usize,
     tab_width: usize,
 ) -> Vec<(usize, usize, usize, usize, usize, Vec<String>)> {
-    shirobai_core::rules::line_length::check_line_length(bytes(&source), max, tab_width)
-        .into_iter()
-        .map(|c| {
-            (
-                c.line_index,
-                c.length,
-                c.line_start,
-                c.line_end,
-                c.indentation_difference,
-                c.heredoc_delimiters,
-            )
-        })
-        .collect()
+    map_line_length(shirobai_core::rules::line_length::check_line_length(
+        bytes(&source),
+        max,
+        tab_width,
+    ))
 }
 
 /// Ruby entry point for `Layout/LineLength` auto-correction. Returns one entry
@@ -364,15 +597,14 @@ fn check_line_length_breakables(
     candidate_lines: Vec<usize>,
 ) -> Vec<(usize, usize, String)> {
     let candidates: std::collections::HashSet<usize> = candidate_lines.into_iter().collect();
-    shirobai_core::rules::line_length_breakable::compute_breakables_filtered(
-        bytes(&source),
-        max,
-        split_strings,
-        Some(&candidates),
+    map_line_length_breakables(
+        shirobai_core::rules::line_length_breakable::compute_breakables_filtered(
+            bytes(&source),
+            max,
+            split_strings,
+            Some(&candidates),
+        ),
     )
-    .into_iter()
-    .map(|b| (b.line_index, b.insert_offset, b.delimiter))
-    .collect()
 }
 
 /// Ruby entry point for `Style/LineEndConcatenation`. Returns one entry per
@@ -380,18 +612,9 @@ fn check_line_length_breakables(
 /// `[op_start, op_end)` is the offense range; `[replace_start, replace_end)` is
 /// the range Ruby replaces with `\`.
 fn check_line_end_concatenation(source: RString) -> Vec<(usize, usize, String, usize, usize)> {
-    shirobai_core::rules::line_end_concatenation::check_line_end_concatenation(bytes(&source))
-        .into_iter()
-        .map(|o| {
-            (
-                o.start_offset,
-                o.end_offset,
-                o.operator,
-                o.replace_start,
-                o.replace_end,
-            )
-        })
-        .collect()
+    map_line_end_concatenation(
+        shirobai_core::rules::line_end_concatenation::check_line_end_concatenation(bytes(&source)),
+    )
 }
 
 /// Ruby entry point for `Layout/ArgumentAlignment`. Takes the source, the
@@ -405,15 +628,14 @@ fn check_argument_alignment(
     indent_width: usize,
     incompatible: bool,
 ) -> Vec<(usize, usize, isize, bool)> {
-    shirobai_core::rules::argument_alignment::check_argument_alignment(
-        bytes(&source),
-        style,
-        indent_width,
-        incompatible,
+    map_argument_alignment(
+        shirobai_core::rules::argument_alignment::check_argument_alignment(
+            bytes(&source),
+            style,
+            indent_width,
+            incompatible,
+        ),
     )
-    .into_iter()
-    .map(|o| (o.start_offset, o.end_offset, o.column_delta, o.autocorrect))
-    .collect()
 }
 
 /// Ruby entry point for `Layout/FirstArgumentIndentation`. Takes the source,
@@ -431,25 +653,14 @@ fn check_first_argument_indentation(
     indent_width: usize,
     enforce_fixed_with_no_line_break: bool,
 ) -> Vec<(usize, usize, isize, String, bool, usize, usize)> {
-    shirobai_core::rules::first_argument_indentation::check_first_argument_indentation(
-        bytes(&source),
-        style,
-        indent_width,
-        enforce_fixed_with_no_line_break,
+    map_first_argument_indentation(
+        shirobai_core::rules::first_argument_indentation::check_first_argument_indentation(
+            bytes(&source),
+            style,
+            indent_width,
+            enforce_fixed_with_no_line_break,
+        ),
     )
-    .into_iter()
-    .map(|o| {
-        (
-            o.start_offset,
-            o.end_offset,
-            o.column_delta,
-            o.message,
-            o.autocorrect,
-            o.correct_start,
-            o.correct_end,
-        )
-    })
-    .collect()
 }
 
 /// Ruby entry point for `Style/RedundantSelf`. Returns one entry per redundant
@@ -459,10 +670,10 @@ fn check_redundant_self(
     source: RString,
     kernel_methods: Vec<String>,
 ) -> Vec<(usize, usize, usize, usize)> {
-    shirobai_core::rules::redundant_self::check_redundant_self(bytes(&source), &kernel_methods)
-        .into_iter()
-        .map(|o| (o.self_start, o.self_end, o.dot_start, o.dot_end))
-        .collect()
+    map_redundant_self(shirobai_core::rules::redundant_self::check_redundant_self(
+        bytes(&source),
+        &kernel_methods,
+    ))
 }
 
 /// Ruby entry point for `Layout/IndentationWidth`. `config` packs
@@ -489,30 +700,24 @@ fn check_indentation_width(
         def_end_align_def: config[5] != 0,
         use_tabs: config[6] != 0,
     };
-    shirobai_core::rules::indentation_width::check_indentation_width(
-        bytes(&source),
-        cfg,
-        &allowed_lines,
-        &prior_ranges,
+    map_indentation_width(
+        shirobai_core::rules::indentation_width::check_indentation_width(
+            bytes(&source),
+            cfg,
+            &allowed_lines,
+            &prior_ranges,
+        ),
     )
-    .into_iter()
-    .map(|o| {
-        (
-            o.start_offset,
-            o.end_offset,
-            o.column_delta,
-            o.message,
-            o.autocorrect,
-            o.correct_start,
-            o.correct_end,
-        )
-    })
-    .collect()
 }
 
 #[magnus::init(name = "shirobai")]
 fn init(ruby: &Ruby) -> Result<(), Error> {
     let module = ruby.define_module("Shirobai")?;
+    module.define_module_function(
+        "register_bundle_config",
+        function!(register_bundle_config, 2),
+    )?;
+    module.define_module_function("check_all", function!(check_all, 2))?;
     module.define_module_function("check_debugger", function!(check_debugger, 3))?;
     module.define_module_function("check_block_length", function!(check_block_length, 6))?;
     module.define_module_function("check_complexity", function!(check_complexity, 3))?;
