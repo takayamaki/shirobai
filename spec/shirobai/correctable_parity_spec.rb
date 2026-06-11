@@ -76,6 +76,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Lint::Void,
       Shirobai::Cop::Lint::Void,
       "self; top\n42 unless condition\nfoo\n"
+    ],
+    # An unused trailing modifier plus a repeated one: both corrected by
+    # whole-line removal (`AutoCorrect: contextual` still yields the corrector
+    # in a plain run).
+    "Lint/UselessAccessModifier" => [
+      RuboCop::Cop::Lint::UselessAccessModifier,
+      Shirobai::Cop::Lint::UselessAccessModifier,
+      "class C\n  private\n  private\n  def m\n  end\n  protected\nend\n"
     ]
   }
 

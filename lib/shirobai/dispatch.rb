@@ -39,7 +39,8 @@ module Shirobai
       closing_parenthesis_indentation: 18,
       first_array_element_indentation: 19,
       hash_each_methods: 20,
-      void: 21
+      void: 21,
+      useless_access_modifier: 22
     }.freeze
 
     class << self
@@ -93,6 +94,7 @@ module Shirobai
         fae = Cop::Layout::FirstArrayElementIndentation.bundle_args(config)
         hem = Cop::Style::HashEachMethods.bundle_args(config)
         vd = Cop::Lint::Void.bundle_args(config)
+        uam = Cop::Lint::UselessAccessModifier.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -109,9 +111,11 @@ module Shirobai
           *iw,                           # IndentationWidth packed config (7 nums)
           cpi[0],                        # ClosingParenthesisIndentation indent width
           fae[0], fae[1], num(fae[2]),   # FirstArrayElementIndentation style / indent / enforce flag
-          num(vd[0])                     # Void CheckForMethodsWithNoSideEffects
+          num(vd[0]),                    # Void CheckForMethodsWithNoSideEffects
+          num(uam[2])                    # UselessAccessModifier ActiveSupportExtensionsEnabled
         ]
-        lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0]]
+        lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
+                 uam[0], uam[1]]
         [nums, lists]
       end
 

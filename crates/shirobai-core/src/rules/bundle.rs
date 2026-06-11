@@ -13,7 +13,7 @@ use super::{
     debugger, dot_position, first_argument_indentation, first_array_element_indentation,
     hash_each_methods, indentation_width, line_end_concatenation, line_length,
     line_length_breakable, method_name, predicate_prefix, redundant_self, safe_navigation_chain,
-    variable_number, void,
+    useless_access_modifier, variable_number, void,
 };
 
 /// Run `Layout/MultilineOperationIndentation` and
@@ -69,8 +69,9 @@ pub fn check_multiline_bundle(
 /// | 34  | closing_paren_indent |
 /// | 35-37 | first_array_element style / indent / enforce_fixed_indentation |
 /// | 38  | void_check_nonmutating (`CheckForMethodsWithNoSideEffects`) |
+/// | 39  | useless_access_modifier_active_support (`AllCops/ActiveSupportExtensionsEnabled`) |
 ///
-/// `lists` (`Vec<String>`), 10 entries:
+/// `lists` (`Vec<String>`), 12 entries:
 ///
 /// | idx | field |
 /// |-----|-------|
@@ -84,6 +85,8 @@ pub fn check_multiline_bundle(
 /// |  7  | predicate_prefix_name_prefixes |
 /// |  8  | predicate_prefix_macros |
 /// |  9  | hash_each_allowed_receivers |
+/// | 10  | useless_access_modifier_context_creating (`ContextCreatingMethods`) |
+/// | 11  | useless_access_modifier_method_creating (`MethodCreatingMethods`) |
 ///
 /// `Layout/IndentationWidth`'s `allowed_lines` and `prior_ranges` are fixed to
 /// empty in the bundle: the non-empty cases (configured `AllowedPatterns`,
@@ -128,10 +131,13 @@ pub struct BundleConfig {
     pub predicate_prefix_macros: Vec<String>,
     pub hash_each_allowed_receivers: Vec<String>,
     pub void_check_nonmutating: bool,
+    pub useless_access_modifier_context_creating: Vec<String>,
+    pub useless_access_modifier_method_creating: Vec<String>,
+    pub useless_access_modifier_active_support: bool,
 }
 
-const NUMS_LEN: usize = 39;
-const LISTS_LEN: usize = 10;
+const NUMS_LEN: usize = 40;
+const LISTS_LEN: usize = 12;
 
 impl BundleConfig {
     /// Build a config from the flat wire format (see the struct docs for the
@@ -200,6 +206,9 @@ impl BundleConfig {
             predicate_prefix_macros: next_list(),
             hash_each_allowed_receivers: next_list(),
             void_check_nonmutating: nums[38] != 0,
+            useless_access_modifier_context_creating: next_list(),
+            useless_access_modifier_method_creating: next_list(),
+            useless_access_modifier_active_support: nums[39] != 0,
         })
     }
 }
@@ -230,6 +239,7 @@ pub struct BundleResult {
         Vec<first_array_element_indentation::FirstArrayElemIndentOffense>,
     pub hash_each_methods: Vec<hash_each_methods::HashEachOffense>,
     pub void: Vec<void::VoidOffense>,
+    pub useless_access_modifier: Vec<useless_access_modifier::UselessAccessModifierOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -312,6 +322,11 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     );
     let mut hem_rule = hash_each_methods::build_rule(source, &cfg.hash_each_allowed_receivers);
     let mut void_rule = void::build_rule(source, cfg.void_check_nonmutating);
+    let mut uam_rule = useless_access_modifier::build_rule(
+        &cfg.useless_access_modifier_context_creating,
+        &cfg.useless_access_modifier_method_creating,
+        cfg.useless_access_modifier_active_support,
+    );
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -331,6 +346,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut cpi_rule,
         &mut hem_rule,
         &mut void_rule,
+        &mut uam_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -362,6 +378,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let first_array_element_indentation = fae_rule.map(|r| r.offenses).unwrap_or_default();
     let hash_each_methods = hem_rule.offenses;
     let void = void_rule.offenses;
+    let useless_access_modifier = uam_rule.into_offenses();
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -403,6 +420,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         first_array_element_indentation,
         hash_each_methods,
         void,
+        useless_access_modifier,
     }
 }
 
@@ -454,6 +472,7 @@ mod tests {
             2, // closing_paren_indent
             0, 2, 0, // first_array_element_indentation
             0, // void_check_nonmutating
+            0, // useless_access_modifier_active_support
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -468,6 +487,8 @@ mod tests {
                 .map(String::from)
                 .to_vec(),
             vec!["Thread.current".to_string()],
+            vec![], // useless_access_modifier_context_creating
+            vec![], // useless_access_modifier_method_creating
         ];
         (nums, lists)
     }
@@ -1154,6 +1175,56 @@ mod tests {
                     b.remove_start,
                     b.remove_end
                 )
+            );
+        }
+    }
+
+    /// `Lint/UselessAccessModifier` merged into the shared walk must report
+    /// exactly what its standalone entry point reports, over a source
+    /// exercising its context-sensitive paths: a class scope with a useless
+    /// trailing modifier, a repeated modifier, a singleton-class scope inside
+    /// a def (handler-only frame), a `class_eval` block and a top-level
+    /// modifier.
+    #[test]
+    fn shared_walk_matches_standalone_useless_access_modifier() {
+        let src = "class A\n\
+                   \x20 def m1\n\
+                   \x20 end\n\
+                   \x20 private\n\
+                   \x20 private\n\
+                   \x20 def m2\n\
+                   \x20 end\n\
+                   \x20 protected\n\
+                   end\n\
+                   def outer\n\
+                   \x20 class << self\n\
+                   \x20   private\n\
+                   \x20 end\n\
+                   end\n\
+                   B.class_eval do\n\
+                   \x20 public\n\
+                   \x20 def m3\n\
+                   \x20 end\n\
+                   end\n\
+                   module_function\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::useless_access_modifier::check_useless_access_modifier(
+            src.as_bytes(),
+            &cfg.useless_access_modifier_context_creating,
+            &cfg.useless_access_modifier_method_creating,
+            cfg.useless_access_modifier_active_support,
+        );
+        assert!(alone.len() >= 5);
+        assert!(alone.iter().any(|o| o.name == "module_function"));
+        assert!(alone.iter().any(|o| o.name == "public"));
+        assert_eq!(bundle.useless_access_modifier.len(), alone.len());
+        for (a, b) in bundle.useless_access_modifier.iter().zip(&alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, &a.name),
+                (b.start_offset, b.end_offset, &b.name)
             );
         }
     }
