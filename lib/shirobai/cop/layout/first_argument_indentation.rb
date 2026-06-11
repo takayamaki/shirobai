@@ -33,9 +33,15 @@ module Shirobai
 
           offenses_for_source.each do |start, fin, column_delta, message, autocorrect, cs, ce|
             range = Parser::Source::Range.new(buffer, start, fin)
-            add_offense(range, message: message) do |corrector|
-              next unless autocorrect
+            # Key the split on the per-offense flag, not `autocorrect?` mode: the
+            # block runs in lint mode too and the non-empty corrector is what
+            # keeps the offense correctable to match stock (see argument_alignment).
+            unless autocorrect
+              add_offense(range, message: message)
+              next
+            end
 
+            add_offense(range, message: message) do |corrector|
               correct_range = Parser::Source::Range.new(buffer, cs, ce)
               RuboCop::Cop::AlignmentCorrector.correct(
                 corrector, processed_source, correct_range, column_delta

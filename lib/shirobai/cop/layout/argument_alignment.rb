@@ -30,9 +30,18 @@ module Shirobai
 
           offenses_for_source.each do |start, fin, column_delta, autocorrect|
             range = Parser::Source::Range.new(buffer, start, fin)
-            add_offense(range, message: message) do |corrector|
-              next unless autocorrect
+            # Split on the per-offense correctability flag rather than testing it
+            # inside the corrector block. Note this must stay keyed on the flag,
+            # NOT on `autocorrect?` mode: RuboCop yields the block even in lint
+            # mode and a non-empty corrector is what marks the offense
+            # `:uncorrected` (correctable) to match stock. Skipping the block for
+            # non-correctable offenses only avoids an unused Corrector allocation.
+            unless autocorrect
+              add_offense(range, message: message)
+              next
+            end
 
+            add_offense(range, message: message) do |corrector|
               RuboCop::Cop::AlignmentCorrector.correct(corrector, processed_source, range, column_delta)
             end
           end
