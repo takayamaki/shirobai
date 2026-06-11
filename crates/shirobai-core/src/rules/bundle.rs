@@ -9,10 +9,10 @@ use std::collections::HashSet;
 use super::multiline_method_call_indentation::{self as mc, MethodCallIndentOffense};
 use super::multiline_operation_indentation::{self as op, OperationIndentOffense};
 use super::{
-    argument_alignment, block_length, block_nesting, complexity, debugger, dot_position,
-    first_argument_indentation, indentation_width, line_end_concatenation, line_length,
-    line_length_breakable, method_name, predicate_prefix, redundant_self, safe_navigation_chain,
-    variable_number,
+    argument_alignment, block_length, block_nesting, closing_parenthesis_indentation, complexity,
+    debugger, dot_position, first_argument_indentation, indentation_width, line_end_concatenation,
+    line_length, line_length_breakable, method_name, predicate_prefix, redundant_self,
+    safe_navigation_chain, variable_number,
 };
 
 /// Run `Layout/MultilineOperationIndentation` and
@@ -41,7 +41,7 @@ pub fn check_multiline_bundle(
 /// (`Shirobai::Dispatch.packed_config`) assembles the two arrays in the same
 /// order.
 ///
-/// `nums` (`i64`, booleans are `0`/`1`), 34 entries:
+/// `nums` (`i64`, booleans are `0`/`1`), 35 entries:
 ///
 /// | idx | field |
 /// |-----|-------|
@@ -65,6 +65,7 @@ pub fn check_multiline_bundle(
 /// | 21-23 | argument_alignment style / indent / incompatible |
 /// | 24-26 | first_argument_indentation style / indent / enforce_fixed_no_line_break |
 /// | 27-33 | indentation_width width / relative_to_receiver / access_modifier_outdent / indented_internal_methods / end_align / def_end_align_def / use_tabs |
+/// | 34  | closing_paren_indent |
 ///
 /// `lists` (`Vec<String>`), 9 entries:
 ///
@@ -114,12 +115,13 @@ pub struct BundleConfig {
     pub first_argument_indent: usize,
     pub first_argument_enforce_fixed_no_line_break: bool,
     pub indentation_width: indentation_width::Config,
+    pub closing_paren_indent: usize,
     pub redundant_self_kernel_methods: Vec<String>,
     pub predicate_prefix_name_prefixes: Vec<String>,
     pub predicate_prefix_macros: Vec<String>,
 }
 
-const NUMS_LEN: usize = 34;
+const NUMS_LEN: usize = 35;
 const LISTS_LEN: usize = 9;
 
 impl BundleConfig {
@@ -180,6 +182,7 @@ impl BundleConfig {
                 def_end_align_def: nums[32] != 0,
                 use_tabs: nums[33] != 0,
             },
+            closing_paren_indent: nums[34] as usize,
             redundant_self_kernel_methods: next_list(),
             predicate_prefix_name_prefixes: next_list(),
             predicate_prefix_macros: next_list(),
@@ -207,6 +210,8 @@ pub struct BundleResult {
     pub redundant_self: Vec<redundant_self::RedundantSelfOffense>,
     pub indentation_width: Vec<indentation_width::IndentationOffense>,
     pub predicate_prefix: Vec<predicate_prefix::PredicatePrefixCandidate>,
+    pub closing_parenthesis_indentation:
+        Vec<closing_parenthesis_indentation::ClosingParenIndentOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -279,6 +284,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &cfg.predicate_prefix_name_prefixes,
         &cfg.predicate_prefix_macros,
     );
+    let mut cpi_rule =
+        closing_parenthesis_indentation::build_rule(source, cfg.closing_paren_indent);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -295,6 +302,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut bn_rule,
         &mut heredoc_rule,
         &mut pp_rule,
+        &mut cpi_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -319,6 +327,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let complexity = cx_rule.out;
     let block_nesting = (bn_rule.out, bn_rule.deepest);
     let predicate_prefix = pp_rule.offenses;
+    let closing_parenthesis_indentation = cpi_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -356,6 +365,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         redundant_self,
         indentation_width,
         predicate_prefix,
+        closing_parenthesis_indentation,
     }
 }
 
@@ -404,6 +414,7 @@ mod tests {
             0, 2, 0, // argument_alignment
             0, 2, 0, // first_argument_indentation
             2, 0, 0, 0, 0, 0, 0, // indentation_width
+            2, // closing_paren_indent
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -438,6 +449,7 @@ mod tests {
         assert_eq!(cfg.multiline_method_call, (0, 2, 2));
         assert_eq!(cfg.indentation_width.width, 2);
         assert_eq!(cfg.indentation_width.end_align, 0);
+        assert_eq!(cfg.closing_paren_indent, 2);
         assert_eq!(cfg.debugger_methods, vec!["binding.pry", "debugger"]);
         assert_eq!(cfg.safe_navigation_nil_methods, vec!["to_s"]);
         assert_eq!(cfg.redundant_self_kernel_methods, vec!["puts"]);
@@ -882,6 +894,51 @@ mod tests {
                     b.is_def,
                     b.sorbet_boolean_sig
                 )
+            );
+        }
+    }
+
+    /// `Layout/ClosingParenthesisIndentation` merged into the shared walk must
+    /// report exactly what its standalone entry point reports, over a source
+    /// exercising all three node families (method call, def parameters,
+    /// grouped expression) and both message flavors.
+    #[test]
+    fn shared_walk_matches_standalone_closing_parenthesis_indentation() {
+        let src = "some_method(\n\
+                   \x20 a\n\
+                   \x20 )\n\
+                   foo = other_method(a\n\
+                   )\n\
+                   def f(b\n\
+                   \x20 )\n\
+                   end\n\
+                   w = x * (\n\
+                   \x20 y + z\n\
+                   \x20   )\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let cpi_alone =
+            super::closing_parenthesis_indentation::check_closing_parenthesis_indentation(
+                src.as_bytes(),
+                cfg.closing_paren_indent,
+            );
+        assert_eq!(cpi_alone.len(), 4);
+        assert!(cpi_alone.iter().any(|o| o.message.starts_with("Align")));
+        assert!(cpi_alone.iter().any(|o| o.message.starts_with("Indent")));
+        assert_eq!(
+            bundle.closing_parenthesis_indentation.len(),
+            cpi_alone.len()
+        );
+        for (a, b) in bundle
+            .closing_parenthesis_indentation
+            .iter()
+            .zip(&cpi_alone)
+        {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.column_delta, &a.message),
+                (b.start_offset, b.end_offset, b.column_delta, &b.message)
             );
         }
     }

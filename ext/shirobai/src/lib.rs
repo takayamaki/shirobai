@@ -249,6 +249,14 @@ fn map_first_argument_indentation(
         .collect()
 }
 
+fn map_closing_parenthesis_indentation(
+    v: Vec<shirobai_core::rules::closing_parenthesis_indentation::ClosingParenIndentOffense>,
+) -> Vec<(usize, usize, isize, String)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.column_delta, o.message))
+        .collect()
+}
+
 fn map_predicate_prefix(
     v: Vec<shirobai_core::rules::predicate_prefix::PredicatePrefixCandidate>,
 ) -> Vec<(usize, usize, String, bool, bool)> {
@@ -320,7 +328,7 @@ fn register_bundle_config(
 
 /// Ruby entry point for the all-cop bundle: computes every cop's result for
 /// `source` in one call, using the config registered under `token`. Returns a
-/// fixed-order 18-slot Array; each slot carries that cop's existing tuple-array
+/// fixed-order 19-slot Array; each slot carries that cop's existing tuple-array
 /// shape (identical to the standalone entry point's return value). The slot
 /// order is mirrored by `Shirobai::Dispatch::SLOTS` on the Ruby side:
 ///
@@ -329,7 +337,8 @@ fn register_bundle_config(
 /// 7 multiline_operation / 8 multiline_method_call / 9 dot_position /
 /// 10 line_length / 11 line_length_breakables / 12 line_end_concatenation /
 /// 13 argument_alignment / 14 first_argument_indentation / 15 redundant_self /
-/// 16 indentation_width / 17 predicate_prefix
+/// 16 indentation_width / 17 predicate_prefix /
+/// 18 closing_parenthesis_indentation
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -340,7 +349,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(18);
+        let ary = ruby.ary_new_capa(19);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -359,6 +368,9 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_redundant_self(r.redundant_self))?;
         ary.push(map_indentation_width(r.indentation_width))?;
         ary.push(map_predicate_prefix(r.predicate_prefix))?;
+        ary.push(map_closing_parenthesis_indentation(
+            r.closing_parenthesis_indentation,
+        ))?;
         Ok(ary)
     })
 }
@@ -700,6 +712,23 @@ fn check_predicate_prefix(
     )
 }
 
+/// Ruby entry point for `Layout/ClosingParenthesisIndentation`. Takes the
+/// source and the configured indentation width. Returns one entry per hanging
+/// `)` that is misindented: `[[start, end, column_delta, message], ...]` —
+/// `[start, end)` is the closing paren token, which Ruby both reports and
+/// realigns by `column_delta` via `AlignmentCorrector`.
+fn check_closing_parenthesis_indentation(
+    source: RString,
+    indent_width: usize,
+) -> Vec<(usize, usize, isize, String)> {
+    map_closing_parenthesis_indentation(
+        shirobai_core::rules::closing_parenthesis_indentation::check_closing_parenthesis_indentation(
+            bytes(&source),
+            indent_width,
+        ),
+    )
+}
+
 /// Ruby entry point for `Style/RedundantSelf`. Returns one entry per redundant
 /// `self` receiver: `[[self_start, self_end, dot_start, dot_end], ...]`. The
 /// `Kernel` method allow-list is supplied by Ruby.
@@ -803,6 +832,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_indentation_width",
         function!(check_indentation_width, 4),
+    )?;
+    module.define_module_function(
+        "check_closing_parenthesis_indentation",
+        function!(check_closing_parenthesis_indentation, 2),
     )?;
     Ok(())
 }

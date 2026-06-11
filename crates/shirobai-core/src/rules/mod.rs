@@ -2,6 +2,7 @@ pub mod argument_alignment;
 pub mod block_length;
 pub mod block_nesting;
 pub mod bundle;
+pub mod closing_parenthesis_indentation;
 pub mod complexity;
 pub mod debugger;
 pub mod dispatch;

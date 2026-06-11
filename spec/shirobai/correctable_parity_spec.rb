@@ -26,7 +26,13 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
     ruby_version = RuboCop::TargetRuby::DEFAULT_VERSION
     cop = klass.new(config)
     processed = RuboCop::ProcessedSource.new(source, ruby_version)
-    RuboCop::Cop::Commissioner.new([cop]).investigate(processed).offenses.map do |o|
+    # A real run always carries the config on the processed source (the Runner
+    # sets it); correctors like `AlignmentCorrector` read it even in lint mode.
+    processed.config = config
+    processed.registry = RuboCop::Cop::Registry.global
+    report = RuboCop::Cop::Commissioner.new([cop]).investigate(processed)
+    expect(report.errors).to be_empty
+    report.offenses.map do |o|
       [o.location.begin_pos, o.location.end_pos, o.message, o.status, o.correctable?]
     end.sort
   end
@@ -47,6 +53,11 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Style::LineEndConcatenation,
       Shirobai::Cop::Style::LineEndConcatenation,
       "x = 'a' +\n    'b'\n"
+    ],
+    "Layout/ClosingParenthesisIndentation" => [
+      RuboCop::Cop::Layout::ClosingParenthesisIndentation,
+      Shirobai::Cop::Layout::ClosingParenthesisIndentation,
+      "some_method(a\n)\n"
     ]
   }
 
