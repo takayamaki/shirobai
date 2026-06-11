@@ -189,8 +189,13 @@ module Shirobai
           end
         end
 
+        # Memoized per instance: `max` is read several times per candidate line
+        # (check_candidate / register_offense / excess_range / highlight_start)
+        # and `cop_config` never changes within a run. The ExcludeLimit-generated
+        # `max=` writer used in the corrector block appends to a tmp file for
+        # `--auto-gen-config` aggregation and never feeds back into this reader.
         def max
-          cop_config["Max"]
+          @max ||= cop_config["Max"]
         end
         alias max_line_length max
 
