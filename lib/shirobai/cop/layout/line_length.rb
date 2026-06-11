@@ -10,7 +10,10 @@ module Shirobai
       # lines inside a heredoc body). Ruby then applies the regex-based
       # exemptions (`AllowedPatterns`, `AllowURI`, `AllowQualifiedName`, cop
       # directives, RBS annotations) that rely on Ruby's `URI`/`Regexp`, reusing
-      # the upstream mixins so the offense ranges match exactly.
+      # the upstream mixins so the offense ranges match exactly. Candidates and
+      # breakables come from the per-file bundled run (`Shirobai::Dispatch`);
+      # the regex exemptions run after the ext call either way, so this cop is
+      # always bundle-eligible.
       class LineLength < RuboCop::Cop::Base
         include RuboCop::Cop::CheckLineBreakable
         include RuboCop::Cop::AllowedPattern
@@ -25,19 +28,33 @@ module Shirobai
         def self.cop_name = "Layout/LineLength"
         def self.badge = RuboCop::Cop::Badge.parse("Layout/LineLength")
 
-        def on_new_investigation
-          source = processed_source.raw_source
-          candidates = Shirobai.check_line_length(source, max, tab_indentation_width || 0)
+        # Packed args for the bundled run: `[max, tab_width, split_strings]`.
+        # `tab_width` replicates `LineLengthHelp#tab_indentation_width`
+        # (`Layout/IndentationStyle` width, falling back to
+        # `Alignment#configured_indentation_width`). `Max` defaults to 120
+        # (default.yml) so a config that does not mention this cop still packs
+        # cleanly; the computed slice is discarded in that case.
+        def self.bundle_args(config)
+          cop_config = config.for_badge(badge)
+          tab_width = config.for_cop("Layout/IndentationStyle")["IndentationWidth"] ||
+                      cop_config["IndentationWidth"] ||
+                      config.for_cop("Layout/IndentationWidth")["Width"] || 2
+          [cop_config["Max"] || 120, tab_width, !!cop_config["SplitStrings"]]
+        end
 
-          # Breakable (autocorrection) data must be built even in lint mode: with
-          # AutoCorrect defaulting to 'always', the corrector block runs and a
-          # non-empty corrector makes the offense `:uncorrected` (correctable),
+        def on_new_investigation
+          candidates = Dispatch.offenses_for(processed_source, config, :line_length)
+
+          # Breakable (autocorrection) data must be installed even in lint mode:
+          # with AutoCorrect defaulting to 'always', the corrector block runs and
+          # a non-empty corrector makes the offense `:uncorrected` (correctable),
           # which stock reports as "[Correctable]" / counts as auto-correctable.
           # Skipping it would flip the offense to `:unsupported` and diverge from
-          # stock's lint output. We only restrict the walk to candidate lines
-          # (length > Max) — the sole lines that can become offenses and consume a
-          # breakable range — which is identical to computing it for all lines.
-          compute_breakables(source, candidates.map { |candidate| candidate[0] })
+          # stock's lint output. The bundle restricts the walk to candidate lines
+          # (length > Max) on the Rust side — the sole lines that can become
+          # offenses and consume a breakable range — which is identical to
+          # computing it for all lines.
+          install_breakables(Dispatch.offenses_for(processed_source, config, :line_length_breakables))
 
           candidates.each do |candidate|
             line_index, length, _line_start, _line_end, _indent_diff, heredoc_delimiters = candidate
@@ -48,27 +65,19 @@ module Shirobai
 
         private
 
-        # Build the per-line autocorrection data (insertion byte offset and,
-        # for `SplitStrings`, the string delimiter) for the given candidate
-        # lines. Mirrors upstream's `breakable_range_by_line_index` /
-        # `breakable_string_delimiters`.
-        def compute_breakables(source, candidate_line_indexes)
+        # Install the per-line autocorrection data (insertion byte offset and,
+        # for `SplitStrings`, the string delimiter). Mirrors upstream's
+        # `breakable_range_by_line_index` / `breakable_string_delimiters`.
+        def install_breakables(breakables)
           buffer = processed_source.buffer
           @breakable_range_by_line_index = {}
           @breakable_string_delimiters = {}
-          breakables = Shirobai.check_line_length_breakables(
-            source, max, !!allow_string_split?, candidate_line_indexes
-          )
           breakables.each do |entry|
             line_index, insert_offset, delimiter = entry
             @breakable_range_by_line_index[line_index] =
               Parser::Source::Range.new(buffer, insert_offset, insert_offset + 1)
             @breakable_string_delimiters[line_index] = delimiter unless delimiter.empty?
           end
-        end
-
-        def allow_string_split?
-          cop_config["SplitStrings"]
         end
 
         def check_candidate(line, line_index, length, heredoc_delimiters)

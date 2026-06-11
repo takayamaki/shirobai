@@ -7,12 +7,16 @@ module Shirobai
     module Metrics
       # Shared offense-reporting logic for the two complexity cops. Each Rust
       # analysis entry carries both the cyclomatic and perceived score; the
-      # including cop selects its metric via `#metric_score`.
+      # including cop selects its metric via `#metric_score`. The analysis comes
+      # from the per-file bundled run (`Shirobai::Dispatch`); the prefilter
+      # thresholds (`ComplexityShared.bundle_args`) tolerate any `Max` value, so
+      # both cops are always bundle-eligible.
       module ComplexityBase
         def on_new_investigation
           max = cop_config["Max"]
 
-          ComplexityShared.analyze(processed_source, config).each do |start, fin, head_end, name, cyclomatic, perceived|
+          analysis = Dispatch.offenses_for(processed_source, config, :complexity)
+          analysis.each do |start, fin, head_end, name, cyclomatic, perceived|
             next if allowed_method?(name) || matches_allowed_pattern?(name)
 
             complexity = metric_score(cyclomatic, perceived)

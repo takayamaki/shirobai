@@ -1,54 +1,109 @@
 # frozen_string_literal: true
 
 module Shirobai
-  # Per-investigation coordinator: computes the offenses for a group of cops in
-  # one shared Rust AST walk, memoized by source. The first participating cop on
+  # Per-file coordinator: computes every cop's offenses in ONE bundled ext call
+  # (`Shirobai.check_all`), memoized by source. The first participating cop on
   # a file triggers the bundled run; the rest read their slice from the cache.
   #
-  # The cache key is the `raw_source` identity, so the autocorrect loop (which
-  # re-investigates a freshly built `ProcessedSource`) naturally recomputes.
+  # The cache key is the `raw_source` identity (`equal?`, not `==`), so the
+  # autocorrect loop (which re-investigates a freshly built `ProcessedSource`)
+  # naturally recomputes, and a different file never reuses stale results.
+  #
+  # A cop whose per-investigation config/state cannot be represented in the
+  # bundle (see each wrapper's `bundle_eligible?`) skips this coordinator and
+  # calls its standalone entry point directly instead.
   module Dispatch
-    STYLE_MAPS = {
-      "Layout/MultilineOperationIndentation" => { aligned: 0, indented: 1 },
-      "Layout/MultilineMethodCallIndentation" =>
-        { aligned: 0, indented: 1, indented_relative_to_receiver: 2 }
+    # Slot order of the `Shirobai.check_all` result Array. Mirrors the order
+    # documented on `BundleConfig` and built by `check_all` in
+    # `ext/shirobai/src/lib.rs`; each slot carries the same shape as the cop's
+    # standalone `Shirobai.check_*` return value.
+    SLOTS = {
+      debugger: 0,
+      block_length: 1,
+      block_nesting: 2,
+      complexity: 3,
+      variable_number: 4,
+      method_name: 5,
+      safe_navigation_chain: 6,
+      multiline_operation: 7,
+      multiline_method_call: 8,
+      dot_position: 9,
+      line_length: 10,
+      line_length_breakables: 11,
+      line_end_concatenation: 12,
+      argument_alignment: 13,
+      first_argument_indentation: 14,
+      redundant_self: 15,
+      indentation_width: 16
     }.freeze
 
     class << self
-      # Returns the offenses (raw Rust tuples) for `cop_name` on this source.
-      def multiline(processed_source, config, cop_name)
+      # Returns the raw Rust result for `cop_key` on this source.
+      def offenses_for(processed_source, config, cop_key)
         src = processed_source.raw_source
         unless defined?(@cached_source) && @cached_source.equal?(src) && @cached_config.equal?(config)
+          result = Shirobai.check_all(src, bundle_token(config))
           @cached_source = src
           @cached_config = config
-          @cached_result = compute_multiline(src, config)
+          @cached_result = result
         end
-        @cached_result.fetch(cop_name)
+        @cached_result.fetch(SLOTS.fetch(cop_key))
+      end
+
+      # The Rust-side token for `config`, registering its packed bundle config
+      # on first sight. Memoized per config object identity: a lint run shares
+      # one `Config` object across all cops in the team, so a run registers
+      # O(#distinct configs) entries (each spec example registers one; entries
+      # are small and never evicted).
+      def bundle_token(config)
+        @bundle_tokens ||= {}.compare_by_identity
+        @bundle_tokens[config] ||= Shirobai.register_bundle_config(*packed_config(config))
       end
 
       private
 
-      def compute_multiline(src, config)
-        base = config.for_cop("Layout/IndentationWidth")["Width"] || 2
-        op_cfg = flatten(config, "Layout/MultilineOperationIndentation", base)
-        mc_cfg = flatten(config, "Layout/MultilineMethodCallIndentation", base)
-        op_off, mc_off = Shirobai.check_multiline_bundle(src, op_cfg, mc_cfg)
-        {
-          "Layout/MultilineOperationIndentation" => op_off,
-          "Layout/MultilineMethodCallIndentation" => mc_off
-        }
+      # Builds the `(nums, lists)` wire format documented on `BundleConfig`
+      # (crates/shirobai-core/src/rules/bundle.rs). Every cop's values come
+      # from its `bundle_args` class method — the same derivation its instance
+      # uses — resolved from `config` alone (cop-own config via
+      # `config.for_badge`, exactly like `RuboCop::Cop::Base#cop_config`).
+      def packed_config(config)
+        dbg = Cop::Lint::Debugger.bundle_args(config)
+        bl = Cop::Metrics::BlockLength.bundle_args(config)
+        bn = Cop::Metrics::BlockNesting.bundle_args(config)
+        cx = Cop::Metrics::ComplexityShared.bundle_args(config)
+        vn = Cop::Naming::VariableNumber.bundle_args(config)
+        mn = Cop::Naming::MethodName.bundle_args(config)
+        snc = Cop::Lint::SafeNavigationChain.bundle_args(config)
+        dot = Cop::Layout::DotPosition.bundle_args(config)
+        ll = Cop::Layout::LineLength.bundle_args(config)
+        op = Cop::Layout::MultilineOperationIndentation.bundle_args(config)
+        mc = Cop::Layout::MultilineMethodCallIndentation.bundle_args(config)
+        aa = Cop::Layout::ArgumentAlignment.bundle_args(config)
+        fai = Cop::Layout::FirstArgumentIndentation.bundle_args(config)
+        iw = Cop::Layout::IndentationWidth.bundle_args(config)
+        rs = Cop::Style::RedundantSelf.bundle_args(config)
+
+        nums = [
+          bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
+          bn[0], num(bn[1]), num(bn[2]), # BlockNesting Max / CountBlocks / CountModifierForms
+          cx[0], cx[1],                  # complexity prefilter maxes
+          vn[0], vn[1],                  # VariableNumber style / flags
+          mn[0],                         # MethodName style (bundle always computes the filtered flavor)
+          dot[0],                        # DotPosition style
+          ll[0], ll[1], num(ll[2]),      # LineLength Max / tab width / SplitStrings
+          op[0], op[1], op[2],           # MultilineOperationIndentation style / indent / base
+          mc[0], mc[1], mc[2],           # MultilineMethodCallIndentation style / indent / base
+          aa[0], aa[1], num(aa[2]),      # ArgumentAlignment style / indent / incompatible
+          fai[0], fai[1], num(fai[2]),   # FirstArgumentIndentation style / indent / enforce flag
+          *iw                            # IndentationWidth packed config (7 nums)
+        ]
+        lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0]]
+        [nums, lists]
       end
 
-      # [style_u8, configured_indentation_width, base_indentation_width]
-      #
-      # `EnforcedStyle` is absent only when a spec configures the *other* cop in
-      # the bundle (whose offenses are then discarded); default to the first
-      # supported style (`0`) in that case.
-      def flatten(config, cop_name, base)
-        cop_config = config.for_cop(cop_name)
-        style = STYLE_MAPS.fetch(cop_name)[cop_config["EnforcedStyle"]&.to_sym] || 0
-        indent = cop_config["IndentationWidth"] || base
-        [style, indent, base]
+      def num(value)
+        value ? 1 : 0
       end
     end
   end

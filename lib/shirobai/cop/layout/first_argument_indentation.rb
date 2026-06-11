@@ -12,7 +12,9 @@ module Shirobai
       # `special_for_inner_method_call_in_parentheses` may be the whole receiver
       # chain). Ruby supplies the flattened config and applies the realignment
       # via `AlignmentCorrector` (the same division of labour as the other
-      # alignment cops).
+      # alignment cops). Offenses come from the per-file bundled run
+      # (`Shirobai::Dispatch`); the config derivation is purely config-driven,
+      # so this cop is always bundle-eligible.
       class FirstArgumentIndentation < RuboCop::Cop::Base
         include RuboCop::Cop::Alignment
         include RuboCop::Cop::ConfigurableEnforcedStyle
@@ -28,10 +30,28 @@ module Shirobai
         def self.cop_name = "Layout/FirstArgumentIndentation"
         def self.badge = RuboCop::Cop::Badge.parse("Layout/FirstArgumentIndentation")
 
+        # Packed args for the bundled run: `[style, indentation_width,
+        # enforce_fixed_with_no_line_break]`. The enforce flag replicates the
+        # instance derivation: `Layout/ArgumentAlignment` enforcing
+        # `with_fixed_indentation` while `Layout/FirstMethodArgumentLineBreak`
+        # is disabled.
+        def self.bundle_args(config)
+          cop_config = config.for_badge(badge)
+          argument_alignment_config = config.for_enabled_cop("Layout/ArgumentAlignment")
+          enforce = argument_alignment_config["EnforcedStyle"] == "with_fixed_indentation" &&
+                    !config.cop_enabled?("Layout/FirstMethodArgumentLineBreak")
+          [
+            STYLES.fetch(cop_config["EnforcedStyle"], 0),
+            cop_config["IndentationWidth"] || config.for_cop("Layout/IndentationWidth")["Width"] || 2,
+            enforce
+          ]
+        end
+
         def on_new_investigation
           buffer = processed_source.buffer
 
-          offenses_for_source.each do |start, fin, column_delta, message, autocorrect, cs, ce|
+          offenses = Dispatch.offenses_for(processed_source, config, :first_argument_indentation)
+          offenses.each do |start, fin, column_delta, message, autocorrect, cs, ce|
             range = Parser::Source::Range.new(buffer, start, fin)
             # Key the split on the per-offense flag, not `autocorrect?` mode: the
             # block runs in lint mode too and the non-empty corrector is what
@@ -48,35 +68,6 @@ module Shirobai
               )
             end
           end
-        end
-
-        private
-
-        def offenses_for_source
-          Shirobai.check_first_argument_indentation(
-            processed_source.raw_source,
-            STYLES.fetch(style.to_s, 0),
-            configured_indentation_width,
-            enforce_fixed_with_no_line_break?
-          )
-        end
-
-        # Config-derived and stable for the life of the instance.
-        def enforce_fixed_with_no_line_break?
-          return @enforce_fixed_with_no_line_break if defined?(@enforce_fixed_with_no_line_break)
-
-          @enforce_fixed_with_no_line_break =
-            enforce_first_argument_with_fixed_indentation? &&
-            !enable_layout_first_method_argument_line_break?
-        end
-
-        def enforce_first_argument_with_fixed_indentation?
-          argument_alignment_config = config.for_enabled_cop("Layout/ArgumentAlignment")
-          argument_alignment_config["EnforcedStyle"] == "with_fixed_indentation"
-        end
-
-        def enable_layout_first_method_argument_line_break?
-          config.cop_enabled?("Layout/FirstMethodArgumentLineBreak")
         end
       end
     end

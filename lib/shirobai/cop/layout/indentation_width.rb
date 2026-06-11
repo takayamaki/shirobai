@@ -12,7 +12,10 @@ module Shirobai
       # and the node range to realign. Ruby supplies the flattened config (and
       # the `AllowedPatterns`-matched line numbers, since regex matching stays in
       # Ruby) and applies the realignment via `AlignmentCorrector`, the same
-      # division of labour as the other indentation cops.
+      # division of labour as the other indentation cops. Offenses come from the
+      # per-file bundled run (`Shirobai::Dispatch`) while `bundle_eligible?`
+      # holds; otherwise the standalone call carries the per-investigation
+      # state (allowed lines / accumulated correction ranges).
       class IndentationWidth < RuboCop::Cop::Base
         include RuboCop::Cop::ConfigurableEnforcedStyle
         include RuboCop::Cop::AllowedPattern
@@ -20,6 +23,30 @@ module Shirobai
 
         def self.cop_name = "Layout/IndentationWidth"
         def self.badge = RuboCop::Cop::Badge.parse("Layout/IndentationWidth")
+
+        # Packed args for the bundled run: the 7-element config vector
+        # `Shirobai.check_indentation_width` receives (width / align-with /
+        # access-modifier outdent / indented internal methods / end alignment /
+        # def-end alignment / tabs).
+        def self.bundle_args(config)
+          cop_config = config.for_badge(badge)
+          end_config = config.for_cop("Layout/EndAlignment")
+          end_align = case end_config["EnforcedStyleAlignWith"] || "keyword"
+                      when "variable" then 1
+                      when "start_of_line" then 2
+                      else 0
+                      end
+          def_end_config = config.for_cop("Layout/DefEndAlignment")
+          [
+            cop_config["Width"] || 2,
+            cop_config["EnforcedStyleAlignWith"] == "relative_to_receiver" ? 1 : 0,
+            config.for_cop("Layout/AccessModifierIndentation")["EnforcedStyle"] == "outdent" ? 1 : 0,
+            config.for_cop("Layout/IndentationConsistency")["EnforcedStyle"] == "indented_internal_methods" ? 1 : 0,
+            end_align,
+            (def_end_config["EnforcedStyleAlignWith"] || "start_of_line") == "def" ? 1 : 0,
+            (config.for_cop("Layout/IndentationStyle")["EnforcedStyle"] || "spaces") == "tabs" ? 1 : 0
+          ]
+        end
 
         def on_new_investigation
           buffer = processed_source.buffer
@@ -52,11 +79,22 @@ module Shirobai
         private
 
         def offenses_for_source
-          source = processed_source.raw_source
           @offense_ranges ||= []
+          return Dispatch.offenses_for(processed_source, config, :indentation_width) if bundle_eligible?
+
+          source = processed_source.raw_source
           Shirobai.check_indentation_width(
-            source, packed_config, allowed_line_numbers(source), @offense_ranges
+            source, bundle_args, allowed_line_numbers(source), @offense_ranges
           )
+        end
+
+        # The bundle computes this cop with empty `allowed_lines` /
+        # `prior_ranges`, so it only matches the direct call while no
+        # `AllowedPatterns` are configured and no correction ranges have
+        # accumulated on this instance (i.e. the first / lint pass); autocorrect
+        # re-passes go through the standalone entry point.
+        def bundle_eligible?
+          allowed_patterns.empty? && @offense_ranges.empty?
         end
 
         # The parser node whose `source_range` begins at `cs` and ends at `ce`,
@@ -78,51 +116,10 @@ module Shirobai
           found
         end
 
-        # Config-derived and stable for the life of the instance.
-        def packed_config
-          @packed_config ||= [
-            configured_indentation_width,
-            (cop_config["EnforcedStyleAlignWith"] == "relative_to_receiver") ? 1 : 0,
-            access_modifier_indentation_style == "outdent" ? 1 : 0,
-            indentation_consistency_style == "indented_internal_methods" ? 1 : 0,
-            end_alignment_value,
-            def_end_alignment_def? ? 1 : 0,
-            using_tabs? ? 1 : 0
-          ]
-        end
-
-        def configured_indentation_width
-          cop_config["Width"] || 2
-        end
-
-        def end_alignment_value
-          end_config = config.for_cop("Layout/EndAlignment")
-          case end_config["EnforcedStyleAlignWith"] || "keyword"
-          when "variable" then 1
-          when "start_of_line" then 2
-          else 0
-          end
-        end
-
-        def def_end_alignment_def?
-          def_end_config = config.for_cop("Layout/DefEndAlignment")
-          (def_end_config["EnforcedStyleAlignWith"] || "start_of_line") == "def"
-        end
-
-        def access_modifier_indentation_style
-          config.for_cop("Layout/AccessModifierIndentation")["EnforcedStyle"]
-        end
-
-        def indentation_consistency_style
-          config.for_cop("Layout/IndentationConsistency")["EnforcedStyle"]
-        end
-
-        def indentation_style
-          config.for_cop("Layout/IndentationStyle")["EnforcedStyle"] || "spaces"
-        end
-
-        def using_tabs?
-          indentation_style == "tabs"
+        # Config-derived and stable for the life of the instance; shares the
+        # derivation with the bundled run (single source of truth).
+        def bundle_args
+          @bundle_args ||= self.class.bundle_args(config)
         end
 
         # 1-based line numbers whose content matches an `AllowedPatterns` entry.

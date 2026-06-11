@@ -10,6 +10,9 @@ module Shirobai
       # filter, returning only the offenders plus whether the configured style
       # was used correctly anywhere. Ruby keeps the `AllowedPatterns` filter and
       # the `ConfigurableEnforcedStyle` bookkeeping (`config_to_allow_offenses`).
+      # Offenses come from the per-file bundled run (`Shirobai::Dispatch`); the
+      # `AllowedPatterns` filter runs after the ext call either way, so this cop
+      # is always bundle-eligible.
       class VariableNumber < RuboCop::Cop::Base
         include RuboCop::Cop::ConfigurableNumbering
         include RuboCop::Cop::AllowedIdentifiers
@@ -24,11 +27,21 @@ module Shirobai
         def self.cop_name = "Naming/VariableNumber"
         def self.badge = RuboCop::Cop::Badge.parse("Naming/VariableNumber")
 
+        # Packed args for the bundled run: `[style, flags, allowed_identifiers]`.
+        # `EnforcedStyle` may be absent when the config does not mention this
+        # cop (vendor specs of the other bundled cops, whose slice is then
+        # discarded); default to style 0 in that case.
+        def self.bundle_args(config)
+          cop_config = config.for_badge(badge)
+          [
+            STYLE_INDEX[cop_config["EnforcedStyle"]] || 0,
+            (cop_config["CheckMethodNames"] ? 2 : 0) | (cop_config["CheckSymbols"] ? 1 : 0),
+            cop_config.fetch("AllowedIdentifiers") { [] }
+          ]
+        end
+
         def on_new_investigation
-          flags = (cop_config["CheckMethodNames"] ? 2 : 0) | (cop_config["CheckSymbols"] ? 1 : 0)
-          offenses, had_correct = Shirobai.check_variable_number(
-            processed_source.raw_source, STYLE_INDEX.fetch(style.to_s), flags, allowed_identifiers
-          )
+          offenses, had_correct = Dispatch.offenses_for(processed_source, config, :variable_number)
 
           saw_correct = had_correct
           offenses.each do |start, fin, id_type, name, alt|

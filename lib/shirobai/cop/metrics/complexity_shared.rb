@@ -4,10 +4,10 @@ module Shirobai
   module Cop
     module Metrics
       # Both complexity cops (`CyclomaticComplexity`, `PerceivedComplexity`) need
-      # the same per-method analysis. They run in the same investigation on the
-      # same `ProcessedSource` with the same `Config`, so we compute the Rust
-      # analysis once and memoize it for the second cop — collapsing the
-      # re-parse cost to one per file instead of one per cop.
+      # the same per-method analysis, so they share one bundle slot
+      # (`:complexity`): Rust computes both scores per method once and each cop
+      # selects its own metric. The per-file memoization lives in
+      # `Shirobai::Dispatch`.
       #
       # Rust only returns the methods exceeding either cop's `Max`
       # (`cyclomatic > max || perceived > max`), so the compliant majority is
@@ -20,21 +20,10 @@ module Shirobai
         PERCEIVED_BADGE = RuboCop::Cop::Badge.parse("Metrics/PerceivedComplexity")
 
         class << self
-          # Memoized per (`processed_source`, `config`) identity, following
-          # `Shirobai::Dispatch`: both cop instances in one run share the same
-          # config object, and the autocorrect loop builds a fresh
-          # `ProcessedSource`, which naturally recomputes.
-          def analyze(processed_source, config)
-            unless @processed_source.equal?(processed_source) && @config.equal?(config)
-              @processed_source = processed_source
-              @config = config
-              @result = Shirobai.check_complexity(
-                processed_source.raw_source,
-                prefilter_max(config, CYCLOMATIC_BADGE),
-                prefilter_max(config, PERCEIVED_BADGE)
-              )
-            end
-            @result
+          # Packed args for the bundled run: `[max_cyclomatic, max_perceived]`,
+          # the prefilter thresholds `Shirobai.check_complexity` receives.
+          def bundle_args(config)
+            [prefilter_max(config, CYCLOMATIC_BADGE), prefilter_max(config, PERCEIVED_BADGE)]
           end
 
           private

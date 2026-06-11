@@ -30,6 +30,14 @@ module Shirobai
         def self.cop_name = "Naming/MethodName"
         def self.badge = RuboCop::Cop::Badge.parse("Naming/MethodName")
 
+        # Packed args for the bundled run: `[style]`. The bundle always
+        # computes the filtered flavor (see `bundle_eligible?`). `EnforcedStyle`
+        # may be absent when the config does not mention this cop (the slice is
+        # then discarded); default to style 0 in that case.
+        def self.bundle_args(config)
+          [STYLE_INDEX[config.for_badge(badge)["EnforcedStyle"]] || 0]
+        end
+
         def on_new_investigation
           # Fast path: with no AllowedPatterns / ForbiddenIdentifiers /
           # ForbiddenPatterns configured (the default), the style-compliant
@@ -39,11 +47,14 @@ module Shirobai
           # `no_acceptable_style!`), so one call is observably identical to one
           # call per compliant site, in any order relative to
           # `unexpected_style_detected`.
-          fast = allowed_patterns.empty? && forbidden_identifiers.empty? && forbidden_patterns.empty?
+          fast = bundle_eligible?
 
-          candidates, had_valid = Shirobai.check_method_name(
-            processed_source.raw_source, STYLE_INDEX.fetch(style.to_s), fast
-          )
+          candidates, had_valid =
+            if fast
+              Dispatch.offenses_for(processed_source, config, :method_name)
+            else
+              Shirobai.check_method_name(processed_source.raw_source, style_u8, false)
+            end
           correct_style_detected if fast && had_valid
 
           candidates.each do |start, fin, name, valid, alt, fb_start, fb_end, fb_name|
@@ -68,6 +79,16 @@ module Shirobai
         end
 
         private
+
+        # The bundle always computes the filtered (fast-path) flavor, which is
+        # only faithful while none of the Ruby-regex filters is configured.
+        def bundle_eligible?
+          allowed_patterns.empty? && forbidden_identifiers.empty? && forbidden_patterns.empty?
+        end
+
+        def style_u8
+          @style_u8 ||= self.class.bundle_args(config)[0]
+        end
 
         def forbidden_name?(name)
           forbidden_identifier?(name) || forbidden_pattern?(name)

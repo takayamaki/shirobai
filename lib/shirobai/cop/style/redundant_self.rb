@@ -7,7 +7,9 @@ module Shirobai
       #
       # Rust walks the AST, tracks local-variable scopes and reports the
       # `self` receiver of redundant `self.foo` sends, returning the byte range
-      # of `self` plus the `.` operator so Ruby can remove both.
+      # of `self` plus the `.` operator so Ruby can remove both. Offenses come
+      # from the per-file bundled run (`Shirobai::Dispatch`); the allow-list is
+      # a load-time constant, so this cop is always bundle-eligible.
       class RedundantSelf < RuboCop::Cop::Base
         extend RuboCop::Cop::AutoCorrector
 
@@ -24,11 +26,16 @@ module Shirobai
           [RuboCop::Cop::Style::ColonMethodCall, RuboCop::Cop::Layout::DotPosition]
         end
 
+        # Packed args for the bundled run: `[kernel_methods]`.
+        def self.bundle_args(_config)
+          [KERNEL_METHODS]
+        end
+
         def on_new_investigation
-          source = processed_source.raw_source
           buffer = processed_source.buffer
 
-          Shirobai.check_redundant_self(source, KERNEL_METHODS).each do |self_start, self_end, dot_start, dot_end|
+          offenses = Dispatch.offenses_for(processed_source, config, :redundant_self)
+          offenses.each do |self_start, self_end, dot_start, dot_end|
             range = Parser::Source::Range.new(buffer, self_start, self_end)
             add_offense(range) do |corrector|
               corrector.remove(range)

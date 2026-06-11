@@ -9,17 +9,29 @@ module Shirobai
       # is misindented, and returns the offending range together with the column
       # delta and the formatted message. Ruby supplies the flattened config
       # (style + indentation widths) and applies the realignment via
-      # `AlignmentCorrector`.
+      # `AlignmentCorrector`. Offenses come from the per-file bundled run
+      # (`Shirobai::Dispatch`); the config derivation is purely config-driven,
+      # so this cop is always bundle-eligible.
       class MultilineOperationIndentation < RuboCop::Cop::Base
         include RuboCop::Cop::ConfigurableEnforcedStyle
         include RuboCop::Cop::Alignment
         extend RuboCop::Cop::AutoCorrector
 
-        # Offenses come from `Shirobai::Dispatch` (shared walk); the style→u8 map
-        # lives there.
+        STYLE_MAP = { "aligned" => 0, "indented" => 1 }.freeze
 
         def self.cop_name = "Layout/MultilineOperationIndentation"
         def self.badge = RuboCop::Cop::Badge.parse("Layout/MultilineOperationIndentation")
+
+        # Packed args for the bundled run: `[style, indentation_width,
+        # base_indentation_width]`. `EnforcedStyle` is absent when the config
+        # does not mention this cop (e.g. a spec configures only the sibling
+        # multiline cop, and this cop's offenses are discarded); default to the
+        # first supported style (`0`) in that case.
+        def self.bundle_args(config)
+          cop_config = config.for_badge(badge)
+          base = config.for_cop("Layout/IndentationWidth")["Width"] || 2
+          [STYLE_MAP[cop_config["EnforcedStyle"]] || 0, cop_config["IndentationWidth"] || base, base]
+        end
 
         def validate_config
           return unless style == :aligned && cop_config["IndentationWidth"]
@@ -33,7 +45,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          offenses = Shirobai::Dispatch.multiline(processed_source, config, cop_name)
+          offenses = Dispatch.offenses_for(processed_source, config, :multiline_operation)
 
           offenses.each do |start, fin, column_delta, message|
             range = Parser::Source::Range.new(buffer, start, fin)

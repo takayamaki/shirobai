@@ -7,7 +7,9 @@ module Shirobai
       #
       # Rust detects string literal concatenations broken across lines with `+`
       # or `<<` and computes the autocorrection range. Ruby reports the offense
-      # and replaces the operator (plus trailing whitespace) with `\`.
+      # and replaces the operator (plus trailing whitespace) with `\`. Offenses
+      # come from the per-file bundled run (`Shirobai::Dispatch`); the cop has
+      # no configuration, so it is always bundle-eligible.
       class LineEndConcatenation < RuboCop::Cop::Base
         extend RuboCop::Cop::AutoCorrector
 
@@ -21,10 +23,10 @@ module Shirobai
         end
 
         def on_new_investigation
-          source = processed_source.raw_source
           buffer = processed_source.buffer
 
-          Shirobai.check_line_end_concatenation(source).each do |op_start, op_end, operator, replace_start, replace_end|
+          offenses = Dispatch.offenses_for(processed_source, config, :line_end_concatenation)
+          offenses.each do |op_start, op_end, operator, replace_start, replace_end|
             range = Parser::Source::Range.new(buffer, op_start, op_end)
             message = format(MSG, operator: operator)
             add_offense(range, message: message) do |corrector|

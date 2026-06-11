@@ -11,7 +11,9 @@ module Shirobai
       # misaligned argument as an offense range plus its `column_delta`. Ruby
       # supplies the flattened config and applies the realignment via
       # `AlignmentCorrector` (the same division of labour as the multiline
-      # indentation cops).
+      # indentation cops). Offenses come from the per-file bundled run
+      # (`Shirobai::Dispatch`); the config derivation is purely config-driven,
+      # so this cop is always bundle-eligible.
       class ArgumentAlignment < RuboCop::Cop::Base
         include RuboCop::Cop::Alignment
         extend RuboCop::Cop::AutoCorrector
@@ -24,11 +26,30 @@ module Shirobai
         def self.cop_name = "Layout/ArgumentAlignment"
         def self.badge = RuboCop::Cop::Badge.parse("Layout/ArgumentAlignment")
 
+        # Packed args for the bundled run: `[style, indentation_width,
+        # incompatible]`. `incompatible` replicates the instance derivation
+        # exactly: it is only true for the explicit `with_first_argument` style
+        # combined with a separator-aligned `Layout/HashAlignment`.
+        def self.bundle_args(config)
+          cop_config = config.for_badge(badge)
+          enforced_style = cop_config["EnforcedStyle"]
+          incompatible = enforced_style == "with_first_argument" &&
+                         RuboCop::Cop::Layout::HashAlignment::SEPARATOR_ALIGNMENT_STYLES.any? do |sep_style|
+                           config.for_enabled_cop("Layout/HashAlignment")[sep_style]&.include?("separator")
+                         end
+          [
+            enforced_style == "with_fixed_indentation" ? 1 : 0,
+            cop_config["IndentationWidth"] || config.for_cop("Layout/IndentationWidth")["Width"] || 2,
+            incompatible
+          ]
+        end
+
         def on_new_investigation
           buffer = processed_source.buffer
           message = fixed_indentation? ? FIXED_INDENT_MSG : ALIGN_PARAMS_MSG
 
-          offenses_for_source.each do |start, fin, column_delta, autocorrect|
+          offenses = Dispatch.offenses_for(processed_source, config, :argument_alignment)
+          offenses.each do |start, fin, column_delta, autocorrect|
             range = Parser::Source::Range.new(buffer, start, fin)
             # Split on the per-offense correctability flag rather than testing it
             # inside the corrector block. Note this must stay keyed on the flag,
@@ -49,35 +70,14 @@ module Shirobai
 
         private
 
-        def offenses_for_source
-          Shirobai.check_argument_alignment(
-            processed_source.raw_source, style_u8, configured_indentation_width, incompatible?
-          )
-        end
-
-        # Config-derived and stable for the life of the instance.
-        def style_u8
-          @style_u8 ||= fixed_indentation? ? 1 : 0
-        end
-
-        def incompatible?
-          return @incompatible if defined?(@incompatible)
-
-          @incompatible = with_first_argument_style? && enforce_hash_argument_with_separator?
+        # Config-derived and stable for the life of the instance; shares the
+        # derivation with the bundled run (single source of truth).
+        def bundle_args
+          @bundle_args ||= self.class.bundle_args(config)
         end
 
         def fixed_indentation?
-          cop_config["EnforcedStyle"] == "with_fixed_indentation"
-        end
-
-        def with_first_argument_style?
-          cop_config["EnforcedStyle"] == "with_first_argument"
-        end
-
-        def enforce_hash_argument_with_separator?
-          RuboCop::Cop::Layout::HashAlignment::SEPARATOR_ALIGNMENT_STYLES.any? do |sep_style|
-            config.for_enabled_cop("Layout/HashAlignment")[sep_style]&.include?("separator")
-          end
+          bundle_args[0] == 1
         end
       end
     end

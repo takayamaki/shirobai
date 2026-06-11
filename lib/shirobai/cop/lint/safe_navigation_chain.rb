@@ -8,9 +8,10 @@ module Shirobai
       # Rust detects ordinary method calls chained after a safe-navigation call
       # and computes the autocorrection (insert `&.`, with parenthesization where
       # needed). Ruby supplies the `nil_methods` allow-list and applies the
-      # corrections.
+      # corrections. Offenses come from the per-file bundled run
+      # (`Shirobai::Dispatch`); the allow-list is purely config-driven, so this
+      # cop is always bundle-eligible.
       class SafeNavigationChain < RuboCop::Cop::Base
-        include RuboCop::Cop::NilMethods
         extend RuboCop::Cop::AutoCorrector
 
         MSG = "Do not chain ordinary method call after safe navigation operator."
@@ -18,12 +19,19 @@ module Shirobai
         def self.cop_name = "Lint/SafeNavigationChain"
         def self.badge = RuboCop::Cop::Badge.parse("Lint/SafeNavigationChain")
 
+        # Packed args for the bundled run: `[nil_methods]`, replicating
+        # `RuboCop::Cop::NilMethods#nil_methods` (nil's own methods + stdlib
+        # additions + the `AllowedMethods` config) stringified for Rust.
+        def self.bundle_args(config)
+          allowed = Cop.allowed_methods_config(config.for_badge(badge))
+          [(nil.methods + [:to_d] + allowed.map(&:to_sym)).map(&:to_s)]
+        end
+
         def on_new_investigation
-          source = processed_source.raw_source
-          methods = nil_method_names
           buffer = processed_source.buffer
 
-          Shirobai.check_safe_navigation_chain(source, methods).each do |start, fin, replacement, wrap_start, wrap_end|
+          offenses = Dispatch.offenses_for(processed_source, config, :safe_navigation_chain)
+          offenses.each do |start, fin, replacement, wrap_start, wrap_end|
             range = Parser::Source::Range.new(buffer, start, fin)
             add_offense(range) do |corrector|
               # Empty replacement means the offense has no safe correction
@@ -36,13 +44,6 @@ module Shirobai
               end
             end
           end
-        end
-
-        private
-
-        # Config-derived and stable for the life of the instance.
-        def nil_method_names
-          @nil_method_names ||= nil_methods.map(&:to_s)
         end
       end
     end
