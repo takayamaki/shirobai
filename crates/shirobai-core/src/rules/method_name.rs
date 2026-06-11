@@ -90,6 +90,20 @@ fn first_alternative(name: &str, current: u8) -> u8 {
 }
 
 pub fn check_method_name(source: &[u8], style: u8) -> Vec<MethodNameCandidate> {
+    check_method_name_filtered(source, style, false).0
+}
+
+/// Like [`check_method_name`], but with an optional invalid-only filter: when
+/// `filtered` is set, the style-compliant candidates (the vast majority) are
+/// dropped before crossing back into Ruby. The returned flag reports whether
+/// any valid candidate existed, so the Ruby side can still run its
+/// `correct_style_detected` bookkeeping. The filter runs after the whole walk
+/// because the class-emitter resolution can flip `valid` retroactively.
+pub fn check_method_name_filtered(
+    source: &[u8],
+    style: u8,
+    filtered: bool,
+) -> (Vec<MethodNameCandidate>, bool) {
     super::parse_cache::with_parsed(source, |source, node| {
         let mut visitor = Visitor {
             source,
@@ -100,7 +114,12 @@ pub fn check_method_name(source: &[u8], style: u8) -> Vec<MethodNameCandidate> {
         visitor.visit(node);
         // Resolve any class-emitter candidates still pending at the top scope.
         visitor.resolve_scope();
-        visitor.candidates
+        let mut candidates = visitor.candidates;
+        let had_valid = candidates.iter().any(|c| c.valid);
+        if filtered {
+            candidates.retain(|c| !c.valid);
+        }
+        (candidates, had_valid)
     })
 }
 
@@ -512,5 +531,35 @@ mod tests {
         assert_eq!(cands.len(), 1);
         // `selector end + 1` = after `attr_reader ` (12) .. end (21).
         assert_eq!((cands[0].start_offset, cands[0].end_offset), (12, 21));
+    }
+
+    #[test]
+    fn filtered_drops_valid_and_reports_had_valid() {
+        let src = "def good_one; end\ndef badOne; end\ndef good_two; end";
+        let (cands, had_valid) = check_method_name_filtered(src.as_bytes(), SNAKE_CASE, true);
+        assert!(had_valid);
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].name, "badOne");
+        // Unfiltered keeps everything and still reports the flag.
+        let (all, had_valid) = check_method_name_filtered(src.as_bytes(), SNAKE_CASE, false);
+        assert!(had_valid);
+        assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn filtered_without_valid_candidates() {
+        let (cands, had_valid) = check_method_name_filtered(b"def badOne; end", SNAKE_CASE, true);
+        assert!(!had_valid);
+        assert_eq!(cands.len(), 1);
+    }
+
+    // The class-emitter exception flips `valid` after the walk; the filter must
+    // honour the post-resolution value.
+    #[test]
+    fn filtered_respects_class_emitter_resolution() {
+        let src = "class Sequel\n  def self.Model(s); end\n  class Model; end\nend";
+        let (cands, had_valid) = check_method_name_filtered(src.as_bytes(), SNAKE_CASE, true);
+        assert!(had_valid);
+        assert!(cands.is_empty());
     }
 }

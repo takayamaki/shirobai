@@ -135,16 +135,26 @@ fn check_variable_number(
     (offenses, had_correct)
 }
 
-/// Ruby entry point for `Naming/MethodName`. Returns one entry per method-name
-/// site: `[[start, end, name, valid, alt, fb_start, fb_end, fb_name], ...]`.
-/// AllowedPatterns / Forbidden filtering and style bookkeeping stay on the Ruby
-/// side.
+/// Ruby entry point for `Naming/MethodName`. Returns `[candidates, had_valid]`
+/// where each candidate is `[start, end, name, valid, alt, fb_start, fb_end,
+/// fb_name]`. With `filtered` (no AllowedPatterns / Forbidden* config) only the
+/// invalid sites are returned and `had_valid` carries the
+/// `correct_style_detected` bookkeeping; otherwise every site is returned.
 #[allow(clippy::type_complexity)]
 fn check_method_name(
     source: RString,
     style: u8,
-) -> Vec<(usize, usize, String, bool, u8, usize, usize, String)> {
-    shirobai_core::rules::method_name::check_method_name(bytes(&source), style)
+    filtered: bool,
+) -> (
+    Vec<(usize, usize, String, bool, u8, usize, usize, String)>,
+    bool,
+) {
+    let (candidates, had_valid) = shirobai_core::rules::method_name::check_method_name_filtered(
+        bytes(&source),
+        style,
+        filtered,
+    );
+    let candidates = candidates
         .into_iter()
         .map(|c| {
             (
@@ -158,7 +168,8 @@ fn check_method_name(
                 c.forbidden_name,
             )
         })
-        .collect()
+        .collect();
+    (candidates, had_valid)
 }
 
 /// Ruby entry point for `Lint/SafeNavigationChain`. Returns
@@ -519,7 +530,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         "check_line_length_breakables",
         function!(check_line_length_breakables, 4),
     )?;
-    module.define_module_function("check_method_name", function!(check_method_name, 2))?;
+    module.define_module_function("check_method_name", function!(check_method_name, 3))?;
     module.define_module_function(
         "check_line_end_concatenation",
         function!(check_line_end_concatenation, 1),

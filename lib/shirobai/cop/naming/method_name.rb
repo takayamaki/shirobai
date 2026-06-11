@@ -13,6 +13,8 @@ module Shirobai
       # returns the offense candidates. Ruby keeps the `AllowedPatterns`,
       # `ForbiddenIdentifiers` and `ForbiddenPatterns` filters and the
       # `ConfigurableEnforcedStyle` bookkeeping (`config_to_allow_offenses`).
+      # When none of those filters is configured, Rust only returns the
+      # invalid sites (see `on_new_investigation`).
       class MethodName < RuboCop::Cop::Base
         include RuboCop::Cop::ConfigurableNaming
         include RuboCop::Cop::AllowedPattern
@@ -29,9 +31,20 @@ module Shirobai
         def self.badge = RuboCop::Cop::Badge.parse("Naming/MethodName")
 
         def on_new_investigation
-          candidates = Shirobai.check_method_name(
-            processed_source.raw_source, STYLE_INDEX.fetch(style.to_s)
+          # Fast path: with no AllowedPatterns / ForbiddenIdentifiers /
+          # ForbiddenPatterns configured (the default), the style-compliant
+          # sites can only ever feed `correct_style_detected`, so Rust drops
+          # them and reports their existence as a flag instead. `style_detected`
+          # is idempotent set-intersection bookkeeping (sticky
+          # `no_acceptable_style!`), so one call is observably identical to one
+          # call per compliant site, in any order relative to
+          # `unexpected_style_detected`.
+          fast = allowed_patterns.empty? && forbidden_identifiers.empty? && forbidden_patterns.empty?
+
+          candidates, had_valid = Shirobai.check_method_name(
+            processed_source.raw_source, STYLE_INDEX.fetch(style.to_s), fast
           )
+          correct_style_detected if fast && had_valid
 
           candidates.each do |start, fin, name, valid, alt, fb_start, fb_end, fb_name|
             next if matches_allowed_pattern?(name)
