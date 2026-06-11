@@ -8,6 +8,7 @@ pub mod debugger;
 pub mod dispatch;
 pub mod dot_position;
 pub mod first_argument_indentation;
+pub mod first_array_element_indentation;
 pub mod indentation_width;
 pub mod line_end_concatenation;
 pub mod line_index;

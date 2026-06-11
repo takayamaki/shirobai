@@ -58,6 +58,11 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Layout::ClosingParenthesisIndentation,
       Shirobai::Cop::Layout::ClosingParenthesisIndentation,
       "some_method(a\n)\n"
+    ],
+    "Layout/FirstArrayElementIndentation" => [
+      RuboCop::Cop::Layout::FirstArrayElementIndentation,
+      Shirobai::Cop::Layout::FirstArrayElementIndentation,
+      "a << [\n 1\n  ]\n"
     ]
   }
 

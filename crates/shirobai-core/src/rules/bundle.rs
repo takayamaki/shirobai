@@ -10,9 +10,9 @@ use super::multiline_method_call_indentation::{self as mc, MethodCallIndentOffen
 use super::multiline_operation_indentation::{self as op, OperationIndentOffense};
 use super::{
     argument_alignment, block_length, block_nesting, closing_parenthesis_indentation, complexity,
-    debugger, dot_position, first_argument_indentation, indentation_width, line_end_concatenation,
-    line_length, line_length_breakable, method_name, predicate_prefix, redundant_self,
-    safe_navigation_chain, variable_number,
+    debugger, dot_position, first_argument_indentation, first_array_element_indentation,
+    indentation_width, line_end_concatenation, line_length, line_length_breakable, method_name,
+    predicate_prefix, redundant_self, safe_navigation_chain, variable_number,
 };
 
 /// Run `Layout/MultilineOperationIndentation` and
@@ -41,7 +41,7 @@ pub fn check_multiline_bundle(
 /// (`Shirobai::Dispatch.packed_config`) assembles the two arrays in the same
 /// order.
 ///
-/// `nums` (`i64`, booleans are `0`/`1`), 35 entries:
+/// `nums` (`i64`, booleans are `0`/`1`), 38 entries:
 ///
 /// | idx | field |
 /// |-----|-------|
@@ -66,6 +66,7 @@ pub fn check_multiline_bundle(
 /// | 24-26 | first_argument_indentation style / indent / enforce_fixed_no_line_break |
 /// | 27-33 | indentation_width width / relative_to_receiver / access_modifier_outdent / indented_internal_methods / end_align / def_end_align_def / use_tabs |
 /// | 34  | closing_paren_indent |
+/// | 35-37 | first_array_element style / indent / enforce_fixed_indentation |
 ///
 /// `lists` (`Vec<String>`), 9 entries:
 ///
@@ -116,12 +117,15 @@ pub struct BundleConfig {
     pub first_argument_enforce_fixed_no_line_break: bool,
     pub indentation_width: indentation_width::Config,
     pub closing_paren_indent: usize,
+    pub first_array_element_style: u8,
+    pub first_array_element_indent: usize,
+    pub first_array_element_enforce_fixed: bool,
     pub redundant_self_kernel_methods: Vec<String>,
     pub predicate_prefix_name_prefixes: Vec<String>,
     pub predicate_prefix_macros: Vec<String>,
 }
 
-const NUMS_LEN: usize = 35;
+const NUMS_LEN: usize = 38;
 const LISTS_LEN: usize = 9;
 
 impl BundleConfig {
@@ -183,6 +187,9 @@ impl BundleConfig {
                 use_tabs: nums[33] != 0,
             },
             closing_paren_indent: nums[34] as usize,
+            first_array_element_style: nums[35] as u8,
+            first_array_element_indent: nums[36] as usize,
+            first_array_element_enforce_fixed: nums[37] != 0,
             redundant_self_kernel_methods: next_list(),
             predicate_prefix_name_prefixes: next_list(),
             predicate_prefix_macros: next_list(),
@@ -212,6 +219,8 @@ pub struct BundleResult {
     pub predicate_prefix: Vec<predicate_prefix::PredicatePrefixCandidate>,
     pub closing_parenthesis_indentation:
         Vec<closing_parenthesis_indentation::ClosingParenIndentOffense>,
+    pub first_array_element_indentation:
+        Vec<first_array_element_indentation::FirstArrayElemIndentOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -286,6 +295,12 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     );
     let mut cpi_rule =
         closing_parenthesis_indentation::build_rule(source, cfg.closing_paren_indent);
+    let mut fae_rule = first_array_element_indentation::build_rule(
+        source,
+        cfg.first_array_element_style,
+        cfg.first_array_element_indent,
+        cfg.first_array_element_enforce_fixed,
+    );
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -310,6 +325,9 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     if let Some(rule) = fa_rule.as_mut() {
         rules.push(rule);
     }
+    if let Some(rule) = fae_rule.as_mut() {
+        rules.push(rule);
+    }
     super::dispatch::run(source, &mut rules);
 
     let multiline_operation = op_rule.offenses;
@@ -328,6 +346,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let block_nesting = (bn_rule.out, bn_rule.deepest);
     let predicate_prefix = pp_rule.offenses;
     let closing_parenthesis_indentation = cpi_rule.offenses;
+    let first_array_element_indentation = fae_rule.map(|r| r.offenses).unwrap_or_default();
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -366,6 +385,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         indentation_width,
         predicate_prefix,
         closing_parenthesis_indentation,
+        first_array_element_indentation,
     }
 }
 
@@ -415,6 +435,7 @@ mod tests {
             0, 2, 0, // first_argument_indentation
             2, 0, 0, 0, 0, 0, 0, // indentation_width
             2, // closing_paren_indent
+            0, 2, 0, // first_array_element_indentation
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -450,6 +471,9 @@ mod tests {
         assert_eq!(cfg.indentation_width.width, 2);
         assert_eq!(cfg.indentation_width.end_align, 0);
         assert_eq!(cfg.closing_paren_indent, 2);
+        assert_eq!(cfg.first_array_element_style, 0);
+        assert_eq!(cfg.first_array_element_indent, 2);
+        assert!(!cfg.first_array_element_enforce_fixed);
         assert_eq!(cfg.debugger_methods, vec!["binding.pry", "debugger"]);
         assert_eq!(cfg.safe_navigation_nil_methods, vec!["to_s"]);
         assert_eq!(cfg.redundant_self_kernel_methods, vec!["puts"]);
@@ -943,18 +967,83 @@ mod tests {
         }
     }
 
+    /// `Layout/FirstArrayElementIndentation` merged into the shared walk must
+    /// report exactly what its standalone entry point reports, over a source
+    /// exercising the ancestor-sensitive paths: a paren-claimed array, a
+    /// parent-hash-key base, a start-of-line operand array and a hanging
+    /// right bracket.
+    #[test]
+    fn shared_walk_matches_standalone_first_array_element_indentation() {
+        let src = "func([\n\
+                   \x20 1\n\
+                   ])\n\
+                   func(x: [\n\
+                   \x20 :a,\n\
+                   \x20      :b\n\
+                   ],\n\
+                   \x20    y: [\n\
+                   \x20      :c\n\
+                   \x20    ])\n\
+                   a << [\n\
+                   \x201\n\
+                   \x20 ]\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let fae_alone =
+            super::first_array_element_indentation::check_first_array_element_indentation(
+                src.as_bytes(),
+                cfg.first_array_element_style,
+                cfg.first_array_element_indent,
+                cfg.first_array_element_enforce_fixed,
+            );
+        assert!(fae_alone.len() >= 5);
+        assert!(
+            fae_alone
+                .iter()
+                .any(|o| o.message.contains("parent hash key"))
+        );
+        assert!(
+            fae_alone
+                .iter()
+                .any(|o| o.message.contains("preceding left parenthesis"))
+        );
+        assert!(
+            fae_alone
+                .iter()
+                .any(|o| o.message.starts_with("Indent the right bracket"))
+        );
+        assert_eq!(
+            bundle.first_array_element_indentation.len(),
+            fae_alone.len()
+        );
+        for (a, b) in bundle
+            .first_array_element_indentation
+            .iter()
+            .zip(&fae_alone)
+        {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.column_delta, &a.message),
+                (b.start_offset, b.end_offset, b.column_delta, &b.message)
+            );
+        }
+    }
+
     /// A disabled-by-config dispatch-family cop must stay disabled in the
     /// bundle (its `build_rule` returns `None` and it joins no walk).
     #[test]
     fn shared_walk_respects_disabled_rules() {
-        let src = "foo(bar,\n  baz)\n";
+        let src = "foo(bar,\n  baz)\nfoo([\n  1\n])\n";
         let (mut nums, lists) = default_packed();
         nums[23] = 1; // argument_alignment incompatible (with_first_argument)
         nums[26] = 1; // first_argument enforce_fixed_no_line_break
+        nums[37] = 1; // first_array_element enforce_fixed_indentation
         let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
         let bundle = check_all_bundle(src.as_bytes(), &cfg);
         assert!(bundle.argument_alignment.is_empty());
         assert!(bundle.first_argument_indentation.is_empty());
+        assert!(bundle.first_array_element_indentation.is_empty());
     }
 
     #[test]
