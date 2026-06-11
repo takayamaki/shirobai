@@ -37,7 +37,8 @@ module Shirobai
       indentation_width: 16,
       predicate_prefix: 17,
       closing_parenthesis_indentation: 18,
-      first_array_element_indentation: 19
+      first_array_element_indentation: 19,
+      hash_each_methods: 20
     }.freeze
 
     class << self
@@ -89,6 +90,7 @@ module Shirobai
         pp = Cop::Naming::PredicatePrefix.bundle_args(config)
         cpi = Cop::Layout::ClosingParenthesisIndentation.bundle_args(config)
         fae = Cop::Layout::FirstArrayElementIndentation.bundle_args(config)
+        hem = Cop::Style::HashEachMethods.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -106,7 +108,7 @@ module Shirobai
           cpi[0],                        # ClosingParenthesisIndentation indent width
           fae[0], fae[1], num(fae[2])    # FirstArrayElementIndentation style / indent / enforce flag
         ]
-        lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1]]
+        lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0]]
         [nums, lists]
       end
 

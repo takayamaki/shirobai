@@ -63,6 +63,11 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Layout::FirstArrayElementIndentation,
       Shirobai::Cop::Layout::FirstArrayElementIndentation,
       "a << [\n 1\n  ]\n"
+    ],
+    "Style/HashEachMethods" => [
+      RuboCop::Cop::Style::HashEachMethods,
+      Shirobai::Cop::Style::HashEachMethods,
+      "foo.keys.each { |k| p k }\nbar.each { |unused_key, v| p v }\n"
     ]
   }
 

@@ -11,8 +11,9 @@ use super::multiline_operation_indentation::{self as op, OperationIndentOffense}
 use super::{
     argument_alignment, block_length, block_nesting, closing_parenthesis_indentation, complexity,
     debugger, dot_position, first_argument_indentation, first_array_element_indentation,
-    indentation_width, line_end_concatenation, line_length, line_length_breakable, method_name,
-    predicate_prefix, redundant_self, safe_navigation_chain, variable_number,
+    hash_each_methods, indentation_width, line_end_concatenation, line_length,
+    line_length_breakable, method_name, predicate_prefix, redundant_self, safe_navigation_chain,
+    variable_number,
 };
 
 /// Run `Layout/MultilineOperationIndentation` and
@@ -68,7 +69,7 @@ pub fn check_multiline_bundle(
 /// | 34  | closing_paren_indent |
 /// | 35-37 | first_array_element style / indent / enforce_fixed_indentation |
 ///
-/// `lists` (`Vec<String>`), 9 entries:
+/// `lists` (`Vec<String>`), 10 entries:
 ///
 /// | idx | field |
 /// |-----|-------|
@@ -81,6 +82,7 @@ pub fn check_multiline_bundle(
 /// |  6  | redundant_self_kernel_methods |
 /// |  7  | predicate_prefix_name_prefixes |
 /// |  8  | predicate_prefix_macros |
+/// |  9  | hash_each_allowed_receivers |
 ///
 /// `Layout/IndentationWidth`'s `allowed_lines` and `prior_ranges` are fixed to
 /// empty in the bundle: the non-empty cases (configured `AllowedPatterns`,
@@ -123,10 +125,11 @@ pub struct BundleConfig {
     pub redundant_self_kernel_methods: Vec<String>,
     pub predicate_prefix_name_prefixes: Vec<String>,
     pub predicate_prefix_macros: Vec<String>,
+    pub hash_each_allowed_receivers: Vec<String>,
 }
 
 const NUMS_LEN: usize = 38;
-const LISTS_LEN: usize = 9;
+const LISTS_LEN: usize = 10;
 
 impl BundleConfig {
     /// Build a config from the flat wire format (see the struct docs for the
@@ -193,6 +196,7 @@ impl BundleConfig {
             redundant_self_kernel_methods: next_list(),
             predicate_prefix_name_prefixes: next_list(),
             predicate_prefix_macros: next_list(),
+            hash_each_allowed_receivers: next_list(),
         })
     }
 }
@@ -221,6 +225,7 @@ pub struct BundleResult {
         Vec<closing_parenthesis_indentation::ClosingParenIndentOffense>,
     pub first_array_element_indentation:
         Vec<first_array_element_indentation::FirstArrayElemIndentOffense>,
+    pub hash_each_methods: Vec<hash_each_methods::HashEachOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -301,6 +306,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         cfg.first_array_element_indent,
         cfg.first_array_element_enforce_fixed,
     );
+    let mut hem_rule = hash_each_methods::build_rule(source, &cfg.hash_each_allowed_receivers);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -318,6 +324,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut heredoc_rule,
         &mut pp_rule,
         &mut cpi_rule,
+        &mut hem_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -347,6 +354,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let predicate_prefix = pp_rule.offenses;
     let closing_parenthesis_indentation = cpi_rule.offenses;
     let first_array_element_indentation = fae_rule.map(|r| r.offenses).unwrap_or_default();
+    let hash_each_methods = hem_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -386,6 +394,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         predicate_prefix,
         closing_parenthesis_indentation,
         first_array_element_indentation,
+        hash_each_methods,
     }
 }
 
@@ -449,6 +458,7 @@ mod tests {
             ["define_method", "define_singleton_method"]
                 .map(String::from)
                 .to_vec(),
+            vec!["Thread.current".to_string()],
         ];
         (nums, lists)
     }
@@ -485,6 +495,7 @@ mod tests {
             cfg.predicate_prefix_macros,
             vec!["define_method", "define_singleton_method"]
         );
+        assert_eq!(cfg.hash_each_allowed_receivers, vec!["Thread.current"]);
     }
 
     #[test]
@@ -1026,6 +1037,54 @@ mod tests {
             assert_eq!(
                 (a.start_offset, a.end_offset, a.column_delta, &a.message),
                 (b.start_offset, b.end_offset, b.column_delta, &b.message)
+            );
+        }
+    }
+
+    /// `Style/HashEachMethods` merged into the shared walk must report exactly
+    /// what its standalone entry point reports, over a source exercising every
+    /// branch: a `keys.each` block, a `values.each` block-pass, an unused
+    /// key argument, an allowed receiver and a mutated hash.
+    #[test]
+    fn shared_walk_matches_standalone_hash_each_methods() {
+        let src = "foo.keys.each { |k| p k }\n\
+                   bar.values.each(&:baz)\n\
+                   qux.each { |unused_key, v| p v }\n\
+                   Thread.current.keys.each { |k| p k }\n\
+                   mut.keys.each { |k| mut[k] = 1 }\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let hem_alone = super::hash_each_methods::check_hash_each_methods(
+            src.as_bytes(),
+            &cfg.hash_each_allowed_receivers,
+        );
+        assert_eq!(hem_alone.len(), 3);
+        assert!(hem_alone.iter().any(|o| o.remove_end > o.remove_start));
+        assert_eq!(bundle.hash_each_methods.len(), hem_alone.len());
+        for (a, b) in bundle.hash_each_methods.iter().zip(&hem_alone) {
+            assert_eq!(
+                (
+                    a.start_offset,
+                    a.end_offset,
+                    &a.message,
+                    a.replace_start,
+                    a.replace_end,
+                    &a.replacement,
+                    a.remove_start,
+                    a.remove_end
+                ),
+                (
+                    b.start_offset,
+                    b.end_offset,
+                    &b.message,
+                    b.replace_start,
+                    b.replace_end,
+                    &b.replacement,
+                    b.remove_start,
+                    b.remove_end
+                )
             );
         }
     }

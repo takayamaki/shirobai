@@ -265,6 +265,26 @@ fn map_first_array_element_indentation(
         .collect()
 }
 
+#[allow(clippy::type_complexity)]
+fn map_hash_each_methods(
+    v: Vec<shirobai_core::rules::hash_each_methods::HashEachOffense>,
+) -> Vec<(usize, usize, String, usize, usize, String, usize, usize)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.start_offset,
+                o.end_offset,
+                o.message,
+                o.replace_start,
+                o.replace_end,
+                o.replacement,
+                o.remove_start,
+                o.remove_end,
+            )
+        })
+        .collect()
+}
+
 fn map_predicate_prefix(
     v: Vec<shirobai_core::rules::predicate_prefix::PredicatePrefixCandidate>,
 ) -> Vec<(usize, usize, String, bool, bool)> {
@@ -336,7 +356,7 @@ fn register_bundle_config(
 
 /// Ruby entry point for the all-cop bundle: computes every cop's result for
 /// `source` in one call, using the config registered under `token`. Returns a
-/// fixed-order 20-slot Array; each slot carries that cop's existing tuple-array
+/// fixed-order 21-slot Array; each slot carries that cop's existing tuple-array
 /// shape (identical to the standalone entry point's return value). The slot
 /// order is mirrored by `Shirobai::Dispatch::SLOTS` on the Ruby side:
 ///
@@ -346,7 +366,8 @@ fn register_bundle_config(
 /// 10 line_length / 11 line_length_breakables / 12 line_end_concatenation /
 /// 13 argument_alignment / 14 first_argument_indentation / 15 redundant_self /
 /// 16 indentation_width / 17 predicate_prefix /
-/// 18 closing_parenthesis_indentation / 19 first_array_element_indentation
+/// 18 closing_parenthesis_indentation / 19 first_array_element_indentation /
+/// 20 hash_each_methods
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -357,7 +378,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(20);
+        let ary = ruby.ary_new_capa(21);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -382,6 +403,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_first_array_element_indentation(
             r.first_array_element_indentation,
         ))?;
+        ary.push(map_hash_each_methods(r.hash_each_methods))?;
         Ok(ary)
     })
 }
@@ -764,6 +786,25 @@ fn check_first_array_element_indentation(
     )
 }
 
+/// Ruby entry point for `Style/HashEachMethods`. Takes the source and the
+/// `AllowedReceivers` list (matched by receiver source name, like the
+/// `AllowedReceivers` mixin). Returns one entry per offense: `[[start, end,
+/// message, replace_start, replace_end, replacement, remove_start,
+/// remove_end], ...]` — Ruby replaces `[replace_start, replace_end)` with
+/// `replacement` and removes `[remove_start, remove_end)` when non-empty.
+#[allow(clippy::type_complexity)]
+fn check_hash_each_methods(
+    source: RString,
+    allowed_receivers: Vec<String>,
+) -> Vec<(usize, usize, String, usize, usize, String, usize, usize)> {
+    map_hash_each_methods(
+        shirobai_core::rules::hash_each_methods::check_hash_each_methods(
+            bytes(&source),
+            &allowed_receivers,
+        ),
+    )
+}
+
 /// Ruby entry point for `Style/RedundantSelf`. Returns one entry per redundant
 /// `self` receiver: `[[self_start, self_end, dot_start, dot_end], ...]`. The
 /// `Kernel` method allow-list is supplied by Ruby.
@@ -875,6 +916,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_first_array_element_indentation",
         function!(check_first_array_element_indentation, 4),
+    )?;
+    module.define_module_function(
+        "check_hash_each_methods",
+        function!(check_hash_each_methods, 2),
     )?;
     Ok(())
 }
