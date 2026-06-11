@@ -29,19 +29,15 @@ module Shirobai
           source = processed_source.raw_source
           candidates = Shirobai.check_line_length(source, max, tab_indentation_width || 0)
 
-          # Breakable (autocorrection) data feeds only the corrector. RuboCop
-          # yields the corrector block even in lint mode, but the correction it
-          # builds is then discarded (`use_corrector` only applies it when
-          # autocorrecting). Computing breakables is a full AST walk per file, so
-          # skip it entirely unless we are actually autocorrecting — the offenses
-          # are unchanged, so lint output is identical to stock. When we do
-          # autocorrect, restrict the walk to candidate lines (length > Max);
-          # only those can become offenses and consume a breakable range.
-          @breakable_range_by_line_index = {}
-          @breakable_string_delimiters = {}
-          if autocorrect?
-            compute_breakables(source, candidates.map { |candidate| candidate[0] })
-          end
+          # Breakable (autocorrection) data must be built even in lint mode: with
+          # AutoCorrect defaulting to 'always', the corrector block runs and a
+          # non-empty corrector makes the offense `:uncorrected` (correctable),
+          # which stock reports as "[Correctable]" / counts as auto-correctable.
+          # Skipping it would flip the offense to `:unsupported` and diverge from
+          # stock's lint output. We only restrict the walk to candidate lines
+          # (length > Max) — the sole lines that can become offenses and consume a
+          # breakable range — which is identical to computing it for all lines.
+          compute_breakables(source, candidates.map { |candidate| candidate[0] })
 
           candidates.each do |candidate|
             line_index, length, _line_start, _line_end, _indent_diff, heredoc_delimiters = candidate
