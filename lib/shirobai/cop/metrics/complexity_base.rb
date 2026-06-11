@@ -12,7 +12,7 @@ module Shirobai
         def on_new_investigation
           max = cop_config["Max"]
 
-          ComplexityShared.analyze(processed_source).each do |start, fin, head_end, name, cyclomatic, perceived|
+          ComplexityShared.analyze(processed_source, config).each do |start, fin, head_end, name, cyclomatic, perceived|
             next if allowed_method?(name) || matches_allowed_pattern?(name)
 
             complexity = metric_score(cyclomatic, perceived)

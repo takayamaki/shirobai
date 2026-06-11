@@ -21,9 +21,23 @@ pub struct MethodComplexity {
 }
 
 pub fn check_complexity(source: &[u8]) -> Vec<MethodComplexity> {
+    check_complexity_exceeding(source, 0, 0)
+}
+
+/// Like [`check_complexity`], but only reports methods whose score exceeds a
+/// threshold (`cyclomatic > max_cyclomatic || perceived > max_perceived`), so
+/// the Ruby side never marshals the (vastly more numerous) compliant methods.
+/// Scores start at 1, so a threshold of `0` means "report everything".
+pub fn check_complexity_exceeding(
+    source: &[u8],
+    max_cyclomatic: usize,
+    max_perceived: usize,
+) -> Vec<MethodComplexity> {
     super::parse_cache::with_parsed(source, |source, node| {
         let mut finder = MethodFinder {
             source,
+            max_cyclomatic,
+            max_perceived,
             out: Vec::new(),
         };
         finder.visit(node);
@@ -130,12 +144,17 @@ fn is_iterating(name: &[u8]) -> bool {
 
 struct MethodFinder<'a> {
     source: &'a [u8],
+    max_cyclomatic: usize,
+    max_perceived: usize,
     out: Vec<MethodComplexity>,
 }
 
 impl MethodFinder<'_> {
     fn record(&mut self, start: usize, end: usize, head_end: usize, name: String, body: &Node<'_>) {
         let (cyclomatic, perceived) = score_body(self.source, body);
+        if cyclomatic <= self.max_cyclomatic && perceived <= self.max_perceived {
+            return;
+        }
         self.out.push(MethodComplexity {
             start_offset: start,
             end_offset: end,
@@ -478,5 +497,25 @@ mod tests {
     #[test]
     fn empty_method() {
         assert!(scores("def m\nend").is_empty());
+    }
+
+    // The threshold filter keeps a method when either score exceeds its Max.
+    #[test]
+    fn exceeding_filters_on_either_threshold() {
+        // cyclomatic 3, perceived 4 (if/elsif/else).
+        let src = "def m\n  if a\n    x\n  elsif b\n    y\n  else\n    z\n  end\nend";
+        let kept = |max_c, max_p| check_complexity_exceeding(src.as_bytes(), max_c, max_p).len();
+        assert_eq!(kept(2, 3), 1); // both exceed
+        assert_eq!(kept(3, 3), 1); // only perceived exceeds
+        assert_eq!(kept(2, 4), 1); // only cyclomatic exceeds
+        assert_eq!(kept(3, 4), 0); // neither exceeds (boundary: > , not >=)
+    }
+
+    // A threshold of 0 reports every method (scores start at 1).
+    #[test]
+    fn exceeding_zero_thresholds_report_everything() {
+        let src = "def a\n  x\nend\ndef b\n  y if c\nend";
+        assert_eq!(check_complexity_exceeding(src.as_bytes(), 0, 0).len(), 2);
+        assert_eq!(scores(src).len(), 2);
     }
 }

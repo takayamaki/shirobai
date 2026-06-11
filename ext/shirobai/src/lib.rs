@@ -76,23 +76,33 @@ fn check_block_nesting(
     (offenses, deepest)
 }
 
-/// Ruby entry point for the complexity cops. Returns one entry per method:
-/// `[[start, end, head_end, name, cyclomatic, perceived], ...]`.
+/// Ruby entry point for the complexity cops. Returns one entry per method
+/// whose score exceeds either threshold (`cyclomatic > max_cyclomatic ||
+/// perceived > max_perceived`; `0` disables a threshold since scores start at
+/// 1): `[[start, end, head_end, name, cyclomatic, perceived], ...]`.
 #[allow(clippy::type_complexity)]
-fn check_complexity(source: RString) -> Vec<(usize, usize, usize, String, usize, usize)> {
-    shirobai_core::rules::complexity::check_complexity(bytes(&source))
-        .into_iter()
-        .map(|m| {
-            (
-                m.start_offset,
-                m.end_offset,
-                m.head_end,
-                m.method_name,
-                m.cyclomatic,
-                m.perceived,
-            )
-        })
-        .collect()
+fn check_complexity(
+    source: RString,
+    max_cyclomatic: usize,
+    max_perceived: usize,
+) -> Vec<(usize, usize, usize, String, usize, usize)> {
+    shirobai_core::rules::complexity::check_complexity_exceeding(
+        bytes(&source),
+        max_cyclomatic,
+        max_perceived,
+    )
+    .into_iter()
+    .map(|m| {
+        (
+            m.start_offset,
+            m.end_offset,
+            m.head_end,
+            m.method_name,
+            m.cyclomatic,
+            m.perceived,
+        )
+    })
+    .collect()
 }
 
 /// Ruby entry point for `Naming/VariableNumber`. Returns
@@ -488,7 +498,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     let module = ruby.define_module("Shirobai")?;
     module.define_module_function("check_debugger", function!(check_debugger, 3))?;
     module.define_module_function("check_block_length", function!(check_block_length, 4))?;
-    module.define_module_function("check_complexity", function!(check_complexity, 1))?;
+    module.define_module_function("check_complexity", function!(check_complexity, 3))?;
     module.define_module_function("check_block_nesting", function!(check_block_nesting, 4))?;
     module.define_module_function("check_variable_number", function!(check_variable_number, 4))?;
     module.define_module_function(
