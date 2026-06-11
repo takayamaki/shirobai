@@ -38,20 +38,36 @@ pub fn check_block_length_filtered(
     allowed_methods: &[String],
     filtered: bool,
 ) -> Vec<BlockLengthCandidate> {
-    let fold = Fold::from_types(count_as_one);
-    super::parse_cache::with_parsed(source, |source, node| {
-        let mut visitor = Visitor {
-            source,
-            max,
-            count_comments,
-            fold,
-            allowed_methods,
-            filtered,
-            out: Vec::new(),
-        };
-        visitor.visit(node);
-        visitor.out
-    })
+    let mut visitor = build_rule(
+        source,
+        max,
+        count_comments,
+        count_as_one,
+        allowed_methods,
+        filtered,
+    );
+    super::parse_cache::with_parsed(source, |_source, node| visitor.visit(node));
+    visitor.out
+}
+
+/// Build the rule for use standalone or in a shared-walk bundle.
+pub(crate) fn build_rule<'a>(
+    source: &'a [u8],
+    max: usize,
+    count_comments: bool,
+    count_as_one: &[String],
+    allowed_methods: &'a [String],
+    filtered: bool,
+) -> Visitor<'a> {
+    Visitor {
+        source,
+        max,
+        count_comments,
+        fold: Fold::from_types(count_as_one),
+        allowed_methods,
+        filtered,
+        out: Vec::new(),
+    }
 }
 
 /// Which constructs `CountAsOne` folds. Unknown types are ignored here; the
@@ -84,14 +100,14 @@ impl Fold {
     }
 }
 
-struct Visitor<'a> {
+pub(crate) struct Visitor<'a> {
     source: &'a [u8],
     max: usize,
     count_comments: bool,
     fold: Fold,
     allowed_methods: &'a [String],
     filtered: bool,
-    out: Vec<BlockLengthCandidate>,
+    pub(crate) out: Vec<BlockLengthCandidate>,
 }
 
 impl Visitor<'_> {
@@ -342,8 +358,10 @@ impl<'pr> Visit<'pr> for FoldVisitor<'_, '_> {
     }
 }
 
-impl<'pr> Visit<'pr> for Visitor<'_> {
-    fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
+impl Visitor<'_> {
+    /// `on_block` (a block attached to a call): measure the body and push a
+    /// candidate unless excluded.
+    fn process_call(&mut self, node: &ruby_prism::CallNode<'_>) {
         if let Some(block) = node.block()
             && let Some(block_node) = block.as_block_node()
             && !self.is_class_constructor(node)
@@ -365,10 +383,10 @@ impl<'pr> Visit<'pr> for Visitor<'_> {
                 }
             }
         }
-        visit_call_node(self, node);
     }
 
-    fn visit_lambda_node(&mut self, node: &ruby_prism::LambdaNode<'pr>) {
+    /// `on_block` for `-> { ... }` lambda literals.
+    fn process_lambda(&mut self, node: &ruby_prism::LambdaNode<'_>) {
         let length = self.body_length(node.body());
         if length > self.max && !self.excluded("lambda", "") {
             let loc = node.location();
@@ -381,8 +399,35 @@ impl<'pr> Visit<'pr> for Visitor<'_> {
                 String::new(),
             );
         }
+    }
+}
+
+impl<'pr> Visit<'pr> for Visitor<'_> {
+    fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
+        self.process_call(node);
+        visit_call_node(self, node);
+    }
+
+    fn visit_lambda_node(&mut self, node: &ruby_prism::LambdaNode<'pr>) {
+        self.process_lambda(node);
         visit_lambda_node(self, node);
     }
+}
+
+/// Shared-walk driver. The generic branch hook fires for every `CallNode` /
+/// `LambdaNode` the typed visits see except the `CallNode` reached through
+/// `MatchWriteNode`'s concretely-typed `call` field — an `=~` operator call,
+/// which never carries a block literal, so `process_call` skips it anyway.
+impl super::dispatch::Rule for Visitor<'_> {
+    fn enter(&mut self, node: &Node<'_>) {
+        if let Some(call) = node.as_call_node() {
+            self.process_call(&call);
+        } else if let Some(lambda) = node.as_lambda_node() {
+            self.process_lambda(&lambda);
+        }
+    }
+
+    fn leave(&mut self) {}
 }
 
 #[cfg(test)]

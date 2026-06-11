@@ -29,29 +29,31 @@ enum Style {
 }
 
 pub fn check_dot_position(source: &[u8], style: u8) -> Vec<DotPositionOffense> {
-    super::parse_cache::with_parsed(source, |source, node| {
-        super::line_index::with_line_index(source, |line_index| {
-            let mut visitor = Visitor {
-                source,
-                line_index: line_index.clone(),
-                style: if style == 1 {
-                    Style::Trailing
-                } else {
-                    Style::Leading
-                },
-                offenses: Vec::new(),
-            };
-            visitor.visit(node);
-            visitor.offenses
-        })
-    })
+    let mut visitor = build_rule(source, style);
+    super::parse_cache::with_parsed(source, |_source, node| visitor.visit(node));
+    visitor.offenses
 }
 
-struct Visitor<'a> {
+/// Build the rule for use standalone or in a shared-walk bundle.
+pub(crate) fn build_rule(source: &[u8], style: u8) -> Visitor<'_> {
+    let line_index = super::line_index::with_line_index(source, |li| li.clone());
+    Visitor {
+        source,
+        line_index,
+        style: if style == 1 {
+            Style::Trailing
+        } else {
+            Style::Leading
+        },
+        offenses: Vec::new(),
+    }
+}
+
+pub(crate) struct Visitor<'a> {
     source: &'a [u8],
     line_index: Rc<LineIndex>,
     style: Style,
-    offenses: Vec<DotPositionOffense>,
+    pub(crate) offenses: Vec<DotPositionOffense>,
 }
 
 impl<'a> Visitor<'a> {
@@ -201,11 +203,25 @@ impl<'a> Visitor<'a> {
     }
 }
 
-impl<'a> Visit<'a> for Visitor<'a> {
-    fn visit_call_node(&mut self, node: &CallNode<'a>) {
+impl<'pr> Visit<'pr> for Visitor<'_> {
+    fn visit_call_node(&mut self, node: &CallNode<'pr>) {
         self.process_send(node);
         ruby_prism::visit_call_node(self, node);
     }
+}
+
+/// Shared-walk driver. The generic branch hook fires for every `CallNode` the
+/// typed `visit_call_node` sees except the one reached through
+/// `MatchWriteNode`'s concretely-typed `call` field — an `=~` operator call,
+/// which has no `.`/`&.` operator and is a no-op for `process_send` anyway.
+impl super::dispatch::Rule for Visitor<'_> {
+    fn enter(&mut self, node: &Node<'_>) {
+        if let Some(call) = node.as_call_node() {
+            self.process_send(&call);
+        }
+    }
+
+    fn leave(&mut self) {}
 }
 
 #[cfg(test)]

@@ -33,16 +33,23 @@ pub fn check_complexity_exceeding(
     max_cyclomatic: usize,
     max_perceived: usize,
 ) -> Vec<MethodComplexity> {
-    super::parse_cache::with_parsed(source, |source, node| {
-        let mut finder = MethodFinder {
-            source,
-            max_cyclomatic,
-            max_perceived,
-            out: Vec::new(),
-        };
-        finder.visit(node);
-        finder.out
-    })
+    let mut finder = build_rule(source, max_cyclomatic, max_perceived);
+    super::parse_cache::with_parsed(source, |_source, node| finder.visit(node));
+    finder.out
+}
+
+/// Build the rule for use standalone or in a shared-walk bundle.
+pub(crate) fn build_rule(
+    source: &[u8],
+    max_cyclomatic: usize,
+    max_perceived: usize,
+) -> MethodFinder<'_> {
+    MethodFinder {
+        source,
+        max_cyclomatic,
+        max_perceived,
+        out: Vec::new(),
+    }
 }
 
 /// Method names whose blocks are treated as iterating (`map{}`, `each{}`, ...)
@@ -142,11 +149,11 @@ fn is_iterating(name: &[u8]) -> bool {
 
 // --- Method discovery -------------------------------------------------------
 
-struct MethodFinder<'a> {
+pub(crate) struct MethodFinder<'a> {
     source: &'a [u8],
     max_cyclomatic: usize,
     max_perceived: usize,
-    out: Vec<MethodComplexity>,
+    pub(crate) out: Vec<MethodComplexity>,
 }
 
 impl MethodFinder<'_> {
@@ -185,8 +192,9 @@ fn define_method_info<'a>(call: &ruby_prism::CallNode<'a>) -> Option<(String, No
     Some((name, body, block.opening_loc().end_offset()))
 }
 
-impl<'pr> Visit<'pr> for MethodFinder<'_> {
-    fn visit_def_node(&mut self, node: &ruby_prism::DefNode<'pr>) {
+impl MethodFinder<'_> {
+    /// Score a `def`'s body (a `defs` included).
+    fn process_def(&mut self, node: &ruby_prism::DefNode<'_>) {
         if let Some(body) = node.body() {
             let loc = node.location();
             let name = String::from_utf8_lossy(node.name().as_slice()).into_owned();
@@ -198,16 +206,43 @@ impl<'pr> Visit<'pr> for MethodFinder<'_> {
                 &body,
             );
         }
-        visit_def_node(self, node);
     }
 
-    fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
+    /// Score a `define_method :name do ... end` body.
+    fn process_call(&mut self, node: &ruby_prism::CallNode<'_>) {
         if let Some((name, body, head_end)) = define_method_info(node) {
             let loc = node.location();
             self.record(loc.start_offset(), loc.end_offset(), head_end, name, &body);
         }
+    }
+}
+
+impl<'pr> Visit<'pr> for MethodFinder<'_> {
+    fn visit_def_node(&mut self, node: &ruby_prism::DefNode<'pr>) {
+        self.process_def(node);
+        visit_def_node(self, node);
+    }
+
+    fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
+        self.process_call(node);
         visit_call_node(self, node);
     }
+}
+
+/// Shared-walk driver. The generic branch hook fires for every `DefNode` and
+/// for every `CallNode` the typed visits see except the one reached through
+/// `MatchWriteNode`'s concretely-typed `call` field — an `=~` operator call,
+/// which is never a `define_method` block, so `process_call` rejects it anyway.
+impl super::dispatch::Rule for MethodFinder<'_> {
+    fn enter(&mut self, node: &Node<'_>) {
+        if let Some(def) = node.as_def_node() {
+            self.process_def(&def);
+        } else if let Some(call) = node.as_call_node() {
+            self.process_call(&call);
+        }
+    }
+
+    fn leave(&mut self) {}
 }
 
 // --- Scoring ----------------------------------------------------------------

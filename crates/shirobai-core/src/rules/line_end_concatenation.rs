@@ -33,19 +33,22 @@ pub struct LineEndConcatOffense {
 }
 
 pub fn check_line_end_concatenation(source: &[u8]) -> Vec<LineEndConcatOffense> {
-    super::parse_cache::with_parsed(source, |source, node| {
-        let mut visitor = Visitor {
-            source,
-            offenses: Vec::new(),
-        };
-        visitor.visit(node);
-        visitor.offenses
-    })
+    let mut visitor = build_rule(source);
+    super::parse_cache::with_parsed(source, |_source, node| visitor.visit(node));
+    visitor.offenses
 }
 
-struct Visitor<'a> {
+/// Build the rule for use standalone or in a shared-walk bundle.
+pub(crate) fn build_rule(source: &[u8]) -> Visitor<'_> {
+    Visitor {
+        source,
+        offenses: Vec::new(),
+    }
+}
+
+pub(crate) struct Visitor<'a> {
     source: &'a [u8],
-    offenses: Vec<LineEndConcatOffense>,
+    pub(crate) offenses: Vec<LineEndConcatOffense>,
 }
 
 fn is_quote(source: &[u8], offset: usize) -> bool {
@@ -217,6 +220,20 @@ impl<'pr> Visit<'pr> for Visitor<'_> {
         self.process_call(&node.as_node());
         ruby_prism::visit_call_node(self, node);
     }
+}
+
+/// Shared-walk driver. The generic branch hook fires for every `CallNode` the
+/// typed `visit_call_node` sees except the one reached through
+/// `MatchWriteNode`'s concretely-typed `call` field — an `=~` operator call,
+/// whose name is never `+`/`<<`, so `process_call` rejects it anyway.
+impl super::dispatch::Rule for Visitor<'_> {
+    fn enter(&mut self, node: &Node<'_>) {
+        if node.as_call_node().is_some() {
+            self.process_call(node);
+        }
+    }
+
+    fn leave(&mut self) {}
 }
 
 #[cfg(test)]

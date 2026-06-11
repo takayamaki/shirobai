@@ -248,6 +248,17 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         cfg.variable_number_flags,
         &cfg.variable_number_allowed_identifiers,
     );
+    let mut dp_rule = dot_position::build_rule(source, cfg.dot_position_style);
+    let mut lec_rule = line_end_concatenation::build_rule(source);
+    let mut bl_rule = block_length::build_rule(
+        source,
+        cfg.block_length_max,
+        cfg.block_length_count_comments,
+        &cfg.block_length_count_as_one,
+        &cfg.block_length_allowed_methods,
+        cfg.block_length_filtered,
+    );
+    let mut cx_rule = complexity::build_rule(source, cfg.max_cyclomatic, cfg.max_perceived);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -257,6 +268,10 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut debugger_rule,
         &mut rs_rule,
         &mut vn_rule,
+        &mut dp_rule,
+        &mut lec_rule,
+        &mut bl_rule,
+        &mut cx_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -275,28 +290,21 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let debugger = debugger_rule.offenses;
     let redundant_self = rs_rule.offenses;
     let variable_number = (vn_rule.offenses, vn_rule.had_correct);
+    let dot_position = dp_rule.offenses;
+    let line_end_concatenation = lec_rule.offenses;
+    let block_length = bl_rule.out;
+    let complexity = cx_rule.out;
 
     // --- Cops not (yet) on the shared walk. ---
-    let block_length = block_length::check_block_length_filtered(
-        source,
-        cfg.block_length_max,
-        cfg.block_length_count_comments,
-        &cfg.block_length_count_as_one,
-        &cfg.block_length_allowed_methods,
-        cfg.block_length_filtered,
-    );
     let block_nesting = block_nesting::check_block_nesting(
         source,
         cfg.block_nesting_max,
         cfg.block_nesting_count_blocks,
         cfg.block_nesting_count_modifier_forms,
     );
-    let complexity =
-        complexity::check_complexity_exceeding(source, cfg.max_cyclomatic, cfg.max_perceived);
     // The bundle always computes the filtered flavor; a `MethodName` whose
     // config needs the unfiltered one takes the fallback path on the Ruby side.
     let method_name = method_name::check_method_name_filtered(source, cfg.method_name_style, true);
-    let dot_position = dot_position::check_dot_position(source, cfg.dot_position_style);
     let line_length =
         line_length::check_line_length(source, cfg.line_length_max, cfg.line_length_tab_width);
     let candidate_lines: HashSet<usize> = line_length.iter().map(|c| c.line_index).collect();
@@ -306,7 +314,6 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         cfg.line_length_split_strings,
         Some(&candidate_lines),
     );
-    let line_end_concatenation = line_end_concatenation::check_line_end_concatenation(source);
     BundleResult {
         debugger,
         block_length,
@@ -582,6 +589,116 @@ mod tests {
             assert_eq!(
                 (a.start_offset, a.end_offset, a.identifier_type, &a.name),
                 (b.start_offset, b.end_offset, b.identifier_type, &b.name)
+            );
+        }
+    }
+
+    /// The typed-visitor cops merged into the shared walk (`Layout/DotPosition`,
+    /// `Style/LineEndConcatenation`, `Metrics/BlockLength`, the complexity
+    /// pair) must report exactly what their standalone entry points report,
+    /// over a source exercising each: a trailing-dot multiline chain, a
+    /// line-end string concatenation, an over-long block and lambda, and a
+    /// branchy method (`def` + `define_method`).
+    #[test]
+    fn shared_walk_matches_standalone_typed_family() {
+        let src = "foo = bar.\n\
+                   \x20 baz\n\
+                   msg = 'a' +\n\
+                   \x20 'b'\n\
+                   big.each do |x|\n\
+                   \x20 a1\n\
+                   \x20 a2\n\
+                   \x20 a3\n\
+                   end\n\
+                   small = -> { tiny }\n\
+                   def branchy(x)\n\
+                   \x20 if x then a elsif y then b end\n\
+                   \x20 x ? c : d\n\
+                   end\n\
+                   define_method :dyn do\n\
+                   \x20 z && w || v\n\
+                   end\n\
+                   /(?<m>a)/ =~ 'a'\n";
+        let (mut nums, lists) = default_packed();
+        nums[0] = 2; // block_length max
+        nums[6] = 1; // max_cyclomatic
+        nums[7] = 1; // max_perceived
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let dp_alone = super::dot_position::check_dot_position(src.as_bytes(), 0);
+        assert!(!dp_alone.is_empty());
+        assert_eq!(bundle.dot_position.len(), dp_alone.len());
+        for (a, b) in bundle.dot_position.iter().zip(&dp_alone) {
+            assert_eq!(
+                (
+                    a.start_offset,
+                    a.end_offset,
+                    a.remove_start,
+                    a.remove_end,
+                    a.insert_pos
+                ),
+                (
+                    b.start_offset,
+                    b.end_offset,
+                    b.remove_start,
+                    b.remove_end,
+                    b.insert_pos
+                )
+            );
+        }
+
+        let lec_alone = super::line_end_concatenation::check_line_end_concatenation(src.as_bytes());
+        assert!(!lec_alone.is_empty());
+        assert_eq!(bundle.line_end_concatenation.len(), lec_alone.len());
+        for (a, b) in bundle.line_end_concatenation.iter().zip(&lec_alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, &a.operator),
+                (b.start_offset, b.end_offset, &b.operator)
+            );
+        }
+
+        let bl_alone = super::block_length::check_block_length_filtered(
+            src.as_bytes(),
+            cfg.block_length_max,
+            cfg.block_length_count_comments,
+            &cfg.block_length_count_as_one,
+            &cfg.block_length_allowed_methods,
+            cfg.block_length_filtered,
+        );
+        assert!(!bl_alone.is_empty());
+        assert_eq!(bundle.block_length.len(), bl_alone.len());
+        for (a, b) in bundle.block_length.iter().zip(&bl_alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.length, &a.method_name),
+                (b.start_offset, b.end_offset, b.length, &b.method_name)
+            );
+        }
+
+        let cx_alone = super::complexity::check_complexity_exceeding(
+            src.as_bytes(),
+            cfg.max_cyclomatic,
+            cfg.max_perceived,
+        );
+        // Both `branchy` and the `define_method` block must exceed max 1.
+        assert!(cx_alone.len() >= 2);
+        assert_eq!(bundle.complexity.len(), cx_alone.len());
+        for (a, b) in bundle.complexity.iter().zip(&cx_alone) {
+            assert_eq!(
+                (
+                    a.start_offset,
+                    a.end_offset,
+                    a.cyclomatic,
+                    a.perceived,
+                    &a.method_name
+                ),
+                (
+                    b.start_offset,
+                    b.end_offset,
+                    b.cyclomatic,
+                    b.perceived,
+                    &b.method_name
+                )
             );
         }
     }
