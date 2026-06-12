@@ -1210,6 +1210,23 @@ impl<'pr> Visit<'pr> for LiteralRangeVisitor {
             }
         }
     }
+    fn visit_embedded_statements_node(&mut self, node: &ruby_prism::EmbeddedStatementsNode<'pr>) {
+        // Protect the `#{` opener: its `#` is interpolation, not a comment.
+        // Only the opener — the statements inside may span lines and contain
+        // real comments, so they are recursed, not blanket-protected.
+        let o = node.opening_loc();
+        self.ranges.push((o.start_offset(), o.end_offset()));
+        if let Some(stmts) = node.statements() {
+            for s in stmts.body().iter() {
+                self.visit(&s);
+            }
+        }
+    }
+    fn visit_embedded_variable_node(&mut self, node: &ruby_prism::EmbeddedVariableNode<'pr>) {
+        // Protect the `#` of `#@ivar` / `#$gvar` interpolation.
+        let o = node.operator_loc();
+        self.ranges.push((o.start_offset(), o.end_offset()));
+    }
 }
 
 fn in_ranges(ranges: &[(usize, usize)], pos: usize) -> bool {
@@ -1313,6 +1330,40 @@ mod tests {
 
         let dstr = "x = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa#{bbbbbbbbbbbbbbbbbbbbbbbbbb}cccc\"\n";
         assert_filter_parity(dstr, 40, true);
+    }
+
+    // The `#` of a string interpolation (`#{`, `#@ivar`) is NOT a comment:
+    // a long line whose argument is an interpolated string still yields its
+    // breakable (upstream consults the real comment list, which has none
+    // here). Regression: the comment scan used to treat `#{` as a comment
+    // start, dropping every breakable on interpolated-string lines (seen on
+    // stdlib fileutils.rb / `raise ArgumentError, "...#{...}"` lines).
+    #[test]
+    fn interpolation_hash_is_not_a_comment() {
+        let pad = "a".repeat(30);
+        // Two-argument unparenthesized call: the breakable is the dstr itself.
+        let src = format!("foo bar, \"{pad}xx #{{baz}} yy\"\n");
+        let breakables = run(&src, 40, false);
+        assert_eq!(breakables.len(), 1);
+        assert_eq!(breakables[0].0, 0);
+        assert_eq!(breakables[0].1, src.find('"').unwrap());
+
+        // `#@ivar` interpolation, same shape.
+        let src = format!("foo bar, \"{pad}xx #@baz yy\"\n");
+        assert_eq!(run(&src, 40, false).len(), 1);
+
+        // A collection nested INSIDE an interpolation is still breakable
+        // (fileutils.rb `fu_output_message "...#{[src,dest].flatten.join ' '}..."`).
+        // `defg` starts past the limit, so the break lands before `abc`
+        // (`elements[i - 1]` of `extract_first_element_over_column_limit`).
+        let src = format!("foo \"{pad}#{{[abc, defg].flatten.join ' '}} tail tail\"\n");
+        let breakables = run(&src, 40, false);
+        assert_eq!(breakables.len(), 1);
+        assert_eq!(breakables[0].1, src.find("abc").unwrap());
+
+        // A REAL comment on the line still suppresses the breakable.
+        let src = format!("foo bar, \"{pad}xx yy\" # note\n");
+        assert!(run(&src, 40, false).is_empty());
     }
 
     // When the candidate set is empty, no breakables are produced even though

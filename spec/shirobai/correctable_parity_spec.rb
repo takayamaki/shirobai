@@ -44,6 +44,15 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       "x = some_method(aaaaaaaaaa, bbbbbbbbbb, cccccccccc, dddddddddd, " \
       "eeeeeeeeee, ffffffffff, gggggggggg, hhhhhhhhhh, iiiiiiiiii)\n"
     ],
+    # The argument is an INTERPOLATED string: the `#` of `#{` must not be
+    # taken for a comment, or the line loses its breakable insertion point and
+    # the offense flips from correctable to `:unsupported` (regression seen on
+    # stdlib fileutils.rb `raise ArgumentError, "...#{...}"` lines).
+    "Layout/LineLength (interpolated string argument)" => [
+      RuboCop::Cop::Layout::LineLength,
+      Shirobai::Cop::Layout::LineLength,
+      "raise ArgumentError, \"#{"a" * 95}xxxx #\{path.inspect} tail tail\"\n"
+    ],
     "Layout/DotPosition" => [
       RuboCop::Cop::Layout::DotPosition,
       Shirobai::Cop::Layout::DotPosition,
