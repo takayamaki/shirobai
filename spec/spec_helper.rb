@@ -11,6 +11,8 @@ require "shirobai"
 require_relative "../vendor/rubocop/spec/support/misc_helper"
 # `strip_margin` is used by some upstream cop specs to build indented fixtures.
 require_relative "../vendor/rubocop/spec/core_ext/string"
+# Shared examples used by the EmptyLinesAround{Class,Module}Body specs.
+require_relative "../vendor/rubocop/spec/support/empty_lines_around_body_shared_examples"
 
 RSpec.configure do |config|
   config.expect_with :rspec do |expectations|

@@ -93,6 +93,41 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Lint::UselessAccessModifier,
       Shirobai::Cop::Lint::UselessAccessModifier,
       "class C\n  private\n  private\n  def m\n  end\n  protected\nend\n"
+    ],
+    # Extra blank at the body beginning (removal corrector).
+    "Layout/EmptyLinesAroundMethodBody" => [
+      RuboCop::Cop::Layout::EmptyLinesAroundMethodBody,
+      Shirobai::Cop::Layout::EmptyLinesAroundMethodBody,
+      "def m\n\n  x\nend\n"
+    ],
+    # Both blanks of an empty body land on the same range: stock's
+    # add_offense dedup must keep a single (beginning) offense.
+    "Layout/EmptyLinesAroundClassBody" => [
+      RuboCop::Cop::Layout::EmptyLinesAroundClassBody,
+      Shirobai::Cop::Layout::EmptyLinesAroundClassBody,
+      "class C\n\nend\n"
+    ],
+    "Layout/EmptyLinesAroundModuleBody" => [
+      RuboCop::Cop::Layout::EmptyLinesAroundModuleBody,
+      Shirobai::Cop::Layout::EmptyLinesAroundModuleBody,
+      "module M\n\n  x\nend\n"
+    ],
+    "Layout/EmptyLinesAroundBlockBody" => [
+      RuboCop::Cop::Layout::EmptyLinesAroundBlockBody,
+      Shirobai::Cop::Layout::EmptyLinesAroundBlockBody,
+      "foo do\n  x\n\nend\n"
+    ],
+    # Blanks after `begin` and before `end` across rescue sections.
+    "Layout/EmptyLinesAroundBeginBody" => [
+      RuboCop::Cop::Layout::EmptyLinesAroundBeginBody,
+      Shirobai::Cop::Layout::EmptyLinesAroundBeginBody,
+      "begin\n\n  x\nrescue\n  y\n\nend\n"
+    ],
+    # Blanks around `rescue` and `ensure` keywords (removal correctors).
+    "Layout/EmptyLinesAroundExceptionHandlingKeywords" => [
+      RuboCop::Cop::Layout::EmptyLinesAroundExceptionHandlingKeywords,
+      Shirobai::Cop::Layout::EmptyLinesAroundExceptionHandlingKeywords,
+      "def m\n  x\n\nrescue\n\n  y\nensure\n\n  z\nend\n"
     ]
   }
 

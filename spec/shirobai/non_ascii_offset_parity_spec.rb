@@ -127,7 +127,17 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # operator range + replace range.
     "Style/LineEndConcatenation" => "x = 'a' +\n    'b'\n",
     # `self` range + dot range (both removed).
-    "Style/RedundantSelf" => "def m\n  self.foo\nend\n"
+    "Style/RedundantSelf" => "def m\n  self.foo\nend\n",
+    # Offense line ranges (removal corrector) after a multibyte comment.
+    "Layout/EmptyLinesAroundMethodBody" => "def m\n\n  x\nend\n",
+    # Same-range begin/end dedup + the insertion corrector is covered by the
+    # missing-at-end path of the autocorrect loop (removal first pass).
+    "Layout/EmptyLinesAroundClassBody" => "class C\n\n  x\n\nend\n",
+    "Layout/EmptyLinesAroundModuleBody" => "module M\n\n  x\nend\n",
+    "Layout/EmptyLinesAroundBlockBody" => "foo do\n  x\n\nend\n",
+    "Layout/EmptyLinesAroundBeginBody" => "begin\n\n  x\nrescue\n  y\n\nend\n",
+    "Layout/EmptyLinesAroundExceptionHandlingKeywords" =>
+      "def m\n  x\n\nrescue\n\n  y\nensure\n\n  z\nend\n"
   }
 
   cases.each do |cop_name, body|

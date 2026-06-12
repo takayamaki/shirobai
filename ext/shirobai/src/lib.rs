@@ -313,6 +313,18 @@ fn map_useless_access_modifier(
         .collect()
 }
 
+/// Shared by all six `EmptyLinesAroundBody`-family slots: `[[start, end,
+/// insert, message], ...]` — `[start, end)` is the first character of the
+/// offense line; `insert` selects the `EmptyLineCorrector` arm (`false` =
+/// remove the range, `true` = insert `"\n"` before it).
+fn map_empty_lines(
+    v: Vec<shirobai_core::rules::empty_lines_around_body::EmptyLineOffense>,
+) -> Vec<(usize, usize, bool, String)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.insert, o.message))
+        .collect()
+}
+
 fn map_predicate_prefix(
     v: Vec<shirobai_core::rules::predicate_prefix::PredicatePrefixCandidate>,
 ) -> Vec<(usize, usize, String, bool, bool)> {
@@ -384,7 +396,7 @@ fn register_bundle_config(
 
 /// Ruby entry point for the all-cop bundle: computes every cop's result for
 /// `source` in one call, using the config registered under `token`. Returns a
-/// fixed-order 23-slot Array; each slot carries that cop's existing tuple-array
+/// fixed-order 29-slot Array; each slot carries that cop's existing tuple-array
 /// shape (identical to the standalone entry point's return value). The slot
 /// order is mirrored by `Shirobai::Dispatch::SLOTS` on the Ruby side:
 ///
@@ -395,7 +407,11 @@ fn register_bundle_config(
 /// 13 argument_alignment / 14 first_argument_indentation / 15 redundant_self /
 /// 16 indentation_width / 17 predicate_prefix /
 /// 18 closing_parenthesis_indentation / 19 first_array_element_indentation /
-/// 20 hash_each_methods / 21 void / 22 useless_access_modifier
+/// 20 hash_each_methods / 21 void / 22 useless_access_modifier /
+/// 23 empty_lines_around_method_body / 24 empty_lines_around_class_body /
+/// 25 empty_lines_around_module_body / 26 empty_lines_around_block_body /
+/// 27 empty_lines_around_begin_body /
+/// 28 empty_lines_around_exception_handling_keywords
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -406,7 +422,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(23);
+        let ary = ruby.ary_new_capa(29);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -434,6 +450,13 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_hash_each_methods(r.hash_each_methods))?;
         ary.push(map_void(r.void))?;
         ary.push(map_useless_access_modifier(r.useless_access_modifier))?;
+        let elab = r.empty_lines_around_body;
+        ary.push(map_empty_lines(elab.method_body))?;
+        ary.push(map_empty_lines(elab.class_body))?;
+        ary.push(map_empty_lines(elab.module_body))?;
+        ary.push(map_empty_lines(elab.block_body))?;
+        ary.push(map_empty_lines(elab.begin_body))?;
+        ary.push(map_empty_lines(elab.exception_keywords))?;
         Ok(ary)
     })
 }
@@ -875,6 +898,44 @@ fn check_useless_access_modifier(
     )
 }
 
+/// Ruby entry point for the `EmptyLinesAroundBody` family (standalone
+/// fallback; the wrappers normally read the bundled run). Takes the source
+/// and the `EnforcedStyle` ordinals of the three configurable members
+/// (class / module / block). Returns the six cops' offense arrays in slot
+/// order (method, class, module, block, begin, exception keywords), each
+/// `[[start, end, insert, message], ...]` (see `map_empty_lines`).
+#[allow(clippy::type_complexity)]
+fn check_empty_lines_around_body(
+    source: RString,
+    class_style: u8,
+    module_style: u8,
+    block_style: u8,
+) -> (
+    Vec<(usize, usize, bool, String)>,
+    Vec<(usize, usize, bool, String)>,
+    Vec<(usize, usize, bool, String)>,
+    Vec<(usize, usize, bool, String)>,
+    Vec<(usize, usize, bool, String)>,
+    Vec<(usize, usize, bool, String)>,
+) {
+    let r = shirobai_core::rules::empty_lines_around_body::check_empty_lines_around_body(
+        bytes(&source),
+        shirobai_core::rules::empty_lines_around_body::Config {
+            class_style,
+            module_style,
+            block_style,
+        },
+    );
+    (
+        map_empty_lines(r.method_body),
+        map_empty_lines(r.class_body),
+        map_empty_lines(r.module_body),
+        map_empty_lines(r.block_body),
+        map_empty_lines(r.begin_body),
+        map_empty_lines(r.exception_keywords),
+    )
+}
+
 /// Ruby entry point for `Style/RedundantSelf`. Returns one entry per redundant
 /// `self` receiver: `[[self_start, self_end, dot_start, dot_end], ...]`. The
 /// `Kernel` method allow-list is supplied by Ruby.
@@ -992,6 +1053,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         function!(check_hash_each_methods, 2),
     )?;
     module.define_module_function("check_void", function!(check_void, 2))?;
+    module.define_module_function(
+        "check_empty_lines_around_body",
+        function!(check_empty_lines_around_body, 4),
+    )?;
     module.define_module_function(
         "check_useless_access_modifier",
         function!(check_useless_access_modifier, 4),

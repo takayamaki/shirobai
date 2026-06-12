@@ -10,10 +10,10 @@ use super::multiline_method_call_indentation::{self as mc, MethodCallIndentOffen
 use super::multiline_operation_indentation::{self as op, OperationIndentOffense};
 use super::{
     argument_alignment, block_length, block_nesting, closing_parenthesis_indentation, complexity,
-    debugger, dot_position, first_argument_indentation, first_array_element_indentation,
-    hash_each_methods, indentation_width, line_end_concatenation, line_length,
-    line_length_breakable, method_name, predicate_prefix, redundant_self, safe_navigation_chain,
-    useless_access_modifier, variable_number, void,
+    debugger, dot_position, empty_lines_around_body, first_argument_indentation,
+    first_array_element_indentation, hash_each_methods, indentation_width, line_end_concatenation,
+    line_length, line_length_breakable, method_name, predicate_prefix, redundant_self,
+    safe_navigation_chain, useless_access_modifier, variable_number, void,
 };
 
 /// Run `Layout/MultilineOperationIndentation` and
@@ -70,6 +70,7 @@ pub fn check_multiline_bundle(
 /// | 35-37 | first_array_element style / indent / enforce_fixed_indentation |
 /// | 38  | void_check_nonmutating (`CheckForMethodsWithNoSideEffects`) |
 /// | 39  | useless_access_modifier_active_support (`AllCops/ActiveSupportExtensionsEnabled`) |
+/// | 40-42 | empty_lines_around_body class / module / block styles (`EmptyLinesAroundClassBody` / `...ModuleBody` / `...BlockBody` EnforcedStyle) |
 ///
 /// `lists` (`Vec<String>`), 12 entries:
 ///
@@ -134,9 +135,10 @@ pub struct BundleConfig {
     pub useless_access_modifier_context_creating: Vec<String>,
     pub useless_access_modifier_method_creating: Vec<String>,
     pub useless_access_modifier_active_support: bool,
+    pub empty_lines_around_body: empty_lines_around_body::Config,
 }
 
-const NUMS_LEN: usize = 40;
+const NUMS_LEN: usize = 43;
 const LISTS_LEN: usize = 12;
 
 impl BundleConfig {
@@ -209,6 +211,11 @@ impl BundleConfig {
             useless_access_modifier_context_creating: next_list(),
             useless_access_modifier_method_creating: next_list(),
             useless_access_modifier_active_support: nums[39] != 0,
+            empty_lines_around_body: empty_lines_around_body::Config {
+                class_style: nums[40] as u8,
+                module_style: nums[41] as u8,
+                block_style: nums[42] as u8,
+            },
         })
     }
 }
@@ -240,6 +247,7 @@ pub struct BundleResult {
     pub hash_each_methods: Vec<hash_each_methods::HashEachOffense>,
     pub void: Vec<void::VoidOffense>,
     pub useless_access_modifier: Vec<useless_access_modifier::UselessAccessModifierOffense>,
+    pub empty_lines_around_body: empty_lines_around_body::FamilyOffenses,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -327,6 +335,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &cfg.useless_access_modifier_method_creating,
         cfg.useless_access_modifier_active_support,
     );
+    let mut elab_rule = empty_lines_around_body::build_rule(source, cfg.empty_lines_around_body);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -347,6 +356,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut hem_rule,
         &mut void_rule,
         &mut uam_rule,
+        &mut elab_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -379,6 +389,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let hash_each_methods = hem_rule.offenses;
     let void = void_rule.offenses;
     let useless_access_modifier = uam_rule.into_offenses();
+    let empty_lines_around_body = elab_rule.into_offenses();
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -421,6 +432,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         hash_each_methods,
         void,
         useless_access_modifier,
+        empty_lines_around_body,
     }
 }
 
@@ -473,6 +485,7 @@ mod tests {
             0, 2, 0, // first_array_element_indentation
             0, // void_check_nonmutating
             0, // useless_access_modifier_active_support
+            0, 0, 0, // empty_lines_around_body class / module / block styles
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -1226,6 +1239,82 @@ mod tests {
                 (a.start_offset, a.end_offset, &a.name),
                 (b.start_offset, b.end_offset, &b.name)
             );
+        }
+    }
+
+    /// The `EmptyLinesAroundBody` family merged into the shared walk must
+    /// report exactly what the standalone entry point reports, over a source
+    /// exercising every member: a method body blank, a class body blank, a
+    /// module body blank, a block body blank, begin-body blanks and a blank
+    /// before a `rescue` keyword.
+    #[test]
+    fn shared_walk_matches_standalone_empty_lines_family() {
+        let src = "def m\n\
+                   \x20 x\n\
+                   \n\
+                   end\n\
+                   class C\n\
+                   \n\
+                   \x20 y\n\
+                   end\n\
+                   module M\n\
+                   \n\
+                   \x20 z\n\
+                   end\n\
+                   foo do\n\
+                   \n\
+                   \x20 w\n\
+                   end\n\
+                   begin\n\
+                   \n\
+                   \x20 v\n\
+                   \n\
+                   rescue\n\
+                   \x20 u\n\
+                   end\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::empty_lines_around_body::check_empty_lines_around_body(
+            src.as_bytes(),
+            cfg.empty_lines_around_body,
+        );
+        let pairs = [
+            (
+                &bundle.empty_lines_around_body.method_body,
+                &alone.method_body,
+            ),
+            (
+                &bundle.empty_lines_around_body.class_body,
+                &alone.class_body,
+            ),
+            (
+                &bundle.empty_lines_around_body.module_body,
+                &alone.module_body,
+            ),
+            (
+                &bundle.empty_lines_around_body.block_body,
+                &alone.block_body,
+            ),
+            (
+                &bundle.empty_lines_around_body.begin_body,
+                &alone.begin_body,
+            ),
+            (
+                &bundle.empty_lines_around_body.exception_keywords,
+                &alone.exception_keywords,
+            ),
+        ];
+        for (got, want) in pairs {
+            assert!(!want.is_empty());
+            assert_eq!(got.len(), want.len());
+            for (a, b) in got.iter().zip(want.iter()) {
+                assert_eq!(
+                    (a.start_offset, a.end_offset, a.insert, &a.message),
+                    (b.start_offset, b.end_offset, b.insert, &b.message)
+                );
+            }
         }
     }
 

@@ -40,7 +40,13 @@ module Shirobai
       first_array_element_indentation: 19,
       hash_each_methods: 20,
       void: 21,
-      useless_access_modifier: 22
+      useless_access_modifier: 22,
+      empty_lines_around_method_body: 23,
+      empty_lines_around_class_body: 24,
+      empty_lines_around_module_body: 25,
+      empty_lines_around_block_body: 26,
+      empty_lines_around_begin_body: 27,
+      empty_lines_around_exception_handling_keywords: 28
     }.freeze
 
     class << self
@@ -95,6 +101,9 @@ module Shirobai
         hem = Cop::Style::HashEachMethods.bundle_args(config)
         vd = Cop::Lint::Void.bundle_args(config)
         uam = Cop::Lint::UselessAccessModifier.bundle_args(config)
+        elb_class = Cop::Layout::EmptyLinesAroundClassBody.bundle_args(config)
+        elb_module = Cop::Layout::EmptyLinesAroundModuleBody.bundle_args(config)
+        elb_block = Cop::Layout::EmptyLinesAroundBlockBody.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -112,7 +121,8 @@ module Shirobai
           cpi[0],                        # ClosingParenthesisIndentation indent width
           fae[0], fae[1], num(fae[2]),   # FirstArrayElementIndentation style / indent / enforce flag
           num(vd[0]),                    # Void CheckForMethodsWithNoSideEffects
-          num(uam[2])                    # UselessAccessModifier ActiveSupportExtensionsEnabled
+          num(uam[2]),                   # UselessAccessModifier ActiveSupportExtensionsEnabled
+          elb_class[0], elb_module[0], elb_block[0] # EmptyLinesAround{Class,Module,Block}Body styles
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1]]
