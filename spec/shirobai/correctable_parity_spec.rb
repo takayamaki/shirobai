@@ -128,6 +128,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Layout::EmptyLinesAroundExceptionHandlingKeywords,
       Shirobai::Cop::Layout::EmptyLinesAroundExceptionHandlingKeywords,
       "def m\n  x\n\nrescue\n\n  y\nensure\n\n  z\nend\n"
+    ],
+    # One corrected offense (single-line do-end to braces) plus one whose
+    # corrector stays empty (`correction_would_break_code?`: unparenthesized
+    # send arguments): both statuses must match stock.
+    "Style/BlockDelimiters" => [
+      RuboCop::Cop::Style::BlockDelimiters,
+      Shirobai::Cop::Style::BlockDelimiters,
+      "each do |x| end\ns.subspec 'Subspec' do |sp| end\n"
     ]
   }
 

@@ -137,7 +137,13 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     "Layout/EmptyLinesAroundBlockBody" => "foo do\n  x\n\nend\n",
     "Layout/EmptyLinesAroundBeginBody" => "begin\n\n  x\nrescue\n  y\n\nend\n",
     "Layout/EmptyLinesAroundExceptionHandlingKeywords" =>
-      "def m\n  x\n\nrescue\n\n  y\nensure\n\n  z\nend\n"
+      "def m\n  x\n\nrescue\n\n  y\nensure\n\n  z\nend\n",
+    # The `do` token range, the correction ops (delimiter replacements plus a
+    # comment relocation with a multibyte comment text) and the cross-pass
+    # ignored-range accumulation (the autocorrect loop's second pass must not
+    # resurrect the nested block suppressed by the first offense).
+    "Style/BlockDelimiters" =>
+      "foo {\n  bar do |x| x end\n} # マルチバイト末尾コメント\neach do |y| end\n"
   }
 
   cases.each do |cop_name, body|

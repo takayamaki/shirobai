@@ -46,7 +46,8 @@ module Shirobai
       empty_lines_around_module_body: 25,
       empty_lines_around_block_body: 26,
       empty_lines_around_begin_body: 27,
-      empty_lines_around_exception_handling_keywords: 28
+      empty_lines_around_exception_handling_keywords: 28,
+      block_delimiters: 29
     }.freeze
 
     class << self
@@ -104,6 +105,7 @@ module Shirobai
         elb_class = Cop::Layout::EmptyLinesAroundClassBody.bundle_args(config)
         elb_module = Cop::Layout::EmptyLinesAroundModuleBody.bundle_args(config)
         elb_block = Cop::Layout::EmptyLinesAroundBlockBody.bundle_args(config)
+        bd = Cop::Style::BlockDelimiters.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -122,10 +124,11 @@ module Shirobai
           fae[0], fae[1], num(fae[2]),   # FirstArrayElementIndentation style / indent / enforce flag
           num(vd[0]),                    # Void CheckForMethodsWithNoSideEffects
           num(uam[2]),                   # UselessAccessModifier ActiveSupportExtensionsEnabled
-          elb_class[0], elb_module[0], elb_block[0] # EmptyLinesAround{Class,Module,Block}Body styles
+          elb_class[0], elb_module[0], elb_block[0], # EmptyLinesAround{Class,Module,Block}Body styles
+          *bd[0]                         # BlockDelimiters style / procedural-oneliners flag
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
-                 uam[0], uam[1]]
+                 uam[0], uam[1], *bd[1]]
         [nums, lists]
       end
 

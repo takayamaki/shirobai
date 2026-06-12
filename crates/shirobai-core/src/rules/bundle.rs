@@ -9,11 +9,12 @@ use std::collections::HashSet;
 use super::multiline_method_call_indentation::{self as mc, MethodCallIndentOffense};
 use super::multiline_operation_indentation::{self as op, OperationIndentOffense};
 use super::{
-    argument_alignment, block_length, block_nesting, closing_parenthesis_indentation, complexity,
-    debugger, dot_position, empty_lines_around_body, first_argument_indentation,
-    first_array_element_indentation, hash_each_methods, indentation_width, line_end_concatenation,
-    line_length, line_length_breakable, method_name, predicate_prefix, redundant_self,
-    safe_navigation_chain, useless_access_modifier, variable_number, void,
+    argument_alignment, block_delimiters, block_length, block_nesting,
+    closing_parenthesis_indentation, complexity, debugger, dot_position, empty_lines_around_body,
+    first_argument_indentation, first_array_element_indentation, hash_each_methods,
+    indentation_width, line_end_concatenation, line_length, line_length_breakable, method_name,
+    predicate_prefix, redundant_self, safe_navigation_chain, useless_access_modifier,
+    variable_number, void,
 };
 
 /// Run `Layout/MultilineOperationIndentation` and
@@ -71,8 +72,10 @@ pub fn check_multiline_bundle(
 /// | 38  | void_check_nonmutating (`CheckForMethodsWithNoSideEffects`) |
 /// | 39  | useless_access_modifier_active_support (`AllCops/ActiveSupportExtensionsEnabled`) |
 /// | 40-42 | empty_lines_around_body class / module / block styles (`EmptyLinesAroundClassBody` / `...ModuleBody` / `...BlockBody` EnforcedStyle) |
+/// | 43  | block_delimiters_style (`EnforcedStyle`: 0 = line_count_based, 1 = semantic, 2 = braces_for_chaining, 3 = always_braces) |
+/// | 44  | block_delimiters_oneliners (`AllowBracesOnProceduralOneLiners`) |
 ///
-/// `lists` (`Vec<String>`), 12 entries:
+/// `lists` (`Vec<String>`), 16 entries:
 ///
 /// | idx | field |
 /// |-----|-------|
@@ -88,10 +91,17 @@ pub fn check_multiline_bundle(
 /// |  9  | hash_each_allowed_receivers |
 /// | 10  | useless_access_modifier_context_creating (`ContextCreatingMethods`) |
 /// | 11  | useless_access_modifier_method_creating (`MethodCreatingMethods`) |
+/// | 12  | block_delimiters_procedural (`ProceduralMethods`) |
+/// | 13  | block_delimiters_functional (`FunctionalMethods`) |
+/// | 14  | block_delimiters_allowed (`AllowedMethods`, deprecated lists merged) |
+/// | 15  | block_delimiters_braces_required (`BracesRequiredMethods`) |
 ///
 /// `Layout/IndentationWidth`'s `allowed_lines` and `prior_ranges` are fixed to
 /// empty in the bundle: the non-empty cases (configured `AllowedPatterns`,
 /// autocorrect re-passes) take the per-cop fallback path on the Ruby side.
+/// `Style/BlockDelimiters`' prior ignored ranges are likewise fixed to empty
+/// (autocorrect re-passes go standalone), and its `AllowedPatterns` force the
+/// raw-event standalone path.
 pub struct BundleConfig {
     pub debugger_methods: Vec<String>,
     pub debugger_requires: Vec<String>,
@@ -136,10 +146,11 @@ pub struct BundleConfig {
     pub useless_access_modifier_method_creating: Vec<String>,
     pub useless_access_modifier_active_support: bool,
     pub empty_lines_around_body: empty_lines_around_body::Config,
+    pub block_delimiters: block_delimiters::Config,
 }
 
-const NUMS_LEN: usize = 43;
-const LISTS_LEN: usize = 12;
+const NUMS_LEN: usize = 45;
+const LISTS_LEN: usize = 16;
 
 impl BundleConfig {
     /// Build a config from the flat wire format (see the struct docs for the
@@ -216,6 +227,14 @@ impl BundleConfig {
                 module_style: nums[41] as u8,
                 block_style: nums[42] as u8,
             },
+            block_delimiters: block_delimiters::Config {
+                style: nums[43] as u8,
+                allow_braces_on_procedural_oneliners: nums[44] != 0,
+                procedural_methods: next_list(),
+                functional_methods: next_list(),
+                allowed_methods: next_list(),
+                braces_required_methods: next_list(),
+            },
         })
     }
 }
@@ -248,6 +267,7 @@ pub struct BundleResult {
     pub void: Vec<void::VoidOffense>,
     pub useless_access_modifier: Vec<useless_access_modifier::UselessAccessModifierOffense>,
     pub empty_lines_around_body: empty_lines_around_body::FamilyOffenses,
+    pub block_delimiters: block_delimiters::BlockDelimitersResult,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -336,6 +356,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         cfg.useless_access_modifier_active_support,
     );
     let mut elab_rule = empty_lines_around_body::build_rule(source, cfg.empty_lines_around_body);
+    let mut bd_rule = block_delimiters::build_rule(source, cfg.block_delimiters.clone());
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -357,6 +378,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut void_rule,
         &mut uam_rule,
         &mut elab_rule,
+        &mut bd_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -390,6 +412,9 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let void = void_rule.offenses;
     let useless_access_modifier = uam_rule.into_offenses();
     let empty_lines_around_body = elab_rule.into_offenses();
+    // The bundle runs with no prior ignored ranges (autocorrect re-passes
+    // take the standalone path on the Ruby side).
+    let block_delimiters = block_delimiters::resolve(bd_rule.events, &[]);
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -433,6 +458,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         void,
         useless_access_modifier,
         empty_lines_around_body,
+        block_delimiters,
     }
 }
 
@@ -486,6 +512,7 @@ mod tests {
             0, // void_check_nonmutating
             0, // useless_access_modifier_active_support
             0, 0, 0, // empty_lines_around_body class / module / block styles
+            0, 0, // block_delimiters style / oneliners
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -502,6 +529,12 @@ mod tests {
             vec!["Thread.current".to_string()],
             vec![], // useless_access_modifier_context_creating
             vec![], // useless_access_modifier_method_creating
+            // block_delimiters: procedural / functional / allowed /
+            // braces_required (RuboCop defaults).
+            vec![],
+            vec![],
+            ["lambda", "proc", "it"].map(String::from).to_vec(),
+            vec![],
         ];
         (nums, lists)
     }
@@ -1315,6 +1348,55 @@ mod tests {
                     (b.start_offset, b.end_offset, b.insert, &b.message)
                 );
             }
+        }
+    }
+
+    /// `Style/BlockDelimiters` merged into the shared walk must report exactly
+    /// what its standalone entry point reports, over a source exercising the
+    /// in-order ignore machinery: a multi-line brace block inside
+    /// unparenthesized arguments (send-ignored), a single-line `do`..`end`
+    /// offense, a multi-line brace offense with a nested suppressed block
+    /// (conditional), and an allowed method.
+    #[test]
+    fn shared_walk_matches_standalone_block_delimiters() {
+        let src = "puts [1, 2, 3].map { |n|\n\
+                   \x20 n * n\n\
+                   }, 1\n\
+                   each do |x| end\n\
+                   foo {\n\
+                   \x20 bar do |y| y end\n\
+                   }\n\
+                   foo = proc do\n\
+                   \x20 puts 42\n\
+                   end\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::block_delimiters::check_block_delimiters(
+            src.as_bytes(),
+            &cfg.block_delimiters,
+            &[],
+        );
+        assert_eq!(alone.offenses.len(), 2);
+        assert_eq!(alone.send_ignores.len(), 1);
+        assert!(alone.has_conditional);
+        assert_eq!(bundle.block_delimiters.offenses.len(), alone.offenses.len());
+        assert_eq!(bundle.block_delimiters.send_ignores, alone.send_ignores);
+        assert_eq!(
+            bundle.block_delimiters.has_conditional,
+            alone.has_conditional
+        );
+        for (a, b) in bundle
+            .block_delimiters
+            .offenses
+            .iter()
+            .zip(&alone.offenses)
+        {
+            assert_eq!(
+                (a.token, a.block, &a.message, &a.method_name, &a.ops),
+                (b.token, b.block, &b.message, &b.method_name, &b.ops)
+            );
         }
     }
 

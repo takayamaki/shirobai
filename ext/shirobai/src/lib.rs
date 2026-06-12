@@ -368,6 +368,47 @@ fn map_indentation_width(
         .collect()
 }
 
+/// `Style/BlockDelimiters` correction ops: `[kind, start, end, text]` —
+/// kind 0 = replace, 1 = remove, 2 = insert_before, 3 = insert_after,
+/// 4 = wrap in `begin\n` / `\nend` (text empty).
+type BlockDelimitersOps = Vec<(u8, usize, usize, String)>;
+
+fn map_block_delimiters_ops(
+    ops: Vec<shirobai_core::rules::block_delimiters::CorrectionOp>,
+) -> BlockDelimitersOps {
+    ops.into_iter()
+        .map(|o| (o.kind, o.start, o.end, o.text))
+        .collect()
+}
+
+/// The resolved `Style/BlockDelimiters` result:
+/// `[[[token_start, token_end, block_start, block_end, message, ops], ...],
+/// [[ignore_start, ignore_end], ...], has_conditional]`.
+#[allow(clippy::type_complexity)]
+fn map_block_delimiters(
+    r: shirobai_core::rules::block_delimiters::BlockDelimitersResult,
+) -> (
+    Vec<(usize, usize, usize, usize, String, BlockDelimitersOps)>,
+    Vec<(usize, usize)>,
+    bool,
+) {
+    let offenses = r
+        .offenses
+        .into_iter()
+        .map(|c| {
+            (
+                c.token.0,
+                c.token.1,
+                c.block.0,
+                c.block.1,
+                c.message,
+                map_block_delimiters_ops(c.ops),
+            )
+        })
+        .collect();
+    (offenses, r.send_ignores, r.has_conditional)
+}
+
 thread_local! {
     /// Bundle configs registered by `register_bundle_config` (token = index,
     /// no eviction: a lint run registers one entry per distinct `Config`
@@ -396,7 +437,7 @@ fn register_bundle_config(
 
 /// Ruby entry point for the all-cop bundle: computes every cop's result for
 /// `source` in one call, using the config registered under `token`. Returns a
-/// fixed-order 29-slot Array; each slot carries that cop's existing tuple-array
+/// fixed-order 30-slot Array; each slot carries that cop's existing tuple-array
 /// shape (identical to the standalone entry point's return value). The slot
 /// order is mirrored by `Shirobai::Dispatch::SLOTS` on the Ruby side:
 ///
@@ -411,7 +452,8 @@ fn register_bundle_config(
 /// 23 empty_lines_around_method_body / 24 empty_lines_around_class_body /
 /// 25 empty_lines_around_module_body / 26 empty_lines_around_block_body /
 /// 27 empty_lines_around_begin_body /
-/// 28 empty_lines_around_exception_handling_keywords
+/// 28 empty_lines_around_exception_handling_keywords /
+/// 29 block_delimiters
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -422,7 +464,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(29);
+        let ary = ruby.ary_new_capa(30);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -457,6 +499,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_empty_lines(elab.block_body))?;
         ary.push(map_empty_lines(elab.begin_body))?;
         ary.push(map_empty_lines(elab.exception_keywords))?;
+        ary.push(map_block_delimiters(r.block_delimiters))?;
         Ok(ary)
     })
 }
@@ -983,6 +1026,94 @@ fn check_indentation_width(
     )
 }
 
+/// Unpacks the `Style/BlockDelimiters` wire config: `nums` is
+/// `[style, allow_braces_on_procedural_oneliners]`, `lists` is
+/// `[procedural, functional, allowed, braces_required]` (the same shapes the
+/// bundle carries).
+fn block_delimiters_config(
+    nums: &[i64],
+    lists: Vec<Vec<String>>,
+) -> shirobai_core::rules::block_delimiters::Config {
+    let mut lists = lists.into_iter();
+    let mut next_list = || lists.next().unwrap_or_default();
+    shirobai_core::rules::block_delimiters::Config {
+        style: nums.first().copied().unwrap_or(0) as u8,
+        allow_braces_on_procedural_oneliners: nums.get(1).copied().unwrap_or(0) != 0,
+        procedural_methods: next_list(),
+        functional_methods: next_list(),
+        allowed_methods: next_list(),
+        braces_required_methods: next_list(),
+    }
+}
+
+/// Ruby entry point for `Style/BlockDelimiters` (resolved form). `prior`
+/// carries the block ranges ignored in earlier autocorrect iterations
+/// (stock's `@ignored_nodes` persists across passes on one cop instance).
+/// Returns `[offenses, send_ignores, has_conditional]` (see
+/// `map_block_delimiters`).
+#[allow(clippy::type_complexity)]
+fn check_block_delimiters(
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+    prior: Vec<(usize, usize)>,
+) -> (
+    Vec<(usize, usize, usize, usize, String, BlockDelimitersOps)>,
+    Vec<(usize, usize)>,
+    bool,
+) {
+    let cfg = block_delimiters_config(&nums, lists);
+    map_block_delimiters(
+        shirobai_core::rules::block_delimiters::check_block_delimiters(
+            bytes(&source),
+            &cfg,
+            &prior,
+        ),
+    )
+}
+
+/// Ruby entry point for the `Style/BlockDelimiters` raw event stream, for the
+/// wrapper's exact replay (configured `AllowedPatterns`, or offenses whose
+/// suppression depends on disable directives). Returns
+/// `[[is_ignore, block_start, block_end, token_start, token_end, method_name,
+/// message, ops], ...]` in walk order; ignore events carry zeros/empties in
+/// the candidate fields.
+#[allow(clippy::type_complexity)]
+fn check_block_delimiters_events(
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Vec<(
+    bool,
+    usize,
+    usize,
+    usize,
+    usize,
+    String,
+    String,
+    BlockDelimitersOps,
+)> {
+    let cfg = block_delimiters_config(&nums, lists);
+    shirobai_core::rules::block_delimiters::check_block_delimiters_events(bytes(&source), &cfg)
+        .into_iter()
+        .map(|event| match event {
+            shirobai_core::rules::block_delimiters::Event::Ignore((s, e)) => {
+                (true, s, e, 0, 0, String::new(), String::new(), Vec::new())
+            }
+            shirobai_core::rules::block_delimiters::Event::Candidate(c) => (
+                false,
+                c.block.0,
+                c.block.1,
+                c.token.0,
+                c.token.1,
+                c.method_name,
+                c.message,
+                map_block_delimiters_ops(c.ops),
+            ),
+        })
+        .collect()
+}
+
 #[magnus::init(name = "shirobai")]
 fn init(ruby: &Ruby) -> Result<(), Error> {
     let module = ruby.define_module("Shirobai")?;
@@ -1039,6 +1170,14 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_indentation_width",
         function!(check_indentation_width, 4),
+    )?;
+    module.define_module_function(
+        "check_block_delimiters",
+        function!(check_block_delimiters, 4),
+    )?;
+    module.define_module_function(
+        "check_block_delimiters_events",
+        function!(check_block_delimiters_events, 3),
     )?;
     module.define_module_function(
         "check_closing_parenthesis_indentation",
