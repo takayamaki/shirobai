@@ -42,8 +42,9 @@ module Shirobai
 
           self.max = deepest
           message = "Avoid more than #{max} levels of block nesting."
+          off = SourceOffsets.for(processed_source.raw_source)
           offenses.each do |start, fin|
-            range = Parser::Source::Range.new(processed_source.buffer, start, fin)
+            range = Parser::Source::Range.new(processed_source.buffer, off[start], off[fin])
             add_offense(range, message: message)
           end
         end

@@ -49,8 +49,9 @@ module Shirobai
           message = fixed_indentation? ? FIXED_INDENT_MSG : ALIGN_PARAMS_MSG
 
           offenses = Dispatch.offenses_for(processed_source, config, :argument_alignment)
+          off = SourceOffsets.for(processed_source.raw_source)
           offenses.each do |start, fin, column_delta, autocorrect|
-            range = Parser::Source::Range.new(buffer, start, fin)
+            range = Parser::Source::Range.new(buffer, off[start], off[fin])
             # Split on the per-offense correctability flag rather than testing it
             # inside the corrector block. Note this must stay keyed on the flag,
             # NOT on `autocorrect?` mode: RuboCop yields the block even in lint

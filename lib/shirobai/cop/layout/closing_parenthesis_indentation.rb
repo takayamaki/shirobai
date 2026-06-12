@@ -31,8 +31,9 @@ module Shirobai
           buffer = processed_source.buffer
 
           offenses = Dispatch.offenses_for(processed_source, config, :closing_parenthesis_indentation)
+          off = SourceOffsets.for(processed_source.raw_source)
           offenses.each do |start, fin, column_delta, message|
-            range = Parser::Source::Range.new(buffer, start, fin)
+            range = Parser::Source::Range.new(buffer, off[start], off[fin])
             # Stock yields the corrector block for every offense (no per-offense
             # gating); `AlignmentCorrector` itself decides whether the corrector
             # stays empty (tabs / block comments), which keeps the lint-mode

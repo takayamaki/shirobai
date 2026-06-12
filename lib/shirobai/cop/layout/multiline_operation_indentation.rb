@@ -47,8 +47,9 @@ module Shirobai
           buffer = processed_source.buffer
           offenses = Dispatch.offenses_for(processed_source, config, :multiline_operation)
 
+          off = SourceOffsets.for(processed_source.raw_source)
           offenses.each do |start, fin, column_delta, message|
-            range = Parser::Source::Range.new(buffer, start, fin)
+            range = Parser::Source::Range.new(buffer, off[start], off[fin])
             add_offense(range, message: message) do |corrector|
               RuboCop::Cop::AlignmentCorrector.correct(corrector, processed_source, range, column_delta)
             end

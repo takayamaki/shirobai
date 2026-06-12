@@ -16,6 +16,7 @@ module Shirobai
           max = cop_config["Max"]
 
           analysis = Dispatch.offenses_for(processed_source, config, :complexity)
+          off = SourceOffsets.for(processed_source.raw_source)
           analysis.each do |start, fin, head_end, name, cyclomatic, perceived|
             next if allowed_method?(name) || matches_allowed_pattern?(name)
 
@@ -23,7 +24,7 @@ module Shirobai
             next unless complexity > max
 
             stop = RuboCop::LSP.enabled? ? head_end : fin
-            range = Parser::Source::Range.new(processed_source.buffer, start, stop)
+            range = Parser::Source::Range.new(processed_source.buffer, off[start], off[stop])
             message = format(self.class::MSG, method: name, complexity: complexity, max: max)
             add_offense(range, message: message) { self.max = complexity }
           end

@@ -70,12 +70,14 @@ module Shirobai
         # `breakable_range_by_line_index` / `breakable_string_delimiters`.
         def install_breakables(breakables)
           buffer = processed_source.buffer
+          off = SourceOffsets.for(processed_source.raw_source)
           @breakable_range_by_line_index = {}
           @breakable_string_delimiters = {}
           breakables.each do |entry|
             line_index, insert_offset, delimiter = entry
+            insert = off[insert_offset]
             @breakable_range_by_line_index[line_index] =
-              Parser::Source::Range.new(buffer, insert_offset, insert_offset + 1)
+              Parser::Source::Range.new(buffer, insert, insert + 1)
             @breakable_string_delimiters[line_index] = delimiter unless delimiter.empty?
           end
         end

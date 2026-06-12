@@ -39,16 +39,17 @@ module Shirobai
           buffer = processed_source.buffer
 
           offenses = Dispatch.offenses_for(processed_source, config, :void)
+          off = SourceOffsets.for(processed_source.raw_source)
           offenses.each do |start, fin, message, rep_start, rep_end, replacement, rem_start, rem_end|
-            range = Parser::Source::Range.new(buffer, start, fin)
+            range = Parser::Source::Range.new(buffer, off[start], off[fin])
             # Stock yields the corrector block for every offense (the
             # uncorrectable cases simply leave it empty).
             add_offense(range, message: message) do |corrector|
               if rep_end > rep_start
-                corrector.replace(Parser::Source::Range.new(buffer, rep_start, rep_end), replacement)
+                corrector.replace(Parser::Source::Range.new(buffer, off[rep_start], off[rep_end]), replacement)
               end
               if rem_end > rem_start
-                corrector.remove(Parser::Source::Range.new(buffer, rem_start, rem_end))
+                corrector.remove(Parser::Source::Range.new(buffer, off[rem_start], off[rem_end]))
               end
             end
           end

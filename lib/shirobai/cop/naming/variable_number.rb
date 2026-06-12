@@ -44,6 +44,7 @@ module Shirobai
           offenses, had_correct = Dispatch.offenses_for(processed_source, config, :variable_number)
 
           saw_correct = had_correct
+          off = SourceOffsets.for(processed_source.raw_source)
           offenses.each do |start, fin, id_type, name, alt|
             # A name the Rust side flagged may still be exempt by AllowedPatterns,
             # in which case it counts as a correct use of the configured style.
@@ -52,7 +53,7 @@ module Shirobai
               next
             end
 
-            range = Parser::Source::Range.new(processed_source.buffer, start, fin)
+            range = Parser::Source::Range.new(processed_source.buffer, off[start], off[fin])
             message = format(MSG, style: style, identifier_type: TYPE_LABEL[id_type])
             add_offense(range, message: message) do
               if alt == 255

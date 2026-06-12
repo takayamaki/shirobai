@@ -50,14 +50,17 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
+          off = SourceOffsets.for(processed_source.raw_source)
 
           offenses_for_source.each do |start, fin, column_delta, message, autocorrect, cs, ce|
             # Mirror `other_offense_in_same_range?`: the cop instance accumulates
             # correction ranges across autocorrect iterations so a correction
             # nested in an already-corrected range is reported but not corrected.
+            # These go BACK to Rust (`check_indentation_width` prior ranges), so
+            # they stay BYTE offsets — only the Ruby-side ranges get converted.
             @offense_ranges << [cs, ce] if autocorrect
 
-            range = Parser::Source::Range.new(buffer, start, fin)
+            range = Parser::Source::Range.new(buffer, off[start], off[fin])
             # Key the split on the per-offense flag, not `autocorrect?` mode: the
             # block runs in lint mode too and the non-empty corrector is what
             # keeps the offense correctable to match stock (see argument_alignment).
@@ -67,8 +70,8 @@ module Shirobai
             end
 
             add_offense(range, message: message) do |corrector|
-              node = node_at(cs, ce)
-              target = node || Parser::Source::Range.new(buffer, cs, ce)
+              node = node_at(off[cs], off[ce])
+              target = node || Parser::Source::Range.new(buffer, off[cs], off[ce])
               RuboCop::Cop::AlignmentCorrector.correct(
                 corrector, processed_source, target, column_delta
               )
@@ -97,9 +100,10 @@ module Shirobai
           allowed_patterns.empty? && @offense_ranges.empty?
         end
 
-        # The parser node whose `source_range` begins at `cs` and ends at `ce`,
-        # so `AlignmentCorrector` can protect heredocs / string interiors that a
-        # bare range would not. Falls back to `nil` (bare range) when not found.
+        # The parser node whose `source_range` begins at `cs` and ends at `ce`
+        # (CHARACTER offsets), so `AlignmentCorrector` can protect heredocs /
+        # string interiors that a bare range would not. Falls back to `nil`
+        # (bare range) when not found.
         def node_at(cs, ce)
           ast = processed_source.ast
           return nil unless ast

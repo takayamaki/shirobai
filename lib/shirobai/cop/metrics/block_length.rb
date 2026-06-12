@@ -60,6 +60,7 @@ module Shirobai
                 processed_source.raw_source, max_length, count_comments?, count_as_one, [], false
               )
             end
+          off = SourceOffsets.for(processed_source.raw_source)
           candidates.each do |start, fin, head_end, length, method_name, receiver|
             unless fast
               next if allowed_method?(method_name) || matches_allowed_pattern?(method_name)
@@ -69,7 +70,7 @@ module Shirobai
             validate_count_as_one!
 
             stop = RuboCop::LSP.enabled? ? head_end : fin
-            range = Parser::Source::Range.new(processed_source.buffer, start, stop)
+            range = Parser::Source::Range.new(processed_source.buffer, off[start], off[stop])
             add_offense(range, message: format(MSG, label: LABEL, length: length, max: max_length)) do
               self.max = length
             end

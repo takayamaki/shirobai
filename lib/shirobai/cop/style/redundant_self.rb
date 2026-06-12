@@ -35,11 +35,12 @@ module Shirobai
           buffer = processed_source.buffer
 
           offenses = Dispatch.offenses_for(processed_source, config, :redundant_self)
+          off = SourceOffsets.for(processed_source.raw_source)
           offenses.each do |self_start, self_end, dot_start, dot_end|
-            range = Parser::Source::Range.new(buffer, self_start, self_end)
+            range = Parser::Source::Range.new(buffer, off[self_start], off[self_end])
             add_offense(range) do |corrector|
               corrector.remove(range)
-              corrector.remove(Parser::Source::Range.new(buffer, dot_start, dot_end))
+              corrector.remove(Parser::Source::Range.new(buffer, off[dot_start], off[dot_end]))
             end
           end
         end

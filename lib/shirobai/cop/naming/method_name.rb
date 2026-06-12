@@ -57,16 +57,17 @@ module Shirobai
             end
           correct_style_detected if fast && had_valid
 
+          off = SourceOffsets.for(processed_source.raw_source)
           candidates.each do |start, fin, name, valid, alt, fb_start, fb_end, fb_name|
             next if matches_allowed_pattern?(name)
 
             if forbidden_name?(name)
-              fb_range = Parser::Source::Range.new(processed_source.buffer, fb_start, fb_end)
+              fb_range = Parser::Source::Range.new(processed_source.buffer, off[fb_start], off[fb_end])
               add_offense(fb_range, message: format(MSG_FORBIDDEN, identifier: fb_name))
             elsif valid
               correct_style_detected
             else
-              range = Parser::Source::Range.new(processed_source.buffer, start, fin)
+              range = Parser::Source::Range.new(processed_source.buffer, off[start], off[fin])
               add_offense(range, message: format(MSG, style: style)) do
                 if alt == 255
                   unrecognized_style_detected

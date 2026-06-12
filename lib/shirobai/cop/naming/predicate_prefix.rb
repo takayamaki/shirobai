@@ -38,6 +38,7 @@ module Shirobai
         def on_new_investigation
           candidates = Dispatch.offenses_for(processed_source, config, :predicate_prefix)
 
+          off = SourceOffsets.for(processed_source.raw_source)
           candidates.each do |start, fin, method_name, is_def, sorbet_boolean_sig|
             predicate_prefixes.each do |prefix|
               next if allowed_method_name?(method_name, prefix)
@@ -45,7 +46,7 @@ module Shirobai
               # stock `on_send` (macro) path never consults the sig.
               next if is_def && use_sorbet_sigs? && !sorbet_boolean_sig
 
-              range = Parser::Source::Range.new(processed_source.buffer, start, fin)
+              range = Parser::Source::Range.new(processed_source.buffer, off[start], off[fin])
               add_offense(range, message: message(method_name, expected_name(method_name, prefix)))
             end
           end

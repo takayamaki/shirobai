@@ -31,8 +31,9 @@ module Shirobai
           buffer = processed_source.buffer
 
           offenses = Dispatch.offenses_for(processed_source, config, :safe_navigation_chain)
+          off = SourceOffsets.for(processed_source.raw_source)
           offenses.each do |start, fin, replacement, wrap_start, wrap_end|
-            range = Parser::Source::Range.new(buffer, start, fin)
+            range = Parser::Source::Range.new(buffer, off[start], off[fin])
             add_offense(range) do |corrector|
               # Empty replacement means the offense has no safe correction
               # (e.g. the else branch of a ternary on the same receiver).
@@ -40,7 +41,7 @@ module Shirobai
 
               corrector.replace(range, replacement)
               if wrap_end > wrap_start
-                corrector.wrap(Parser::Source::Range.new(buffer, wrap_start, wrap_end), "(", ")")
+                corrector.wrap(Parser::Source::Range.new(buffer, off[wrap_start], off[wrap_end]), "(", ")")
               end
             end
           end

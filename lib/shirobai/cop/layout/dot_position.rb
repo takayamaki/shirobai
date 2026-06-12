@@ -34,12 +34,14 @@ module Shirobai
         def on_new_investigation
           buffer = processed_source.buffer
 
+          off = SourceOffsets.for(processed_source.raw_source)
           Dispatch.offenses_for(processed_source, config, :dot_position)
                   .each do |dot_start, dot_end, remove_start, remove_end, insert_pos|
-            dot = Parser::Source::Range.new(buffer, dot_start, dot_end)
+            dot = Parser::Source::Range.new(buffer, off[dot_start], off[dot_end])
             add_offense(dot, message: message(dot)) do |corrector|
-              corrector.remove(Parser::Source::Range.new(buffer, remove_start, remove_end))
-              corrector.insert_before(Parser::Source::Range.new(buffer, insert_pos, insert_pos), dot.source)
+              corrector.remove(Parser::Source::Range.new(buffer, off[remove_start], off[remove_end]))
+              insert = off[insert_pos]
+              corrector.insert_before(Parser::Source::Range.new(buffer, insert, insert), dot.source)
             end
           end
         end

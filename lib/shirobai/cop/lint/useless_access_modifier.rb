@@ -47,20 +47,9 @@ module Shirobai
           offenses = Dispatch.offenses_for(processed_source, config, :useless_access_modifier)
           return if offenses.empty?
 
-          # Rust reports prism BYTE offsets, but `Parser::Source::Range`
-          # indexes the buffer by CHARACTERS; on a non-ASCII file every
-          # offense after a multibyte character would land shifted (verified
-          # against stock on Ruby's own `fileutils.rb`). `ascii_only?` is a
-          # cached coderange lookup, and the byteslice conversion only runs
-          # for the rare offenses inside non-ASCII files.
-          src = processed_source.raw_source
-          ascii = src.ascii_only?
+          off = SourceOffsets.for(processed_source.raw_source)
           offenses.each do |start, fin, current|
-            unless ascii
-              start = src.byteslice(0, start).length
-              fin = src.byteslice(0, fin).length
-            end
-            range = Parser::Source::Range.new(buffer, start, fin)
+            range = Parser::Source::Range.new(buffer, off[start], off[fin])
             add_offense(range, message: format(MSG, current: current)) do |corrector|
               corrector.remove(range_by_whole_lines(range, include_final_newline: true))
             end
