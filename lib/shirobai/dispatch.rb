@@ -52,7 +52,8 @@ module Shirobai
       indentation_consistency: 31,
       empty_line_between_defs: 32,
       end_alignment: 33,
-      block_alignment: 34
+      block_alignment: 34,
+      else_alignment: 35
     }.freeze
 
     class << self
@@ -116,6 +117,7 @@ module Shirobai
         elbd = Cop::Layout::EmptyLineBetweenDefs.bundle_args(config)
         ea = Cop::Layout::EndAlignment.bundle_args(config)
         ba = Cop::Layout::BlockAlignment.bundle_args(config)
+        elsea = Cop::Layout::ElseAlignment.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -140,7 +142,8 @@ module Shirobai
           ic[0],                         # IndentationConsistency indented_internal_methods
           *elbd[0],                       # EmptyLineBetweenDefs method/class/module/adjacent/min/max
           ea[0],                          # EndAlignment style
-          ba[0]                           # BlockAlignment style
+          ba[0],                          # BlockAlignment style
+          elsea[0]                        # ElseAlignment style (Layout/EndAlignment EnforcedStyleAlignWith)
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1]]

@@ -160,7 +160,11 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # The closing-token range and the autocorrect insert/remove arms (the
     # over-indented `end` is de-indented to the block start column), all shifted
     # by the multibyte comment.
-    "Layout/BlockAlignment" => "test do\n  end\n"
+    "Layout/BlockAlignment" => "test do\n  end\n",
+    # The `else` keyword range and the autocorrect line-shift arm (the
+    # over-indented `else` is de-indented to the `if` column), all shifted by
+    # the multibyte comment.
+    "Layout/ElseAlignment" => "if a\n  b\n else\n  c\nend\n"
   }
 
   cases.each do |cop_name, body|

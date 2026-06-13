@@ -442,6 +442,18 @@ fn map_block_alignment(
         .collect()
 }
 
+/// `Layout/ElseAlignment`: `[[else_start, else_end, message, column_delta], ...]`
+/// — `[else_start, else_end)` is the keyword range (`else` / `elsif` / ...);
+/// `message` is the formatted offense; `column_delta` is the signed shift the
+/// autocorrect applies to the keyword's line. Only misaligned keywords emitted.
+fn map_else_alignment(
+    v: Vec<shirobai_core::rules::else_alignment::ElseAlignmentOffense>,
+) -> Vec<(usize, usize, String, i64)> {
+    v.into_iter()
+        .map(|o| (o.else_start, o.else_end, o.message, o.column_delta))
+        .collect()
+}
+
 /// `Style/BlockDelimiters` correction ops: `[kind, start, end, text]` —
 /// kind 0 = replace, 1 = remove, 2 = insert_before, 3 = insert_after,
 /// 4 = wrap in `begin\n` / `\nend` (text empty).
@@ -528,7 +540,8 @@ fn register_bundle_config(
 /// 27 empty_lines_around_begin_body /
 /// 28 empty_lines_around_exception_handling_keywords /
 /// 29 block_delimiters / 30 abc_size / 31 indentation_consistency /
-/// 32 empty_line_between_defs / 33 end_alignment / 34 block_alignment
+/// 32 empty_line_between_defs / 33 end_alignment / 34 block_alignment /
+/// 35 else_alignment
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -539,7 +552,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(35);
+        let ary = ruby.ary_new_capa(36);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -580,6 +593,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_empty_line_between_defs(r.empty_line_between_defs))?;
         ary.push(map_end_alignment(r.end_alignment))?;
         ary.push(map_block_alignment(r.block_alignment))?;
+        ary.push(map_else_alignment(r.else_alignment))?;
         Ok(ary)
     })
 }
@@ -1191,6 +1205,17 @@ fn check_block_alignment(source: RString, style: u8) -> Vec<(usize, usize, Strin
     ))
 }
 
+/// Ruby entry point for `Layout/ElseAlignment`. `style` is `Layout/EndAlignment`'s
+/// `EnforcedStyleAlignWith` selector (0 = keyword, 1 = variable,
+/// 2 = start_of_line). Returns the shape documented on `map_else_alignment`.
+fn check_else_alignment(source: RString, style: u8) -> Vec<(usize, usize, String, i64)> {
+    let cfg = shirobai_core::rules::else_alignment::Config { style };
+    map_else_alignment(shirobai_core::rules::else_alignment::check_else_alignment(
+        bytes(&source),
+        cfg,
+    ))
+}
+
 /// Unpacks the `Style/BlockDelimiters` wire config: `nums` is
 /// `[style, allow_braces_on_procedural_oneliners]`, `lists` is
 /// `[procedural, functional, allowed, braces_required]` (the same shapes the
@@ -1345,6 +1370,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_block_alignment",
         function!(check_block_alignment, 2),
+    )?;
+    module.define_module_function(
+        "check_else_alignment",
+        function!(check_else_alignment, 2),
     )?;
     module.define_module_function(
         "check_indentation_width",
