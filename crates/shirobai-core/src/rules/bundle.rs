@@ -17,7 +17,8 @@ use super::{
     hash_alignment, hash_each_methods, hash_syntax,
     indentation_consistency, indentation_width, line_end_concatenation, line_length,
     line_length_breakable, method_name, predicate_prefix, redundant_self, safe_navigation_chain,
-    space_around_method_call_operator, string_literals, string_literals_in_interpolation,
+    space_around_keyword, space_around_method_call_operator, string_literals,
+    string_literals_in_interpolation,
     trailing_comma_in_arguments, trailing_empty_lines, useless_access_modifier, variable_number,
     void,
 };
@@ -402,6 +403,7 @@ pub struct BundleResult {
     pub trailing_empty_lines: Option<trailing_empty_lines::TrailingEmptyLinesOffense>,
     pub space_around_method_call_operator:
         Vec<space_around_method_call_operator::SpaceAroundMethodCallOperatorOffense>,
+    pub space_around_keyword: Vec<space_around_keyword::SpaceAroundKeywordOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -520,6 +522,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut tca_rule =
         trailing_comma_in_arguments::build_rule(source, &cfg.trailing_comma_in_arguments);
     let mut samco_rule = space_around_method_call_operator::build_rule(source);
+    let mut sak_rule = space_around_keyword::build_rule(source);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -556,6 +559,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut sli_rule,
         &mut tca_rule,
         &mut samco_rule,
+        &mut sak_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -606,6 +610,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let string_literals_in_interpolation = sli_rule.offenses;
     let trailing_comma_in_arguments = tca_rule.offenses;
     let space_around_method_call_operator = samco_rule.offenses;
+    let space_around_keyword = sak_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -668,6 +673,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         trailing_comma_in_arguments,
         trailing_empty_lines,
         space_around_method_call_operator,
+        space_around_keyword,
     }
 }
 
@@ -2121,6 +2127,40 @@ mod tests {
             assert_eq!(
                 (a.start_offset, a.end_offset),
                 (b.start_offset, b.end_offset)
+            );
+        }
+    }
+
+    /// `Layout/SpaceAroundKeyword` merged into the shared walk must report
+    /// exactly what its standalone entry point reports, over a source covering
+    /// the before/after keyword checks (`if`/`else`/`end`/`then`, a `do` block,
+    /// a modifier `while`, `case`/`when`, `begin`/`rescue`/`ensure`, `super`,
+    /// the `and` keyword, and a one-line `in` pattern) plus clean lines that
+    /// exercise the `preceded_by_operator?` and accept-delimiter suppressions.
+    #[test]
+    fn shared_walk_matches_standalone_space_around_keyword() {
+        let src = "if\"\"then a end\n\
+                   if a; \"\"else end\n\
+                   a do \"a\"end\n\
+                   1while x\n\
+                   case\"\" when 1; end\n\
+                   begin \"\"ensure end\n\
+                   begin rescue; else\"\" end\n\
+                   super\"\"\n\
+                   1and 2\n\
+                   a in\"\"\n\
+                   1..super.size\n\
+                   super(1)\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone = super::space_around_keyword::check_space_around_keyword(src.as_bytes());
+        assert!(alone.len() >= 8);
+        assert_eq!(bundle.space_around_keyword.len(), alone.len());
+        for (a, b) in bundle.space_around_keyword.iter().zip(&alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.before),
+                (b.start_offset, b.end_offset, b.before)
             );
         }
     }

@@ -616,6 +616,19 @@ fn map_space_around_method_call_operator(
         .collect()
 }
 
+/// `Layout/SpaceAroundKeyword`: `[[start, end, before], ...]` — `[start, end)` is
+/// the keyword range (the offense highlight); `before` is `true` for a missing
+/// space *before* the keyword (the Ruby wrapper inserts a space before the
+/// range, `MSG_BEFORE`) and `false` for a missing space *after* it (inserts a
+/// space after, `MSG_AFTER`).
+fn map_space_around_keyword(
+    v: Vec<shirobai_core::rules::space_around_keyword::SpaceAroundKeywordOffense>,
+) -> Vec<(usize, usize, bool)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.before))
+        .collect()
+}
+
 /// `Layout/EndAlignment`: `[[end_start, end_end, matching, message, align_column], ...]`
 /// — `[end_start, end_end)` is the `end` keyword range; `matching` is the list
 /// of style ids the `end` already aligns with, in the path's hash order
@@ -750,7 +763,8 @@ fn register_bundle_config(
 /// 35 else_alignment / 36 first_hash_element_indentation / 37 hash_alignment /
 /// 38 empty_lines_around_arguments / 39 hash_syntax / 40 string_literals /
 /// 41 trailing_comma_in_arguments / 42 string_literals_in_interpolation /
-/// 43 trailing_empty_lines / 44 space_around_method_call_operator
+/// 43 trailing_empty_lines / 44 space_around_method_call_operator /
+/// 45 space_around_keyword
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -822,6 +836,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_space_around_method_call_operator(
             r.space_around_method_call_operator,
         ))?;
+        ary.push(map_space_around_keyword(r.space_around_keyword))?;
         Ok(ary)
     })
 }
@@ -1604,6 +1619,14 @@ fn check_space_around_method_call_operator(source: RString) -> Vec<(usize, usize
     )
 }
 
+/// Ruby entry point for `Layout/SpaceAroundKeyword` (no config). Returns the
+/// shape documented on `map_space_around_keyword`.
+fn check_space_around_keyword(source: RString) -> Vec<(usize, usize, bool)> {
+    map_space_around_keyword(
+        shirobai_core::rules::space_around_keyword::check_space_around_keyword(bytes(&source)),
+    )
+}
+
 /// Ruby entry point for `Layout/EndAlignment`. `style` is the
 /// `EnforcedStyleAlignWith` selector (0 = keyword, 1 = variable,
 /// 2 = start_of_line). Returns the shape documented on `map_end_alignment`.
@@ -1794,6 +1817,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_space_around_method_call_operator",
         function!(check_space_around_method_call_operator, 1),
+    )?;
+    module.define_module_function(
+        "check_space_around_keyword",
+        function!(check_space_around_keyword, 1),
     )?;
     module.define_module_function("check_end_alignment", function!(check_end_alignment, 2))?;
     module.define_module_function(

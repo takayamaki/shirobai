@@ -34,6 +34,7 @@ pub mod parse_cache;
 pub mod predicate_prefix;
 pub mod redundant_self;
 pub mod safe_navigation_chain;
+pub mod space_around_keyword;
 pub mod space_around_method_call_operator;
 pub mod string_literals;
 pub mod string_literals_in_interpolation;

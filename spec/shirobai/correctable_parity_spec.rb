@@ -234,6 +234,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Layout::SpaceAroundMethodCallOperator,
       Shirobai::Cop::Layout::SpaceAroundMethodCallOperator,
       "foo . bar\n"
+    ],
+    # A missing space after a keyword: the offense carries an `insert_after`
+    # corrector (correctable). Guards that the wrapper attaches the corrector
+    # block in lint mode like stock.
+    "Layout/SpaceAroundKeyword" => [
+      RuboCop::Cop::Layout::SpaceAroundKeyword,
+      Shirobai::Cop::Layout::SpaceAroundKeyword,
+      "if\"\"; end\n"
     ]
   }
 

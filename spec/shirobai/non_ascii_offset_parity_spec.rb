@@ -202,7 +202,12 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # sit after the multibyte comment, so their byte offsets are shifted ahead
     # of the char offsets and must be converted; the removal corrector range is
     # the same range.
-    "Layout/SpaceAroundMethodCallOperator" => "あ.foo . bar\nRuboCop:: Cop\n"
+    "Layout/SpaceAroundMethodCallOperator" => "あ.foo . bar\nRuboCop:: Cop\n",
+    # The keyword ranges (the `case` and `when` here) sit after the multibyte
+    # comment, so their byte offsets are shifted ahead of the char offsets and
+    # must be converted; the insert_before / insert_after corrector anchors at
+    # the same range.
+    "Layout/SpaceAroundKeyword" => "x = 1 # あ\ncase a when\"\"; end\n"
   }
 
   cases.each do |cop_name, body|
