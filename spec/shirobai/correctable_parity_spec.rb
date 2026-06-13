@@ -226,6 +226,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Layout::TrailingEmptyLines,
       Shirobai::Cop::Layout::TrailingEmptyLines,
       "x = 0\n\n\n"
+    ],
+    # Spaces around a `.` call operator: the offense carries a removal corrector
+    # (correctable). Guards that the wrapper attaches the corrector block in
+    # lint mode like stock.
+    "Layout/SpaceAroundMethodCallOperator" => [
+      RuboCop::Cop::Layout::SpaceAroundMethodCallOperator,
+      Shirobai::Cop::Layout::SpaceAroundMethodCallOperator,
+      "foo . bar\n"
     ]
   }
 

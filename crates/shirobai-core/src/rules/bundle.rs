@@ -17,8 +17,9 @@ use super::{
     hash_alignment, hash_each_methods, hash_syntax,
     indentation_consistency, indentation_width, line_end_concatenation, line_length,
     line_length_breakable, method_name, predicate_prefix, redundant_self, safe_navigation_chain,
-    string_literals, string_literals_in_interpolation, trailing_comma_in_arguments,
-    trailing_empty_lines, useless_access_modifier, variable_number, void,
+    space_around_method_call_operator, string_literals, string_literals_in_interpolation,
+    trailing_comma_in_arguments, trailing_empty_lines, useless_access_modifier, variable_number,
+    void,
 };
 
 /// Run `Layout/MultilineOperationIndentation` and
@@ -399,6 +400,8 @@ pub struct BundleResult {
         Vec<trailing_comma_in_arguments::TrailingCommaInArgumentsOffense>,
     /// At most one offense per file (the final-newline / trailing-blank check).
     pub trailing_empty_lines: Option<trailing_empty_lines::TrailingEmptyLinesOffense>,
+    pub space_around_method_call_operator:
+        Vec<space_around_method_call_operator::SpaceAroundMethodCallOperatorOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -516,6 +519,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     );
     let mut tca_rule =
         trailing_comma_in_arguments::build_rule(source, &cfg.trailing_comma_in_arguments);
+    let mut samco_rule = space_around_method_call_operator::build_rule(source);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -551,6 +555,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut sl_rule,
         &mut sli_rule,
         &mut tca_rule,
+        &mut samco_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -600,6 +605,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let string_literals = sl_rule.offenses;
     let string_literals_in_interpolation = sli_rule.offenses;
     let trailing_comma_in_arguments = tca_rule.offenses;
+    let space_around_method_call_operator = samco_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -661,6 +667,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         string_literals_in_interpolation,
         trailing_comma_in_arguments,
         trailing_empty_lines,
+        space_around_method_call_operator,
     }
 }
 
@@ -2085,6 +2092,36 @@ mod tests {
                     "style={style}"
                 );
             }
+        }
+    }
+
+    /// `Layout/SpaceAroundMethodCallOperator` merged into the shared walk must
+    /// report exactly what its standalone entry point reports, over a source
+    /// exercising space before/after a dot, `&.`, after `::` (including a
+    /// const chain and a const assignment whose target `::` must stay silent),
+    /// plus a clean call and a clean multi-line chain.
+    #[test]
+    fn shared_walk_matches_standalone_space_around_method_call_operator() {
+        let src = "foo . bar\nfoo &. bar\nRuboCop:: Cop:: Base\nA:: B = 1\n\
+                   foo.bar\nfoo\n  .bar\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone =
+            super::space_around_method_call_operator::check_space_around_method_call_operator(
+                src.as_bytes(),
+            );
+        assert!(alone.len() >= 5);
+        assert_eq!(bundle.space_around_method_call_operator.len(), alone.len());
+        for (a, b) in bundle
+            .space_around_method_call_operator
+            .iter()
+            .zip(&alone)
+        {
+            assert_eq!(
+                (a.start_offset, a.end_offset),
+                (b.start_offset, b.end_offset)
+            );
         }
     }
 

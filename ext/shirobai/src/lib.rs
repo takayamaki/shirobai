@@ -603,6 +603,19 @@ fn map_empty_lines_around_arguments(
         .collect()
 }
 
+/// `Layout/SpaceAroundMethodCallOperator`: `[[start, end], ...]` — `[start, end)`
+/// is both the offense highlight and the autocorrect removal range (the
+/// whitespace run the Ruby wrapper reports and removes verbatim).
+fn map_space_around_method_call_operator(
+    v: Vec<
+        shirobai_core::rules::space_around_method_call_operator::SpaceAroundMethodCallOperatorOffense,
+    >,
+) -> Vec<(usize, usize)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset))
+        .collect()
+}
+
 /// `Layout/EndAlignment`: `[[end_start, end_end, matching, message, align_column], ...]`
 /// — `[end_start, end_end)` is the `end` keyword range; `matching` is the list
 /// of style ids the `end` already aligns with, in the path's hash order
@@ -737,7 +750,7 @@ fn register_bundle_config(
 /// 35 else_alignment / 36 first_hash_element_indentation / 37 hash_alignment /
 /// 38 empty_lines_around_arguments / 39 hash_syntax / 40 string_literals /
 /// 41 trailing_comma_in_arguments / 42 string_literals_in_interpolation /
-/// 43 trailing_empty_lines
+/// 43 trailing_empty_lines / 44 space_around_method_call_operator
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -806,6 +819,9 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             r.string_literals_in_interpolation,
         ))?;
         ary.push(map_trailing_empty_lines(r.trailing_empty_lines))?;
+        ary.push(map_space_around_method_call_operator(
+            r.space_around_method_call_operator,
+        ))?;
         Ok(ary)
     })
 }
@@ -1578,6 +1594,16 @@ fn check_empty_lines_around_arguments(source: RString) -> Vec<(usize, usize)> {
     )
 }
 
+/// Ruby entry point for `Layout/SpaceAroundMethodCallOperator` (no config).
+/// Returns the shape documented on `map_space_around_method_call_operator`.
+fn check_space_around_method_call_operator(source: RString) -> Vec<(usize, usize)> {
+    map_space_around_method_call_operator(
+        shirobai_core::rules::space_around_method_call_operator::check_space_around_method_call_operator(
+            bytes(&source),
+        ),
+    )
+}
+
 /// Ruby entry point for `Layout/EndAlignment`. `style` is the
 /// `EnforcedStyleAlignWith` selector (0 = keyword, 1 = variable,
 /// 2 = start_of_line). Returns the shape documented on `map_end_alignment`.
@@ -1764,6 +1790,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_empty_lines_around_arguments",
         function!(check_empty_lines_around_arguments, 1),
+    )?;
+    module.define_module_function(
+        "check_space_around_method_call_operator",
+        function!(check_space_around_method_call_operator, 1),
     )?;
     module.define_module_function("check_end_alignment", function!(check_end_alignment, 2))?;
     module.define_module_function(

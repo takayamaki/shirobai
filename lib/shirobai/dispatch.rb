@@ -61,7 +61,8 @@ module Shirobai
       string_literals: 40,
       trailing_comma_in_arguments: 41,
       string_literals_in_interpolation: 42,
-      trailing_empty_lines: 43
+      trailing_empty_lines: 43,
+      space_around_method_call_operator: 44
     }.freeze
 
     class << self

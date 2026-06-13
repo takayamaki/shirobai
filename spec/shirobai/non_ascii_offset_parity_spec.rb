@@ -197,7 +197,12 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # Trailing blank lines: the caret range and the autocorrect replacement
     # range both sit at end-of-source, after the multibyte comment, so their
     # byte offsets are shifted ahead of the char offsets and must be converted.
-    "Layout/TrailingEmptyLines" => "x = 0\n\n\n"
+    "Layout/TrailingEmptyLines" => "x = 0\n\n\n",
+    # The offending whitespace runs (before/after a `.` and after a `::`) all
+    # sit after the multibyte comment, so their byte offsets are shifted ahead
+    # of the char offsets and must be converted; the removal corrector range is
+    # the same range.
+    "Layout/SpaceAroundMethodCallOperator" => "あ.foo . bar\nRuboCop:: Cop\n"
   }
 
   cases.each do |cop_name, body|
