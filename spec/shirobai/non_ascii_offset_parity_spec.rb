@@ -166,7 +166,11 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # The `else` keyword range and the autocorrect line-shift arm (the
     # over-indented `else` is de-indented to the `if` column), all shifted by
     # the multibyte comment.
-    "Layout/ElseAlignment" => "if a\n  b\n else\n  c\nend\n"
+    "Layout/ElseAlignment" => "if a\n  b\n else\n  c\nend\n",
+    # The offending pair node range plus the per-part key/separator/value
+    # ranges Rust hands the wrapper for `insert_before` / `remove`, all shifted
+    # by the multibyte comment; the misaligned key is de-indented to alignment.
+    "Layout/HashAlignment" => "h = {\n  a: 0,\n   bb: 1\n}\n"
   }
 
   cases.each do |cop_name, body|

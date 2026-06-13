@@ -306,6 +306,46 @@ fn map_first_hash_element_indentation(
         .collect()
 }
 
+/// Maps each `Layout/HashAlignment` offense to
+/// `[group, start, end, message, has_value, [key_delta, sep_delta, val_delta],
+///   [key_start, key_end, key_column], [op_start, op_end],
+///   [value_start, value_end]]`. `group` is the source hash's `on_hash`-order
+/// index (so the wrapper can confine a `ClobberingError` to its own hash, as
+/// stock's per-callback `add_offense` does); `message` selects the offense text
+/// (0 key / 1 separator / 2 table / 3 kwsplat); when `has_value` is false Ruby
+/// adjusts the node by `key_delta` only, else it adjusts key / separator /
+/// value ranges by their deltas (with the stock `-key.column` clamp).
+#[allow(clippy::type_complexity)]
+fn map_hash_alignment(
+    v: Vec<shirobai_core::rules::hash_alignment::HashAlignmentOffense>,
+) -> Vec<(
+    usize,
+    usize,
+    usize,
+    u8,
+    bool,
+    (isize, isize, isize),
+    (usize, usize, usize),
+    (usize, usize),
+    (usize, usize),
+)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.group,
+                o.start_offset,
+                o.end_offset,
+                o.message,
+                o.has_value,
+                (o.key_delta, o.separator_delta, o.value_delta),
+                (o.key_start, o.key_end, o.key_column),
+                (o.op_start, o.op_end),
+                (o.value_start, o.value_end),
+            )
+        })
+        .collect()
+}
+
 #[allow(clippy::type_complexity)]
 fn map_hash_each_methods(
     v: Vec<shirobai_core::rules::hash_each_methods::HashEachOffense>,
@@ -560,7 +600,7 @@ fn register_bundle_config(
 /// 28 empty_lines_around_exception_handling_keywords /
 /// 29 block_delimiters / 30 abc_size / 31 indentation_consistency /
 /// 32 empty_line_between_defs / 33 end_alignment / 34 block_alignment /
-/// 35 else_alignment / 36 first_hash_element_indentation
+/// 35 else_alignment / 36 first_hash_element_indentation / 37 hash_alignment
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -571,7 +611,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(37);
+        let ary = ruby.ary_new_capa(38);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -616,6 +656,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_first_hash_element_indentation(
             r.first_hash_element_indentation,
         ))?;
+        ary.push(map_hash_alignment(r.hash_alignment))?;
         Ok(ary)
     })
 }
@@ -1046,6 +1087,53 @@ fn check_first_hash_element_indentation(
     )
 }
 
+/// Ruby entry point for `Layout/HashAlignment`. Takes the source, the
+/// comma-joined `EnforcedHashRocketStyle` and `EnforcedColonStyle` (each
+/// `key`/`separator`/`table`, in config order), the
+/// `EnforcedLastArgumentHashStyle` code (0 always_inspect, 1 always_ignore,
+/// 2 ignore_explicit, 3 ignore_implicit), and whether `Layout/ArgumentAlignment`
+/// enforces `with_fixed_indentation`. Returns one entry per misaligned pair or
+/// kwsplat (see `map_hash_alignment`).
+#[allow(clippy::type_complexity)]
+fn check_hash_alignment(
+    source: RString,
+    hash_rocket_styles: String,
+    colon_styles: String,
+    last_argument_style: u8,
+    enforce_fixed_indentation: bool,
+) -> Vec<(
+    usize,
+    usize,
+    usize,
+    u8,
+    bool,
+    (isize, isize, isize),
+    (usize, usize, usize),
+    (usize, usize),
+    (usize, usize),
+)> {
+    let parse = |s: &str| -> Vec<u8> {
+        s.split(',')
+            .filter(|p| !p.is_empty())
+            .map(|p| match p {
+                "separator" => 1,
+                "table" => 2,
+                _ => 0,
+            })
+            .collect()
+    };
+    let cfg = shirobai_core::rules::hash_alignment::Config {
+        hash_rocket_styles: parse(&hash_rocket_styles),
+        colon_styles: parse(&colon_styles),
+        last_argument_style,
+        enforce_fixed_indentation,
+    };
+    map_hash_alignment(shirobai_core::rules::hash_alignment::check_hash_alignment(
+        bytes(&source),
+        &cfg,
+    ))
+}
+
 /// Ruby entry point for `Style/HashEachMethods`. Takes the source and the
 /// `AllowedReceivers` list (matched by receiver source name, like the
 /// `AllowedReceivers` mixin). Returns one entry per offense: `[[start, end,
@@ -1450,6 +1538,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_first_hash_element_indentation",
         function!(check_first_hash_element_indentation, 6),
+    )?;
+    module.define_module_function(
+        "check_hash_alignment",
+        function!(check_hash_alignment, 5),
     )?;
     module.define_module_function(
         "check_hash_each_methods",

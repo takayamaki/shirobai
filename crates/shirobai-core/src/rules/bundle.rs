@@ -13,7 +13,7 @@ use super::{
     closing_parenthesis_indentation, complexity, debugger, dot_position, empty_line_between_defs,
     block_alignment, else_alignment, empty_lines_around_body, end_alignment,
     first_argument_indentation, first_array_element_indentation, first_hash_element_indentation,
-    hash_each_methods,
+    hash_alignment, hash_each_methods,
     indentation_consistency, indentation_width, line_end_concatenation, line_length,
     line_length_breakable, method_name, predicate_prefix, redundant_self, safe_navigation_chain,
     useless_access_modifier, variable_number, void,
@@ -86,6 +86,8 @@ pub fn check_multiline_bundle(
 /// | 55  | block_alignment style (`EnforcedStyleAlignWith`: 0 = either, 1 = start_of_block, 2 = start_of_line) |
 /// | 56  | else_alignment style (`Layout/EndAlignment`'s `EnforcedStyleAlignWith`: 0 = keyword, 1 = variable, 2 = start_of_line) |
 /// | 57-61 | first_hash_element style / indent / enforce_fixed (`Layout/ArgumentAlignment` with_fixed_indentation) / colon_separator / rocket_separator (`Layout/HashAlignment` Enforced{Colon,HashRocket}Style == 'separator') |
+/// | 62  | hash_alignment last_argument_style (`EnforcedLastArgumentHashStyle`: 0 always_inspect, 1 always_ignore, 2 ignore_explicit, 3 ignore_implicit) |
+/// | 63  | hash_alignment enforce_fixed (`Layout/ArgumentAlignment` `with_fixed_indentation`) |
 ///
 /// `lists` (`Vec<String>`), 17 entries:
 ///
@@ -108,6 +110,8 @@ pub fn check_multiline_bundle(
 /// | 14  | block_delimiters_allowed (`AllowedMethods`, deprecated lists merged) |
 /// | 15  | block_delimiters_braces_required (`BracesRequiredMethods`) |
 /// | 16  | empty_line_between_defs_def_like_macros (`DefLikeMacros`, verbatim names) |
+/// | 17  | hash_alignment_rocket_styles (`EnforcedHashRocketStyle`, comma-joined `key`/`separator`/`table`) |
+/// | 18  | hash_alignment_colon_styles (`EnforcedColonStyle`, comma-joined) |
 ///
 /// `Layout/IndentationWidth`'s `allowed_lines` and `prior_ranges` are fixed to
 /// empty in the bundle: the non-empty cases (configured `AllowedPatterns`,
@@ -171,10 +175,11 @@ pub struct BundleConfig {
     pub first_hash_element_indent: usize,
     pub first_hash_element_enforce_fixed: bool,
     pub first_hash_element_separators: first_hash_element_indentation::SeparatorConfig,
+    pub hash_alignment: hash_alignment::Config,
 }
 
-const NUMS_LEN: usize = 62;
-const LISTS_LEN: usize = 17;
+const NUMS_LEN: usize = 64;
+const LISTS_LEN: usize = 19;
 
 impl BundleConfig {
     /// Build a config from the flat wire format (see the struct docs for the
@@ -289,8 +294,28 @@ impl BundleConfig {
                 colon_separator: nums[60] != 0,
                 rocket_separator: nums[61] != 0,
             },
+            hash_alignment: hash_alignment::Config {
+                hash_rocket_styles: parse_hash_styles(&next_list()[..]),
+                colon_styles: parse_hash_styles(&next_list()[..]),
+                last_argument_style: nums[62] as u8,
+                enforce_fixed_indentation: nums[63] != 0,
+            },
         })
     }
+}
+
+/// Parse a `Layout/HashAlignment` style list (`key` / `separator` / `table`)
+/// into the `0`/`1`/`2` codes, in config order. An empty list yields an empty
+/// vector (the rule then defaults to `key`).
+fn parse_hash_styles(styles: &[String]) -> Vec<u8> {
+    styles
+        .iter()
+        .map(|s| match s.as_str() {
+            "separator" => 1,
+            "table" => 2,
+            _ => 0,
+        })
+        .collect()
 }
 
 /// Every cop's results for one source, in each cop's existing result type.
@@ -330,6 +355,7 @@ pub struct BundleResult {
     pub else_alignment: Vec<else_alignment::ElseAlignmentOffense>,
     pub first_hash_element_indentation:
         Vec<first_hash_element_indentation::FirstHashElemIndentOffense>,
+    pub hash_alignment: Vec<hash_alignment::HashAlignmentOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -437,6 +463,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         cfg.first_hash_element_enforce_fixed,
         cfg.first_hash_element_separators,
     );
+    let mut ha_rule = hash_alignment::build_rule(source, &cfg.hash_alignment);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -466,6 +493,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut ba_rule,
         &mut elsea_rule,
         &mut fhe_rule,
+        &mut ha_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -509,6 +537,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let block_alignment = ba_rule.offenses;
     let else_alignment = elsea_rule.offenses;
     let first_hash_element_indentation = fhe_rule.offenses;
+    let hash_alignment = ha_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -560,6 +589,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         block_alignment,
         else_alignment,
         first_hash_element_indentation,
+        hash_alignment,
     }
 }
 
@@ -623,6 +653,7 @@ mod tests {
             0, // block_alignment: style (either)
             0, // else_alignment: style (keyword)
             0, 2, 0, 0, 0, // first_hash_element: style / indent / enforce / colon_sep / rocket_sep
+            0, 0, // hash_alignment: last_argument_style (always_inspect) / enforce_fixed
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -646,6 +677,8 @@ mod tests {
             ["lambda", "proc", "it"].map(String::from).to_vec(),
             vec![],
             vec![], // empty_line_between_defs: def_like_macros
+            vec!["key".to_string()], // hash_alignment: rocket styles
+            vec!["key".to_string()], // hash_alignment: colon styles
         ];
         (nums, lists)
     }
@@ -1763,6 +1796,56 @@ mod tests {
                         b.column_delta,
                         &b.message,
                         b.correct_whole_pair
+                    )
+                );
+            }
+        }
+    }
+
+    /// `Layout/HashAlignment` merged into the shared walk must report exactly
+    /// what its standalone entry point reports, across the key / separator /
+    /// table styles, over a source exercising misaligned keys, separators,
+    /// values and a kwsplat.
+    #[test]
+    fn shared_walk_matches_standalone_hash_alignment() {
+        let src = "hash = {\n  a: 0,\n   bb: 1\n}\n\
+                   h2 = {\n    'a'  => 0,\n  'bbb' =>  1\n}\n\
+                   h3 = {foo: 'bar',\n       **extra\n}\n\
+                   S = {\n  t: {\n   '@1x': {\n      f: 'png',\n      g: 'x',\n   },\n  }.freeze,\n  m: {},\n}\n";
+        for style in 0..=2u8 {
+            let (nums, mut lists) = default_packed();
+            let name = match style {
+                1 => "separator",
+                2 => "table",
+                _ => "key",
+            };
+            lists[17] = vec![name.to_string()];
+            lists[18] = vec![name.to_string()];
+            let cfg = BundleConfig::from_packed(&nums, lists.clone()).unwrap();
+            let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+            let alone =
+                super::hash_alignment::check_hash_alignment(src.as_bytes(), &cfg.hash_alignment);
+            assert_eq!(bundle.hash_alignment.len(), alone.len());
+            for (a, b) in bundle.hash_alignment.iter().zip(&alone) {
+                assert_eq!(
+                    (
+                        a.start_offset,
+                        a.end_offset,
+                        a.message,
+                        a.key_delta,
+                        a.separator_delta,
+                        a.value_delta,
+                        a.has_value,
+                    ),
+                    (
+                        b.start_offset,
+                        b.end_offset,
+                        b.message,
+                        b.key_delta,
+                        b.separator_delta,
+                        b.value_delta,
+                        b.has_value,
                     )
                 );
             }

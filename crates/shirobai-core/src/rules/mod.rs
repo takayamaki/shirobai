@@ -17,6 +17,7 @@ pub mod end_alignment;
 pub mod first_argument_indentation;
 pub mod first_array_element_indentation;
 pub mod first_hash_element_indentation;
+pub mod hash_alignment;
 pub mod hash_each_methods;
 pub mod indentation_consistency;
 pub mod indentation_width;
