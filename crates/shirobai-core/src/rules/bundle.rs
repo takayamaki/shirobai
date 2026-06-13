@@ -18,7 +18,7 @@ use super::{
     indentation_consistency, indentation_width, line_end_concatenation, line_length,
     line_length_breakable, method_name, predicate_prefix, redundant_self, safe_navigation_chain,
     string_literals, string_literals_in_interpolation, trailing_comma_in_arguments,
-    useless_access_modifier, variable_number, void,
+    trailing_empty_lines, useless_access_modifier, variable_number, void,
 };
 
 /// Run `Layout/MultilineOperationIndentation` and
@@ -94,6 +94,7 @@ pub fn check_multiline_bundle(
 /// | 70-71 | string_literals style (`EnforcedStyle`: 0 single_quotes, 1 double_quotes) / consistent_multiline (`ConsistentQuotesInMultiline`) |
 /// | 72  | trailing_comma_in_arguments style (`EnforcedStyleForMultiline`: 0 no_comma, 1 comma, 2 consistent_comma, 3 diff_comma) |
 /// | 73  | string_literals_in_interpolation style (`EnforcedStyle`: 0 single_quotes, 1 double_quotes) |
+/// | 74  | trailing_empty_lines style (`EnforcedStyle`: 0 final_newline, 1 final_blank_line) |
 ///
 /// `lists` (`Vec<String>`), 19 entries:
 ///
@@ -186,9 +187,10 @@ pub struct BundleConfig {
     pub string_literals: string_literals::Config,
     pub string_literals_in_interpolation: string_literals_in_interpolation::Config,
     pub trailing_comma_in_arguments: trailing_comma_in_arguments::Config,
+    pub trailing_empty_lines: trailing_empty_lines::Config,
 }
 
-const NUMS_LEN: usize = 74;
+const NUMS_LEN: usize = 75;
 const LISTS_LEN: usize = 19;
 
 impl BundleConfig {
@@ -328,6 +330,9 @@ impl BundleConfig {
             string_literals_in_interpolation: string_literals_in_interpolation::Config {
                 style: nums[73] as u8,
             },
+            trailing_empty_lines: trailing_empty_lines::Config {
+                style: nums[74] as u8,
+            },
         })
     }
 }
@@ -392,6 +397,8 @@ pub struct BundleResult {
         Vec<string_literals_in_interpolation::StringLiteralsInInterpolationOffense>,
     pub trailing_comma_in_arguments:
         Vec<trailing_comma_in_arguments::TrailingCommaInArgumentsOffense>,
+    /// At most one offense per file (the final-newline / trailing-blank check).
+    pub trailing_empty_lines: Option<trailing_empty_lines::TrailingEmptyLinesOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -611,6 +618,9 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         cfg.line_length_split_strings,
         Some(&candidate_lines),
     );
+    // `Layout/TrailingEmptyLines` is also a pure source scan (no walk).
+    let trailing_empty_lines =
+        trailing_empty_lines::check_trailing_empty_lines(source, &cfg.trailing_empty_lines);
     BundleResult {
         debugger,
         block_length,
@@ -650,6 +660,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         string_literals,
         string_literals_in_interpolation,
         trailing_comma_in_arguments,
+        trailing_empty_lines,
     }
 }
 
@@ -718,6 +729,7 @@ mod tests {
             0, 0, // string_literals: style(single_quotes) / consistent_multiline
             0, // trailing_comma_in_arguments: style (no_comma)
             0, // string_literals_in_interpolation: style (single_quotes)
+            0, // trailing_empty_lines: style (final_newline)
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -2042,6 +2054,34 @@ mod tests {
                 assert_eq!(
                     (a.is_offense, a.start_offset, a.end_offset, a.detect, a.fix, &a.content),
                     (b.is_offense, b.start_offset, b.end_offset, b.detect, b.fix, &b.content),
+                    "style={style}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_trailing_empty_lines() {
+        // A file with two trailing blank lines, exercised under both styles.
+        let src = "x = 0\n\n\n";
+        for style in 0..=1u8 {
+            let (mut nums, lists) = default_packed();
+            nums[74] = style as i64;
+            let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+            let bundle = check_all_bundle(src.as_bytes(), &cfg);
+            let alone = super::trailing_empty_lines::check_trailing_empty_lines(
+                src.as_bytes(),
+                &cfg.trailing_empty_lines,
+            );
+            assert_eq!(
+                bundle.trailing_empty_lines.is_some(),
+                alone.is_some(),
+                "presence mismatch style={style}"
+            );
+            if let (Some(a), Some(b)) = (&bundle.trailing_empty_lines, &alone) {
+                assert_eq!(
+                    (a.report_start, a.report_end, a.ac_start, a.ac_end, a.replacement, a.blank_lines),
+                    (b.report_start, b.report_end, b.ac_start, b.ac_end, b.replacement, b.blank_lines),
                     "style={style}"
                 );
             }

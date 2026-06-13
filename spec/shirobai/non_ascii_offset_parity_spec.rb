@@ -193,7 +193,11 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # is itself multibyte, so the wrapper's `to_string_literal` on the decoded
     # content must round-trip the UTF-8 bytes (double -> single under the default
     # single_quotes style); the outer double-quoted string stays untouched.
-    "Style/StringLiteralsInInterpolation" => "x = \"前 \#{\"日本語\"} 後\"\n"
+    "Style/StringLiteralsInInterpolation" => "x = \"前 \#{\"日本語\"} 後\"\n",
+    # Trailing blank lines: the caret range and the autocorrect replacement
+    # range both sit at end-of-source, after the multibyte comment, so their
+    # byte offsets are shifted ahead of the char offsets and must be converted.
+    "Layout/TrailingEmptyLines" => "x = 0\n\n\n"
   }
 
   cases.each do |cop_name, body|

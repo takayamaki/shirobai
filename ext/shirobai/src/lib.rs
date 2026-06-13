@@ -445,6 +445,30 @@ fn map_trailing_comma_in_arguments(
         .collect()
 }
 
+/// `Layout/TrailingEmptyLines`: at most one record per file, flattened to a
+/// `Vec` of length 0 or 1. Each entry is `[report_start, report_end, ac_start,
+/// ac_end, replacement, blank_lines]`: Ruby reports the caret range
+/// `[report_start, report_end)`, replaces `[ac_start, ac_end)` with
+/// `replacement`, and builds the message from `blank_lines` (`-1` final newline
+/// missing, `0` trailing blank line missing, else the "N trailing blank lines"
+/// form).
+fn map_trailing_empty_lines(
+    v: Option<shirobai_core::rules::trailing_empty_lines::TrailingEmptyLinesOffense>,
+) -> Vec<(usize, usize, usize, usize, String, i64)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.report_start,
+                o.report_end,
+                o.ac_start,
+                o.ac_end,
+                o.replacement.to_string(),
+                o.blank_lines,
+            )
+        })
+        .collect()
+}
+
 #[allow(clippy::type_complexity)]
 fn map_hash_each_methods(
     v: Vec<shirobai_core::rules::hash_each_methods::HashEachOffense>,
@@ -712,7 +736,8 @@ fn register_bundle_config(
 /// 32 empty_line_between_defs / 33 end_alignment / 34 block_alignment /
 /// 35 else_alignment / 36 first_hash_element_indentation / 37 hash_alignment /
 /// 38 empty_lines_around_arguments / 39 hash_syntax / 40 string_literals /
-/// 41 trailing_comma_in_arguments / 42 string_literals_in_interpolation
+/// 41 trailing_comma_in_arguments / 42 string_literals_in_interpolation /
+/// 43 trailing_empty_lines
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -723,7 +748,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(42);
+        let ary = ruby.ary_new_capa(43);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -780,6 +805,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_string_literals_in_interpolation(
             r.string_literals_in_interpolation,
         ))?;
+        ary.push(map_trailing_empty_lines(r.trailing_empty_lines))?;
         Ok(ary)
     })
 }
@@ -1338,6 +1364,21 @@ fn check_trailing_comma_in_arguments(
     )
 }
 
+/// Ruby entry point for `Layout/TrailingEmptyLines`. Takes the source and the
+/// packed config nums (`[style]`: 0 final_newline, 1 final_blank_line). Returns
+/// a 0-or-1-element Vec (see `map_trailing_empty_lines`).
+fn check_trailing_empty_lines(
+    source: RString,
+    nums: Vec<i64>,
+) -> Vec<(usize, usize, usize, usize, String, i64)> {
+    let cfg = shirobai_core::rules::trailing_empty_lines::Config {
+        style: nums[0] as u8,
+    };
+    map_trailing_empty_lines(
+        shirobai_core::rules::trailing_empty_lines::check_trailing_empty_lines(bytes(&source), &cfg),
+    )
+}
+
 /// Ruby entry point for `Style/HashEachMethods`. Takes the source and the
 /// `AllowedReceivers` list (matched by receiver source name, like the
 /// `AllowedReceivers` mixin). Returns one entry per offense: `[[start, end,
@@ -1777,6 +1818,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_trailing_comma_in_arguments",
         function!(check_trailing_comma_in_arguments, 2),
+    )?;
+    module.define_module_function(
+        "check_trailing_empty_lines",
+        function!(check_trailing_empty_lines, 2),
     )?;
     module.define_module_function("check_void", function!(check_void, 2))?;
     module.define_module_function(

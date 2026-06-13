@@ -218,6 +218,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Style::StringLiteralsInInterpolation,
       Shirobai::Cop::Style::StringLiteralsInInterpolation,
       "a = \"x \#{\"inner\"} y\"\n"
+    ],
+    # Multiple trailing blank lines under the default `final_newline` style: the
+    # offense carries a `replace` corrector (correctable) and its caret range
+    # starts one byte after the first trailing newline.
+    "Layout/TrailingEmptyLines" => [
+      RuboCop::Cop::Layout::TrailingEmptyLines,
+      Shirobai::Cop::Layout::TrailingEmptyLines,
+      "x = 0\n\n\n"
     ]
   }
 
