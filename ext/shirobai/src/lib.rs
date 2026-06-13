@@ -469,6 +469,17 @@ fn map_empty_line_between_defs(
         .collect()
 }
 
+/// `Layout/EmptyLinesAroundArguments`: `[[start, end], ...]` — `[start, end)` is
+/// the offense line range (the whole `last_line - 1` line plus its `\n`), which
+/// the Ruby wrapper reports and removes verbatim.
+fn map_empty_lines_around_arguments(
+    v: Vec<shirobai_core::rules::empty_lines_around_arguments::EmptyLinesAroundArgumentsOffense>,
+) -> Vec<(usize, usize)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset))
+        .collect()
+}
+
 /// `Layout/EndAlignment`: `[[end_start, end_end, matching, message, align_column], ...]`
 /// — `[end_start, end_end)` is the `end` keyword range; `matching` is the list
 /// of style ids the `end` already aligns with, in the path's hash order
@@ -600,7 +611,8 @@ fn register_bundle_config(
 /// 28 empty_lines_around_exception_handling_keywords /
 /// 29 block_delimiters / 30 abc_size / 31 indentation_consistency /
 /// 32 empty_line_between_defs / 33 end_alignment / 34 block_alignment /
-/// 35 else_alignment / 36 first_hash_element_indentation / 37 hash_alignment
+/// 35 else_alignment / 36 first_hash_element_indentation / 37 hash_alignment /
+/// 38 empty_lines_around_arguments
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -657,6 +669,9 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             r.first_hash_element_indentation,
         ))?;
         ary.push(map_hash_alignment(r.hash_alignment))?;
+        ary.push(map_empty_lines_around_arguments(
+            r.empty_lines_around_arguments,
+        ))?;
         Ok(ary)
     })
 }
@@ -1323,6 +1338,16 @@ fn check_empty_line_between_defs(
     )
 }
 
+/// Ruby entry point for `Layout/EmptyLinesAroundArguments` (no config). Returns
+/// the shape documented on `map_empty_lines_around_arguments`.
+fn check_empty_lines_around_arguments(source: RString) -> Vec<(usize, usize)> {
+    map_empty_lines_around_arguments(
+        shirobai_core::rules::empty_lines_around_arguments::check_empty_lines_around_arguments(
+            bytes(&source),
+        ),
+    )
+}
+
 /// Ruby entry point for `Layout/EndAlignment`. `style` is the
 /// `EnforcedStyleAlignWith` selector (0 = keyword, 1 = variable,
 /// 2 = start_of_line). Returns the shape documented on `map_end_alignment`.
@@ -1505,6 +1530,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_empty_line_between_defs",
         function!(check_empty_line_between_defs, 3),
+    )?;
+    module.define_module_function(
+        "check_empty_lines_around_arguments",
+        function!(check_empty_lines_around_arguments, 1),
     )?;
     module.define_module_function("check_end_alignment", function!(check_end_alignment, 2))?;
     module.define_module_function(

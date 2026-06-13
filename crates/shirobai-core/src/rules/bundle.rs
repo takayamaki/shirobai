@@ -11,7 +11,8 @@ use super::multiline_operation_indentation::{self as op, OperationIndentOffense}
 use super::{
     abc_size, argument_alignment, block_delimiters, block_length, block_nesting,
     closing_parenthesis_indentation, complexity, debugger, dot_position, empty_line_between_defs,
-    block_alignment, else_alignment, empty_lines_around_body, end_alignment,
+    block_alignment, else_alignment, empty_lines_around_arguments, empty_lines_around_body,
+    end_alignment,
     first_argument_indentation, first_array_element_indentation, first_hash_element_indentation,
     hash_alignment, hash_each_methods,
     indentation_consistency, indentation_width, line_end_concatenation, line_length,
@@ -346,6 +347,8 @@ pub struct BundleResult {
     pub void: Vec<void::VoidOffense>,
     pub useless_access_modifier: Vec<useless_access_modifier::UselessAccessModifierOffense>,
     pub empty_lines_around_body: empty_lines_around_body::FamilyOffenses,
+    pub empty_lines_around_arguments:
+        Vec<empty_lines_around_arguments::EmptyLinesAroundArgumentsOffense>,
     pub block_delimiters: block_delimiters::BlockDelimitersResult,
     pub abc_size: Vec<abc_size::AbcMethod>,
     pub indentation_consistency: Vec<indentation_consistency::ConsistencyOffense>,
@@ -444,6 +447,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         cfg.useless_access_modifier_active_support,
     );
     let mut elab_rule = empty_lines_around_body::build_rule(source, cfg.empty_lines_around_body);
+    let mut elaa_rule = empty_lines_around_arguments::build_rule(source);
     let mut bd_rule = block_delimiters::build_rule(source, cfg.block_delimiters.clone());
     let mut abc_rule = abc_size::build_rule(
         source,
@@ -485,6 +489,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut void_rule,
         &mut uam_rule,
         &mut elab_rule,
+        &mut elaa_rule,
         &mut bd_rule,
         &mut abc_rule,
         &mut ic_rule,
@@ -527,6 +532,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let void = void_rule.offenses;
     let useless_access_modifier = uam_rule.into_offenses();
     let empty_lines_around_body = elab_rule.into_offenses();
+    let empty_lines_around_arguments = elaa_rule.offenses;
     // The bundle runs with no prior ignored ranges (autocorrect re-passes
     // take the standalone path on the Ruby side).
     let block_delimiters = block_delimiters::resolve(bd_rule.events, &[]);
@@ -581,6 +587,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         void,
         useless_access_modifier,
         empty_lines_around_body,
+        empty_lines_around_arguments,
         block_delimiters,
         abc_size,
         indentation_consistency,
@@ -1679,6 +1686,30 @@ mod tests {
             assert_eq!(
                 (a.start_offset, a.end_offset, &a.message, a.insert, a.pos, a.n),
                 (b.start_offset, b.end_offset, &b.message, b.insert, b.pos, b.n)
+            );
+        }
+    }
+
+    /// `Layout/EmptyLinesAroundArguments` merged into the shared walk must
+    /// report exactly what its standalone entry point reports, over a source
+    /// exercising an empty line before an argument, between arguments and before
+    /// the closing parenthesis, plus a clean call that must stay silent.
+    #[test]
+    fn shared_walk_matches_standalone_empty_lines_around_arguments() {
+        let src = "foo(\n\n  bar\n)\nbaz(\n  a,\n\n  b\n\n)\nclean(\n  x,\n  y\n)\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::empty_lines_around_arguments::check_empty_lines_around_arguments(
+            src.as_bytes(),
+        );
+        assert!(alone.len() >= 3);
+        assert_eq!(bundle.empty_lines_around_arguments.len(), alone.len());
+        for (a, b) in bundle.empty_lines_around_arguments.iter().zip(&alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset),
+                (b.start_offset, b.end_offset)
             );
         }
     }

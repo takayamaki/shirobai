@@ -55,7 +55,8 @@ module Shirobai
       block_alignment: 34,
       else_alignment: 35,
       first_hash_element_indentation: 36,
-      hash_alignment: 37
+      hash_alignment: 37,
+      empty_lines_around_arguments: 38
     }.freeze
 
     class << self

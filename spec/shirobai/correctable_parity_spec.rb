@@ -165,6 +165,11 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Layout::EmptyLineBetweenDefs,
       "def a\nend\ndef b\nend\n"
     ],
+    "Layout/EmptyLinesAroundArguments" => [
+      RuboCop::Cop::Layout::EmptyLinesAroundArguments,
+      Shirobai::Cop::Layout::EmptyLinesAroundArguments,
+      "foo(\n\n  bar\n)\n"
+    ],
     "Layout/EndAlignment" => [
       RuboCop::Cop::Layout::EndAlignment,
       Shirobai::Cop::Layout::EndAlignment,

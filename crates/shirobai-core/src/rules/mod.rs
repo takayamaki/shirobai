@@ -11,6 +11,7 @@ pub mod debugger;
 pub mod dispatch;
 pub mod dot_position;
 pub mod empty_line_between_defs;
+pub mod empty_lines_around_arguments;
 pub mod empty_lines_around_body;
 pub mod else_alignment;
 pub mod end_alignment;

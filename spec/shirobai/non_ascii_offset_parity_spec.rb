@@ -149,6 +149,9 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # (the byte offset of the `\n` after `end`), all shifted by the multibyte
     # comment; the insert arm adds the missing empty line.
     "Layout/EmptyLineBetweenDefs" => "def a\nend\ndef b\nend\n",
+    # The offense line range (the whole empty line plus its `\n`), which is also
+    # the removal corrector range, shifted by the multibyte comment.
+    "Layout/EmptyLinesAroundArguments" => "foo(\n\n  bar\n)\n",
     # The `do` token range, the correction ops (delimiter replacements plus a
     # comment relocation with a multibyte comment text) and the cross-pass
     # ignored-range accumulation (the autocorrect loop's second pass must not
