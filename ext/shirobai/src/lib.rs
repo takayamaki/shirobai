@@ -390,6 +390,14 @@ fn map_indentation_width(
         .collect()
 }
 
+fn map_indentation_consistency(
+    v: Vec<shirobai_core::rules::indentation_consistency::ConsistencyOffense>,
+) -> Vec<(usize, usize, isize, bool)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.column_delta, o.autocorrect))
+        .collect()
+}
+
 /// `Style/BlockDelimiters` correction ops: `[kind, start, end, text]` —
 /// kind 0 = replace, 1 = remove, 2 = insert_before, 3 = insert_after,
 /// 4 = wrap in `begin\n` / `\nend` (text empty).
@@ -475,7 +483,7 @@ fn register_bundle_config(
 /// 25 empty_lines_around_module_body / 26 empty_lines_around_block_body /
 /// 27 empty_lines_around_begin_body /
 /// 28 empty_lines_around_exception_handling_keywords /
-/// 29 block_delimiters / 30 abc_size
+/// 29 block_delimiters / 30 abc_size / 31 indentation_consistency
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -486,7 +494,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(31);
+        let ary = ruby.ary_new_capa(32);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -523,6 +531,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_empty_lines(elab.exception_keywords))?;
         ary.push(map_block_delimiters(r.block_delimiters))?;
         ary.push(map_abc_size(r.abc_size))?;
+        ary.push(map_indentation_consistency(r.indentation_consistency))?;
         Ok(ary)
     })
 }
@@ -1067,6 +1076,25 @@ fn check_indentation_width(
     )
 }
 
+/// Ruby entry point for `Layout/IndentationConsistency` (the fallback path for
+/// autocorrect re-passes, when the bundle is not eligible). `internal` is true
+/// for the `indented_internal_methods` EnforcedStyle. Returns
+/// `[[start, end, column_delta, autocorrect], ...]`.
+fn check_indentation_consistency(
+    source: RString,
+    internal: bool,
+) -> Vec<(usize, usize, isize, bool)> {
+    let cfg = shirobai_core::rules::indentation_consistency::Config {
+        indented_internal_methods: internal,
+    };
+    map_indentation_consistency(
+        shirobai_core::rules::indentation_consistency::check_indentation_consistency(
+            bytes(&source),
+            cfg,
+        ),
+    )
+}
+
 /// Unpacks the `Style/BlockDelimiters` wire config: `nums` is
 /// `[style, allow_braces_on_procedural_oneliners]`, `lists` is
 /// `[procedural, functional, allowed, braces_required]` (the same shapes the
@@ -1208,6 +1236,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_first_argument_indentation",
         function!(check_first_argument_indentation, 4),
+    )?;
+    module.define_module_function(
+        "check_indentation_consistency",
+        function!(check_indentation_consistency, 2),
     )?;
     module.define_module_function(
         "check_indentation_width",

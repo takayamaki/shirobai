@@ -12,9 +12,9 @@ use super::{
     abc_size, argument_alignment, block_delimiters, block_length, block_nesting,
     closing_parenthesis_indentation, complexity, debugger, dot_position, empty_lines_around_body,
     first_argument_indentation, first_array_element_indentation, hash_each_methods,
-    indentation_width, line_end_concatenation, line_length, line_length_breakable, method_name,
-    predicate_prefix, redundant_self, safe_navigation_chain, useless_access_modifier,
-    variable_number, void,
+    indentation_consistency, indentation_width, line_end_concatenation, line_length,
+    line_length_breakable, method_name, predicate_prefix, redundant_self, safe_navigation_chain,
+    useless_access_modifier, variable_number, void,
 };
 
 /// Run `Layout/MultilineOperationIndentation` and
@@ -76,6 +76,7 @@ pub fn check_multiline_bundle(
 /// | 44  | block_delimiters_oneliners (`AllowBracesOnProceduralOneLiners`) |
 /// | 45  | abc_size_max_floor (`Metrics/AbcSize` `Max.floor`, prefilter; `-1` reports every method) |
 /// | 46  | abc_size_discount_repeated (`!CountRepeatedAttributes`) |
+/// | 47  | indentation_consistency_internal (`Layout/IndentationConsistency` EnforcedStyle == 'indented_internal_methods') |
 ///
 /// `lists` (`Vec<String>`), 16 entries:
 ///
@@ -151,9 +152,10 @@ pub struct BundleConfig {
     pub block_delimiters: block_delimiters::Config,
     pub abc_size_max_floor: i64,
     pub abc_size_discount_repeated: bool,
+    pub indentation_consistency: indentation_consistency::Config,
 }
 
-const NUMS_LEN: usize = 47;
+const NUMS_LEN: usize = 48;
 const LISTS_LEN: usize = 16;
 
 impl BundleConfig {
@@ -241,6 +243,9 @@ impl BundleConfig {
             },
             abc_size_max_floor: nums[45],
             abc_size_discount_repeated: nums[46] != 0,
+            indentation_consistency: indentation_consistency::Config {
+                indented_internal_methods: nums[47] != 0,
+            },
         })
     }
 }
@@ -275,6 +280,7 @@ pub struct BundleResult {
     pub empty_lines_around_body: empty_lines_around_body::FamilyOffenses,
     pub block_delimiters: block_delimiters::BlockDelimitersResult,
     pub abc_size: Vec<abc_size::AbcMethod>,
+    pub indentation_consistency: Vec<indentation_consistency::ConsistencyOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -369,6 +375,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         cfg.abc_size_max_floor,
         cfg.abc_size_discount_repeated,
     );
+    let mut ic_rule = indentation_consistency::build_rule(source, cfg.indentation_consistency);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -392,6 +399,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut elab_rule,
         &mut bd_rule,
         &mut abc_rule,
+        &mut ic_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -429,6 +437,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // take the standalone path on the Ruby side).
     let block_delimiters = block_delimiters::resolve(bd_rule.events, &[]);
     let abc_size = abc_rule.out;
+    let indentation_consistency = ic_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -474,6 +483,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         empty_lines_around_body,
         block_delimiters,
         abc_size,
+        indentation_consistency,
     }
 }
 
@@ -529,6 +539,7 @@ mod tests {
             0, 0, 0, // empty_lines_around_body class / module / block styles
             0, 0, // block_delimiters style / oneliners
             17, 0, // abc_size: max_floor (default Max 17) / discount_repeated
+            0,     // indentation_consistency: indented_internal_methods
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -1453,6 +1464,78 @@ mod tests {
         // Sanity: the canonical <3, 4, 5> vector from the vendor spec.
         let m = &bundle.abc_size[0];
         assert_eq!((m.assignments, m.branches, m.conditions), (3, 4, 5));
+    }
+
+    /// `Layout/IndentationConsistency` merged into the shared walk must report
+    /// exactly what its standalone entry point reports, over a source mixing a
+    /// misindented class member, a nested offense-within-offense (reported but
+    /// not corrected) and an access-modifier-based base column.
+    #[test]
+    fn shared_walk_matches_standalone_indentation_consistency() {
+        let src = "describe A do\n\
+                   \x20 render_views\n\
+                   \x20   describe B do\n\
+                   \x20           it C do\n\
+                   \x20           end\n\
+                   \x20       describe D do\n\
+                   \x20            before do\n\
+                   \x20           end\n\
+                   \x20       end\n\
+                   \x20   end\n\
+                   end\n\
+                   public\n\
+                   \n\
+                   \x20 def foo\n\
+                   \x20 end\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::indentation_consistency::check_indentation_consistency(
+            src.as_bytes(),
+            cfg.indentation_consistency,
+        );
+        assert!(alone.len() >= 3);
+        assert!(alone.iter().any(|o| !o.autocorrect));
+        assert_eq!(bundle.indentation_consistency.len(), alone.len());
+        for (a, b) in bundle.indentation_consistency.iter().zip(&alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.column_delta, a.autocorrect),
+                (b.start_offset, b.end_offset, b.column_delta, b.autocorrect)
+            );
+        }
+    }
+
+    /// `indented_internal_methods` style merged into the shared walk must match
+    /// the standalone entry (sections delimited by `private` / `protected`).
+    #[test]
+    fn shared_walk_matches_standalone_indentation_consistency_internal() {
+        let src = "class A\n\
+                   \x20 def pub\n\
+                   \x20 end\n\
+                   \x20 private\n\
+                   \x20   def priv\n\
+                   \x20   end\n\
+                   \x20  def priv2\n\
+                   \x20  end\n\
+                   end\n";
+        let (mut nums, lists) = default_packed();
+        nums[47] = 1; // indented_internal_methods
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::indentation_consistency::check_indentation_consistency(
+            src.as_bytes(),
+            cfg.indentation_consistency,
+        );
+        assert!(!alone.is_empty());
+        assert_eq!(bundle.indentation_consistency.len(), alone.len());
+        for (a, b) in bundle.indentation_consistency.iter().zip(&alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.column_delta, a.autocorrect),
+                (b.start_offset, b.end_offset, b.column_delta, b.autocorrect)
+            );
+        }
     }
 
     /// A disabled-by-config dispatch-family cop must stay disabled in the
