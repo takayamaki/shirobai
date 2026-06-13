@@ -136,6 +136,15 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Style::BlockDelimiters,
       Shirobai::Cop::Style::BlockDelimiters,
       "each do |x| end\ns.subspec 'Subspec' do |sp| end\n"
+    ],
+    # A pure metric cop: no autocorrect, so both stock and shirobai offenses
+    # must stay `:unsupported` (never correctable). Guards against the wrapper
+    # accidentally attaching a corrector block. The default `Max` is 17, so the
+    # body needs an ABC score above it (18 assignments => vector <18, 0, 0>).
+    "Metrics/AbcSize" => [
+      RuboCop::Cop::Metrics::AbcSize,
+      Shirobai::Cop::Metrics::AbcSize,
+      "def m\n#{(1..18).map { |i| "  v#{i} = #{i}" }.join("\n")}\nend\n"
     ]
   }
 

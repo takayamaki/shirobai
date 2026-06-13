@@ -70,6 +70,28 @@ fn map_complexity(
         .collect()
 }
 
+/// `Metrics/AbcSize` per-method results: `[start, end, head_end, name,
+/// assignments, branches, conditions]`. The Ruby side derives the float score,
+/// the `<a, b, c>` vector and the message (floats never cross the FFI).
+#[allow(clippy::type_complexity)]
+fn map_abc_size(
+    v: Vec<shirobai_core::rules::abc_size::AbcMethod>,
+) -> Vec<(usize, usize, usize, String, u64, u64, u64)> {
+    v.into_iter()
+        .map(|m| {
+            (
+                m.start_offset,
+                m.end_offset,
+                m.head_end,
+                m.method_name,
+                m.assignments,
+                m.branches,
+                m.conditions,
+            )
+        })
+        .collect()
+}
+
 #[allow(clippy::type_complexity)]
 fn map_variable_number(
     (offenses, had_correct): (
@@ -453,7 +475,7 @@ fn register_bundle_config(
 /// 25 empty_lines_around_module_body / 26 empty_lines_around_block_body /
 /// 27 empty_lines_around_begin_body /
 /// 28 empty_lines_around_exception_handling_keywords /
-/// 29 block_delimiters
+/// 29 block_delimiters / 30 abc_size
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -464,7 +486,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(30);
+        let ary = ruby.ary_new_capa(31);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -500,6 +522,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_empty_lines(elab.begin_body))?;
         ary.push(map_empty_lines(elab.exception_keywords))?;
         ary.push(map_block_delimiters(r.block_delimiters))?;
+        ary.push(map_abc_size(r.abc_size))?;
         Ok(ary)
     })
 }
@@ -579,6 +602,24 @@ fn check_complexity(
             max_perceived,
         ),
     )
+}
+
+/// Ruby entry point for `Metrics/AbcSize`. Reports one entry per method whose
+/// squared ABC vector exceeds `max_floor**2` (`max_floor` is the configured
+/// `Max.floor`; a negative value reports every method): `[[start, end,
+/// head_end, name, assignments, branches, conditions], ...]`. The Ruby side
+/// re-applies the exact `score > Max` filter and builds the message.
+#[allow(clippy::type_complexity)]
+fn check_abc_size(
+    source: RString,
+    max_floor: i64,
+    discount_repeated: bool,
+) -> Vec<(usize, usize, usize, String, u64, u64, u64)> {
+    map_abc_size(shirobai_core::rules::abc_size::check_abc_size(
+        bytes(&source),
+        max_floor,
+        discount_repeated,
+    ))
 }
 
 /// Ruby entry point for `Naming/VariableNumber`. Returns
@@ -1125,6 +1166,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function("check_debugger", function!(check_debugger, 3))?;
     module.define_module_function("check_block_length", function!(check_block_length, 6))?;
     module.define_module_function("check_complexity", function!(check_complexity, 3))?;
+    module.define_module_function("check_abc_size", function!(check_abc_size, 3))?;
     module.define_module_function("check_block_nesting", function!(check_block_nesting, 4))?;
     module.define_module_function("check_variable_number", function!(check_variable_number, 4))?;
     module.define_module_function(

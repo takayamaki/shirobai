@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use super::multiline_method_call_indentation::{self as mc, MethodCallIndentOffense};
 use super::multiline_operation_indentation::{self as op, OperationIndentOffense};
 use super::{
-    argument_alignment, block_delimiters, block_length, block_nesting,
+    abc_size, argument_alignment, block_delimiters, block_length, block_nesting,
     closing_parenthesis_indentation, complexity, debugger, dot_position, empty_lines_around_body,
     first_argument_indentation, first_array_element_indentation, hash_each_methods,
     indentation_width, line_end_concatenation, line_length, line_length_breakable, method_name,
@@ -74,6 +74,8 @@ pub fn check_multiline_bundle(
 /// | 40-42 | empty_lines_around_body class / module / block styles (`EmptyLinesAroundClassBody` / `...ModuleBody` / `...BlockBody` EnforcedStyle) |
 /// | 43  | block_delimiters_style (`EnforcedStyle`: 0 = line_count_based, 1 = semantic, 2 = braces_for_chaining, 3 = always_braces) |
 /// | 44  | block_delimiters_oneliners (`AllowBracesOnProceduralOneLiners`) |
+/// | 45  | abc_size_max_floor (`Metrics/AbcSize` `Max.floor`, prefilter; `-1` reports every method) |
+/// | 46  | abc_size_discount_repeated (`!CountRepeatedAttributes`) |
 ///
 /// `lists` (`Vec<String>`), 16 entries:
 ///
@@ -147,9 +149,11 @@ pub struct BundleConfig {
     pub useless_access_modifier_active_support: bool,
     pub empty_lines_around_body: empty_lines_around_body::Config,
     pub block_delimiters: block_delimiters::Config,
+    pub abc_size_max_floor: i64,
+    pub abc_size_discount_repeated: bool,
 }
 
-const NUMS_LEN: usize = 45;
+const NUMS_LEN: usize = 47;
 const LISTS_LEN: usize = 16;
 
 impl BundleConfig {
@@ -235,6 +239,8 @@ impl BundleConfig {
                 allowed_methods: next_list(),
                 braces_required_methods: next_list(),
             },
+            abc_size_max_floor: nums[45],
+            abc_size_discount_repeated: nums[46] != 0,
         })
     }
 }
@@ -268,6 +274,7 @@ pub struct BundleResult {
     pub useless_access_modifier: Vec<useless_access_modifier::UselessAccessModifierOffense>,
     pub empty_lines_around_body: empty_lines_around_body::FamilyOffenses,
     pub block_delimiters: block_delimiters::BlockDelimitersResult,
+    pub abc_size: Vec<abc_size::AbcMethod>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -357,6 +364,11 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     );
     let mut elab_rule = empty_lines_around_body::build_rule(source, cfg.empty_lines_around_body);
     let mut bd_rule = block_delimiters::build_rule(source, cfg.block_delimiters.clone());
+    let mut abc_rule = abc_size::build_rule(
+        source,
+        cfg.abc_size_max_floor,
+        cfg.abc_size_discount_repeated,
+    );
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -379,6 +391,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut uam_rule,
         &mut elab_rule,
         &mut bd_rule,
+        &mut abc_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -415,6 +428,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // The bundle runs with no prior ignored ranges (autocorrect re-passes
     // take the standalone path on the Ruby side).
     let block_delimiters = block_delimiters::resolve(bd_rule.events, &[]);
+    let abc_size = abc_rule.out;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -459,6 +473,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         useless_access_modifier,
         empty_lines_around_body,
         block_delimiters,
+        abc_size,
     }
 }
 
@@ -513,6 +528,7 @@ mod tests {
             0, // useless_access_modifier_active_support
             0, 0, 0, // empty_lines_around_body class / module / block styles
             0, 0, // block_delimiters style / oneliners
+            17, 0, // abc_size: max_floor (default Max 17) / discount_repeated
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -1398,6 +1414,45 @@ mod tests {
                 (b.token, b.block, &b.message, &b.method_name, &b.ops)
             );
         }
+    }
+
+    /// `Metrics/AbcSize` merged into the shared walk must report exactly what
+    /// its standalone entry point reports, over a method mixing assignments,
+    /// branches and conditions.
+    #[test]
+    fn shared_walk_matches_standalone_abc_size() {
+        let src = "def method_name\n\
+                   \x20 my_options = Hash.new if 1 == 1 || 2 == 2\n\
+                   \x20 my_options.each do |key, value|\n\
+                   \x20   p key\n\
+                   \x20   p value\n\
+                   \x20 end\n\
+                   end\n";
+        let (mut nums, lists) = default_packed();
+        nums[45] = 0; // report every method
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::abc_size::check_abc_size(
+            src.as_bytes(),
+            cfg.abc_size_max_floor,
+            cfg.abc_size_discount_repeated,
+        );
+        assert_eq!(bundle.abc_size.len(), alone.len());
+        assert!(!alone.is_empty());
+        for (a, b) in bundle.abc_size.iter().zip(&alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.head_end, &a.method_name),
+                (b.start_offset, b.end_offset, b.head_end, &b.method_name)
+            );
+            assert_eq!(
+                (a.assignments, a.branches, a.conditions),
+                (b.assignments, b.branches, b.conditions)
+            );
+        }
+        // Sanity: the canonical <3, 4, 5> vector from the vendor spec.
+        let m = &bundle.abc_size[0];
+        assert_eq!((m.assignments, m.branches, m.conditions), (3, 4, 5));
     }
 
     /// A disabled-by-config dispatch-family cop must stay disabled in the

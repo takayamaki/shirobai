@@ -116,6 +116,8 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     "Metrics/CyclomaticComplexity" => "def m\n#{(1..8).map { |i| "  x#{i} if c#{i}\n" }.join}end\n",
     # start/fin/head_end.
     "Metrics/PerceivedComplexity" => "def m\n#{(1..9).map { |i| "  x#{i} if c#{i}\n" }.join}end\n",
+    # start/fin/head_end (default Max 17, so 18 assignments => vector <18, 0, 0>).
+    "Metrics/AbcSize" => "def m\n#{(1..18).map { |i| "  v#{i} = #{i}\n" }.join}end\n",
     # start/fin (fb_start/fb_end are covered by the forbidden-identifier case below).
     "Naming/MethodName" => "def fooBar; end\n",
     # start/fin.

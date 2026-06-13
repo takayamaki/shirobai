@@ -47,7 +47,8 @@ module Shirobai
       empty_lines_around_block_body: 26,
       empty_lines_around_begin_body: 27,
       empty_lines_around_exception_handling_keywords: 28,
-      block_delimiters: 29
+      block_delimiters: 29,
+      abc_size: 30
     }.freeze
 
     class << self
@@ -106,6 +107,7 @@ module Shirobai
         elb_module = Cop::Layout::EmptyLinesAroundModuleBody.bundle_args(config)
         elb_block = Cop::Layout::EmptyLinesAroundBlockBody.bundle_args(config)
         bd = Cop::Style::BlockDelimiters.bundle_args(config)
+        abc = Cop::Metrics::AbcSize.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -125,7 +127,8 @@ module Shirobai
           num(vd[0]),                    # Void CheckForMethodsWithNoSideEffects
           num(uam[2]),                   # UselessAccessModifier ActiveSupportExtensionsEnabled
           elb_class[0], elb_module[0], elb_block[0], # EmptyLinesAround{Class,Module,Block}Body styles
-          *bd[0]                         # BlockDelimiters style / procedural-oneliners flag
+          *bd[0],                        # BlockDelimiters style / procedural-oneliners flag
+          abc[0], abc[1]                 # AbcSize max_floor / discount_repeated
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1]]

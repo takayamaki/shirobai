@@ -143,7 +143,7 @@ const ITERATING_METHODS: &[&[u8]] = &[
     b"transform_values!",
 ];
 
-fn is_iterating(name: &[u8]) -> bool {
+pub(crate) fn is_iterating(name: &[u8]) -> bool {
     ITERATING_METHODS.contains(&name)
 }
 
@@ -174,8 +174,11 @@ impl MethodFinder<'_> {
 }
 
 /// Returns `(name, body, head_end)` for a `define_method :name do ... end`
-/// block, mirroring RuboCop's `define_method?` matcher.
-fn define_method_info<'a>(call: &ruby_prism::CallNode<'a>) -> Option<(String, Node<'a>, usize)> {
+/// block, mirroring RuboCop's `define_method?` matcher. Shared with the
+/// `Metrics/AbcSize` finder (`abc_size.rs`).
+pub(crate) fn define_method_info<'a>(
+    call: &ruby_prism::CallNode<'a>,
+) -> Option<(String, Node<'a>, usize)> {
     if call.name().as_slice() != b"define_method" || call.receiver().is_some() {
         return None;
     }
