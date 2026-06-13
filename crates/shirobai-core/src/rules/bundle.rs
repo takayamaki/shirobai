@@ -17,7 +17,8 @@ use super::{
     hash_alignment, hash_each_methods, hash_syntax,
     indentation_consistency, indentation_width, line_end_concatenation, line_length,
     line_length_breakable, method_name, predicate_prefix, redundant_self, safe_navigation_chain,
-    space_around_keyword, space_around_method_call_operator, string_literals,
+    space_around_keyword, space_around_method_call_operator, space_inside_block_braces,
+    string_literals,
     string_literals_in_interpolation,
     trailing_comma_in_arguments, trailing_empty_lines, useless_access_modifier, variable_number,
     void,
@@ -97,6 +98,9 @@ pub fn check_multiline_bundle(
 /// | 72  | trailing_comma_in_arguments style (`EnforcedStyleForMultiline`: 0 no_comma, 1 comma, 2 consistent_comma, 3 diff_comma) |
 /// | 73  | string_literals_in_interpolation style (`EnforcedStyle`: 0 single_quotes, 1 double_quotes) |
 /// | 74  | trailing_empty_lines style (`EnforcedStyle`: 0 final_newline, 1 final_blank_line) |
+/// | 75  | space_inside_block_braces style (`EnforcedStyle`: 0 space, 1 no_space) |
+/// | 76  | space_inside_block_braces empty style (`EnforcedStyleForEmptyBraces`: 0 space, 1 no_space) |
+/// | 77  | space_inside_block_braces space_before_block_parameters (`SpaceBeforeBlockParameters`) |
 ///
 /// `lists` (`Vec<String>`), 19 entries:
 ///
@@ -190,9 +194,10 @@ pub struct BundleConfig {
     pub string_literals_in_interpolation: string_literals_in_interpolation::Config,
     pub trailing_comma_in_arguments: trailing_comma_in_arguments::Config,
     pub trailing_empty_lines: trailing_empty_lines::Config,
+    pub space_inside_block_braces: space_inside_block_braces::Config,
 }
 
-const NUMS_LEN: usize = 75;
+const NUMS_LEN: usize = 78;
 const LISTS_LEN: usize = 19;
 
 impl BundleConfig {
@@ -335,6 +340,19 @@ impl BundleConfig {
             trailing_empty_lines: trailing_empty_lines::Config {
                 style: nums[74] as u8,
             },
+            space_inside_block_braces: space_inside_block_braces::Config {
+                style: if nums[75] != 0 {
+                    space_inside_block_braces::Style::NoSpace
+                } else {
+                    space_inside_block_braces::Style::Space
+                },
+                empty_braces_style: if nums[76] != 0 {
+                    space_inside_block_braces::Style::NoSpace
+                } else {
+                    space_inside_block_braces::Style::Space
+                },
+                space_before_block_parameters: nums[77] != 0,
+            },
         })
     }
 }
@@ -404,6 +422,8 @@ pub struct BundleResult {
     pub space_around_method_call_operator:
         Vec<space_around_method_call_operator::SpaceAroundMethodCallOperatorOffense>,
     pub space_around_keyword: Vec<space_around_keyword::SpaceAroundKeywordOffense>,
+    pub space_inside_block_braces:
+        Vec<space_inside_block_braces::SpaceInsideBlockBracesOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -523,6 +543,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         trailing_comma_in_arguments::build_rule(source, &cfg.trailing_comma_in_arguments);
     let mut samco_rule = space_around_method_call_operator::build_rule(source);
     let mut sak_rule = space_around_keyword::build_rule(source);
+    let mut sibb_rule = space_inside_block_braces::build_rule(source, cfg.space_inside_block_braces);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -560,6 +581,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut tca_rule,
         &mut samco_rule,
         &mut sak_rule,
+        &mut sibb_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -611,6 +633,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let trailing_comma_in_arguments = tca_rule.offenses;
     let space_around_method_call_operator = samco_rule.offenses;
     let space_around_keyword = sak_rule.offenses;
+    let space_inside_block_braces = sibb_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -674,6 +697,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         trailing_empty_lines,
         space_around_method_call_operator,
         space_around_keyword,
+        space_inside_block_braces,
     }
 }
 
@@ -743,6 +767,7 @@ mod tests {
             0, // trailing_comma_in_arguments: style (no_comma)
             0, // string_literals_in_interpolation: style (single_quotes)
             0, // trailing_empty_lines: style (final_newline)
+            0, 1, 1, // space_inside_block_braces: style(space) / empty(no_space) / sbbp(true)
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -2162,6 +2187,51 @@ mod tests {
                 (a.start_offset, a.end_offset, a.before),
                 (b.start_offset, b.end_offset, b.before)
             );
+        }
+    }
+
+    /// `Layout/SpaceInsideBlockBraces` merged into the shared walk must report
+    /// exactly what its standalone entry point reports, across the style /
+    /// empty-style / space-before-params axes, over a source exercising a
+    /// space-missing block, a no-space inner, an empty `{}`, an empty `{ }`, a
+    /// `{|` pipe, a multi-line aligned block and a `do`/`end` block (ignored).
+    #[test]
+    fn shared_walk_matches_standalone_space_inside_block_braces() {
+        let src = "a.each {puts x}\n\
+                   b.each { puts x }\n\
+                   c.each {}\n\
+                   d.each { }\n\
+                   e.each {|n| n }\n\
+                   f.each { |a|\n  b\n}\n\
+                   g.each do |n| n end\n\
+                   h.each { [1] }\n";
+        for style in 0..=1u8 {
+            for empty in 0..=1u8 {
+                for sbbp in 0..=1u8 {
+                    let (mut nums, lists) = default_packed();
+                    nums[75] = style as i64;
+                    nums[76] = empty as i64;
+                    nums[77] = sbbp as i64;
+                    let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+                    let bundle = check_all_bundle(src.as_bytes(), &cfg);
+                    let alone = super::space_inside_block_braces::check_space_inside_block_braces(
+                        src.as_bytes(),
+                        cfg.space_inside_block_braces,
+                    );
+                    assert_eq!(
+                        bundle.space_inside_block_braces.len(),
+                        alone.len(),
+                        "len mismatch style={style} empty={empty} sbbp={sbbp}"
+                    );
+                    for (a, b) in bundle.space_inside_block_braces.iter().zip(&alone) {
+                        assert_eq!(
+                            (a.start_offset, a.end_offset, a.message.code()),
+                            (b.start_offset, b.end_offset, b.message.code()),
+                            "style={style} empty={empty} sbbp={sbbp}"
+                        );
+                    }
+                }
+            }
         }
     }
 

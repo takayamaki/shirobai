@@ -629,6 +629,20 @@ fn map_space_around_keyword(
         .collect()
 }
 
+/// `Layout/SpaceInsideBlockBraces`: `[[start, end, message_code], ...]` —
+/// `[start, end)` is the offense range stock reports (also the autocorrect
+/// target); `message_code` selects the fixed message / corrector action the
+/// Ruby wrapper reproduces from `range.source` (0 missing-inside-{, 1 inside-{
+/// detected, 2 missing-inside-}, 3 inside-} detected, 4 empty-space detected,
+/// 5 empty-space missing, 6 `{|` missing, 7 `{|` detected).
+fn map_space_inside_block_braces(
+    v: Vec<shirobai_core::rules::space_inside_block_braces::SpaceInsideBlockBracesOffense>,
+) -> Vec<(usize, usize, u8)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.message.code()))
+        .collect()
+}
+
 /// `Layout/EndAlignment`: `[[end_start, end_end, matching, message, align_column], ...]`
 /// — `[end_start, end_end)` is the `end` keyword range; `matching` is the list
 /// of style ids the `end` already aligns with, in the path's hash order
@@ -764,7 +778,7 @@ fn register_bundle_config(
 /// 38 empty_lines_around_arguments / 39 hash_syntax / 40 string_literals /
 /// 41 trailing_comma_in_arguments / 42 string_literals_in_interpolation /
 /// 43 trailing_empty_lines / 44 space_around_method_call_operator /
-/// 45 space_around_keyword
+/// 45 space_around_keyword / 46 space_inside_block_braces
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -775,7 +789,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(43);
+        let ary = ruby.ary_new_capa(47);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -837,6 +851,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             r.space_around_method_call_operator,
         ))?;
         ary.push(map_space_around_keyword(r.space_around_keyword))?;
+        ary.push(map_space_inside_block_braces(r.space_inside_block_braces))?;
         Ok(ary)
     })
 }
@@ -1627,6 +1642,32 @@ fn check_space_around_keyword(source: RString) -> Vec<(usize, usize, bool)> {
     )
 }
 
+/// Ruby entry point for `Layout/SpaceInsideBlockBraces` (fallback path; the
+/// bundle is the usual path). `style` / `empty_style` are 0 = space,
+/// 1 = no_space; `sbbp` is `SpaceBeforeBlockParameters`. Returns the shape
+/// documented on `map_space_inside_block_braces`.
+fn check_space_inside_block_braces(
+    source: RString,
+    style: u8,
+    empty_style: u8,
+    sbbp: bool,
+) -> Vec<(usize, usize, u8)> {
+    use shirobai_core::rules::space_inside_block_braces as sibb;
+    let to_style = |v: u8| {
+        if v != 0 {
+            sibb::Style::NoSpace
+        } else {
+            sibb::Style::Space
+        }
+    };
+    let cfg = sibb::Config {
+        style: to_style(style),
+        empty_braces_style: to_style(empty_style),
+        space_before_block_parameters: sbbp,
+    };
+    map_space_inside_block_braces(sibb::check_space_inside_block_braces(bytes(&source), cfg))
+}
+
 /// Ruby entry point for `Layout/EndAlignment`. `style` is the
 /// `EnforcedStyleAlignWith` selector (0 = keyword, 1 = variable,
 /// 2 = start_of_line). Returns the shape documented on `map_end_alignment`.
@@ -1821,6 +1862,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_space_around_keyword",
         function!(check_space_around_keyword, 1),
+    )?;
+    module.define_module_function(
+        "check_space_inside_block_braces",
+        function!(check_space_inside_block_braces, 4),
     )?;
     module.define_module_function("check_end_alignment", function!(check_end_alignment, 2))?;
     module.define_module_function(

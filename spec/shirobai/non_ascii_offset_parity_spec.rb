@@ -207,7 +207,12 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # comment, so their byte offsets are shifted ahead of the char offsets and
     # must be converted; the insert_before / insert_after corrector anchors at
     # the same range.
-    "Layout/SpaceAroundKeyword" => "x = 1 # あ\ncase a when\"\"; end\n"
+    "Layout/SpaceAroundKeyword" => "x = 1 # あ\ncase a when\"\"; end\n",
+    # The inner-brace offense ranges (the `insert_before` anchors after `{` and
+    # before `}`) sit after the multibyte comment and contain a multibyte inner
+    # body, so their byte offsets are shifted ahead of the char offsets and must
+    # be converted; both spaces are inserted under the default `space` style.
+    "Layout/SpaceInsideBlockBraces" => "foo.each {puts 日本語}\n"
   }
 
   cases.each do |cop_name, body|

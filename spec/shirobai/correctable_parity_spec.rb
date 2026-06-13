@@ -242,6 +242,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Layout::SpaceAroundKeyword,
       Shirobai::Cop::Layout::SpaceAroundKeyword,
       "if\"\"; end\n"
+    ],
+    # A block brace missing its inner spaces under the default `space` style:
+    # both offenses carry an `insert_before` corrector (correctable). Guards
+    # that the wrapper attaches the corrector block in lint mode like stock.
+    "Layout/SpaceInsideBlockBraces" => [
+      RuboCop::Cop::Layout::SpaceInsideBlockBraces,
+      Shirobai::Cop::Layout::SpaceInsideBlockBraces,
+      "foo.each {puts x}\n"
     ]
   }
 
