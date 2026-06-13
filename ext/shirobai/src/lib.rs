@@ -430,6 +430,18 @@ fn map_end_alignment(
         .collect()
 }
 
+/// `Layout/BlockAlignment`: `[[end_start, end_end, message, align_column], ...]`
+/// — `[end_start, end_end)` is the closing-token range (`end` / `}`);
+/// `message`/`align_column` carry the offense detail (only misaligned blocks
+/// are emitted).
+fn map_block_alignment(
+    v: Vec<shirobai_core::rules::block_alignment::BlockAlignmentOffense>,
+) -> Vec<(usize, usize, String, usize)> {
+    v.into_iter()
+        .map(|o| (o.end_start, o.end_end, o.message, o.align_column))
+        .collect()
+}
+
 /// `Style/BlockDelimiters` correction ops: `[kind, start, end, text]` —
 /// kind 0 = replace, 1 = remove, 2 = insert_before, 3 = insert_after,
 /// 4 = wrap in `begin\n` / `\nend` (text empty).
@@ -516,7 +528,7 @@ fn register_bundle_config(
 /// 27 empty_lines_around_begin_body /
 /// 28 empty_lines_around_exception_handling_keywords /
 /// 29 block_delimiters / 30 abc_size / 31 indentation_consistency /
-/// 32 empty_line_between_defs / 33 end_alignment
+/// 32 empty_line_between_defs / 33 end_alignment / 34 block_alignment
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -527,7 +539,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(34);
+        let ary = ruby.ary_new_capa(35);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -567,6 +579,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_indentation_consistency(r.indentation_consistency))?;
         ary.push(map_empty_line_between_defs(r.empty_line_between_defs))?;
         ary.push(map_end_alignment(r.end_alignment))?;
+        ary.push(map_block_alignment(r.block_alignment))?;
         Ok(ary)
     })
 }
@@ -1167,6 +1180,17 @@ fn check_end_alignment(source: RString, style: u8) -> Vec<(usize, usize, Vec<u8>
     ))
 }
 
+/// Ruby entry point for `Layout/BlockAlignment`. `style` is the
+/// `EnforcedStyleAlignWith` selector (0 = either, 1 = start_of_block,
+/// 2 = start_of_line). Returns the shape documented on `map_block_alignment`.
+fn check_block_alignment(source: RString, style: u8) -> Vec<(usize, usize, String, usize)> {
+    let cfg = shirobai_core::rules::block_alignment::Config { style };
+    map_block_alignment(shirobai_core::rules::block_alignment::check_block_alignment(
+        bytes(&source),
+        cfg,
+    ))
+}
+
 /// Unpacks the `Style/BlockDelimiters` wire config: `nums` is
 /// `[style, allow_braces_on_procedural_oneliners]`, `lists` is
 /// `[procedural, functional, allowed, braces_required]` (the same shapes the
@@ -1318,6 +1342,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         function!(check_empty_line_between_defs, 3),
     )?;
     module.define_module_function("check_end_alignment", function!(check_end_alignment, 2))?;
+    module.define_module_function(
+        "check_block_alignment",
+        function!(check_block_alignment, 2),
+    )?;
     module.define_module_function(
         "check_indentation_width",
         function!(check_indentation_width, 4),

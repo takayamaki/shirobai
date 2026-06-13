@@ -11,7 +11,7 @@ use super::multiline_operation_indentation::{self as op, OperationIndentOffense}
 use super::{
     abc_size, argument_alignment, block_delimiters, block_length, block_nesting,
     closing_parenthesis_indentation, complexity, debugger, dot_position, empty_line_between_defs,
-    empty_lines_around_body, end_alignment,
+    block_alignment, empty_lines_around_body, end_alignment,
     first_argument_indentation, first_array_element_indentation, hash_each_methods,
     indentation_consistency, indentation_width, line_end_concatenation, line_length,
     line_length_breakable, method_name, predicate_prefix, redundant_self, safe_navigation_chain,
@@ -82,6 +82,7 @@ pub fn check_multiline_bundle(
 /// | 51  | empty_line_between_defs_allow_adjacent_one_line_defs (`AllowAdjacentOneLineDefs`) |
 /// | 52-53 | empty_line_between_defs min / max empty lines (`NumberOfEmptyLines` as `[min, max]`) |
 /// | 54  | end_alignment style (`EnforcedStyleAlignWith`: 0 = keyword, 1 = variable, 2 = start_of_line) |
+/// | 55  | block_alignment style (`EnforcedStyleAlignWith`: 0 = either, 1 = start_of_block, 2 = start_of_line) |
 ///
 /// `lists` (`Vec<String>`), 17 entries:
 ///
@@ -161,9 +162,10 @@ pub struct BundleConfig {
     pub indentation_consistency: indentation_consistency::Config,
     pub empty_line_between_defs: empty_line_between_defs::Config,
     pub end_alignment: end_alignment::Config,
+    pub block_alignment: block_alignment::Config,
 }
 
-const NUMS_LEN: usize = 55;
+const NUMS_LEN: usize = 56;
 const LISTS_LEN: usize = 17;
 
 impl BundleConfig {
@@ -266,6 +268,9 @@ impl BundleConfig {
             end_alignment: end_alignment::Config {
                 style: nums[54] as u8,
             },
+            block_alignment: block_alignment::Config {
+                style: nums[55] as u8,
+            },
         })
     }
 }
@@ -303,6 +308,7 @@ pub struct BundleResult {
     pub indentation_consistency: Vec<indentation_consistency::ConsistencyOffense>,
     pub empty_line_between_defs: Vec<empty_line_between_defs::EmptyLineBetweenDefsOffense>,
     pub end_alignment: Vec<end_alignment::EndAlignmentRecord>,
+    pub block_alignment: Vec<block_alignment::BlockAlignmentOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -401,6 +407,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut elbd_rule =
         empty_line_between_defs::build_rule(source, cfg.empty_line_between_defs.clone());
     let mut ea_rule = end_alignment::build_rule(source, cfg.end_alignment);
+    let mut ba_rule = block_alignment::build_rule(source, cfg.block_alignment);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -427,6 +434,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut ic_rule,
         &mut elbd_rule,
         &mut ea_rule,
+        &mut ba_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -467,6 +475,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let indentation_consistency = ic_rule.offenses;
     let empty_line_between_defs = elbd_rule.offenses;
     let end_alignment = ea_rule.records;
+    let block_alignment = ba_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -515,6 +524,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         indentation_consistency,
         empty_line_between_defs,
         end_alignment,
+        block_alignment,
     }
 }
 
@@ -575,6 +585,7 @@ mod tests {
             1, // empty_line_between_defs: allow_adjacent_one_line_defs (default true)
             1, 1, // empty_line_between_defs: min / max empty lines
             0, // end_alignment: style (keyword)
+            0, // block_alignment: style (either)
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -1623,6 +1634,30 @@ mod tests {
                 assert_eq!(
                     (a.end_start, a.end_end, &a.matching, ao),
                     (b.end_start, b.end_end, &b.matching, bo)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shared_walk_matches_standalone_block_alignment() {
+        let src = "variable = test do |a|\n  end\nrb += files.select do |f|\n  x\n  end\ntest {\n  }\n";
+        for style in 0..=2u8 {
+            let (mut nums, lists) = default_packed();
+            nums[55] = style as i64;
+            let cfg = BundleConfig::from_packed(&nums, lists.clone()).unwrap();
+            let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+            let alone = super::block_alignment::check_block_alignment(
+                src.as_bytes(),
+                cfg.block_alignment,
+            );
+            assert!(!alone.is_empty());
+            assert_eq!(bundle.block_alignment.len(), alone.len());
+            for (a, b) in bundle.block_alignment.iter().zip(&alone) {
+                assert_eq!(
+                    (a.end_start, a.end_end, &a.message, a.align_column),
+                    (b.end_start, b.end_end, &b.message, b.align_column)
                 );
             }
         }
