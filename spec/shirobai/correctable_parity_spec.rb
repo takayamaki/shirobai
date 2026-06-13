@@ -189,6 +189,11 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Layout::HashAlignment,
       Shirobai::Cop::Layout::HashAlignment,
       "h = {\n  a: 0,\n   bb: 1\n}\n"
+    ],
+    "Style/HashSyntax" => [
+      RuboCop::Cop::Style::HashSyntax,
+      Shirobai::Cop::Style::HashSyntax,
+      "h = { :a => 0, :b => 1 }\n"
     ]
   }
 

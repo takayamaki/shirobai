@@ -20,6 +20,7 @@ pub mod first_array_element_indentation;
 pub mod first_hash_element_indentation;
 pub mod hash_alignment;
 pub mod hash_each_methods;
+pub mod hash_syntax;
 pub mod indentation_consistency;
 pub mod indentation_width;
 pub mod line_end_concatenation;

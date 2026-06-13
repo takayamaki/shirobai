@@ -173,7 +173,11 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # The offending pair node range plus the per-part key/separator/value
     # ranges Rust hands the wrapper for `insert_before` / `remove`, all shifted
     # by the multibyte comment; the misaligned key is de-indented to alignment.
-    "Layout/HashAlignment" => "h = {\n  a: 0,\n   bb: 1\n}\n"
+    "Layout/HashAlignment" => "h = {\n  a: 0,\n   bb: 1\n}\n",
+    # The offending pair range plus every corrector op offset (key replace,
+    # surrounding-space remove) handed to the wrapper, all shifted by the
+    # multibyte comment; each rocket pair is rewritten to ruby19 syntax.
+    "Style/HashSyntax" => "h = { :a => 0, :b => 1 }\n"
   }
 
   cases.each do |cop_name, body|

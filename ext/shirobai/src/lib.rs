@@ -346,6 +346,41 @@ fn map_hash_alignment(
         .collect()
 }
 
+/// `Style/HashSyntax` correction ops: `[kind, start, end, text]` —
+/// 0 replace / 1 remove / 2 insert_before / 3 insert_after.
+type HashSyntaxOps = Vec<(u8, usize, usize, String)>;
+
+/// Maps each `Style/HashSyntax` walk record to
+/// `[is_offense, start, end, message, detect, [[kind, s, e, text], ...]]`.
+/// `message` selects the offense text (0 ruby19 / 1 hash_rockets /
+/// 2 no_mixed_keys / 3 omit / 4 explicit / 5 do_not_mix_omit /
+/// 6 do_not_mix_explicit); `detect` is the stock detection side effect the
+/// wrapper replays (0 opposite_style / 1 correct_style / 2 disabled / 3 none).
+/// When `is_offense` is false the record is a pure `correct_style_detected`
+/// marker (no caret, no ops).
+#[allow(clippy::type_complexity)]
+fn map_hash_syntax(
+    v: Vec<shirobai_core::rules::hash_syntax::HashSyntaxOffense>,
+) -> Vec<(bool, usize, usize, u8, u8, HashSyntaxOps)> {
+    use shirobai_core::rules::hash_syntax::Detect;
+    v.into_iter()
+        .map(|o| {
+            let detect = match o.detect {
+                Detect::OppositeStyle => 0u8,
+                Detect::CorrectStyle => 1u8,
+                Detect::Disabled => 2u8,
+                Detect::None => 3u8,
+            };
+            let ops = o
+                .ops
+                .into_iter()
+                .map(|op| (op.kind, op.start, op.end, op.text))
+                .collect();
+            (o.is_offense, o.start_offset, o.end_offset, o.message, detect, ops)
+        })
+        .collect()
+}
+
 #[allow(clippy::type_complexity)]
 fn map_hash_each_methods(
     v: Vec<shirobai_core::rules::hash_each_methods::HashEachOffense>,
@@ -612,7 +647,7 @@ fn register_bundle_config(
 /// 29 block_delimiters / 30 abc_size / 31 indentation_consistency /
 /// 32 empty_line_between_defs / 33 end_alignment / 34 block_alignment /
 /// 35 else_alignment / 36 first_hash_element_indentation / 37 hash_alignment /
-/// 38 empty_lines_around_arguments
+/// 38 empty_lines_around_arguments / 39 hash_syntax
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -623,7 +658,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(38);
+        let ary = ruby.ary_new_capa(40);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -672,6 +707,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_empty_lines_around_arguments(
             r.empty_lines_around_arguments,
         ))?;
+        ary.push(map_hash_syntax(r.hash_syntax))?;
         Ok(ary)
     })
 }
@@ -1149,6 +1185,34 @@ fn check_hash_alignment(
     ))
 }
 
+/// Unpacks the `Style/HashSyntax` wire config from packed nums.
+/// `[style, shorthand, use_hash_rockets_with_symbol_values,
+///   prefer_hash_rockets_for_non_alnum_ending_symbols, ruby31_plus, ruby22_plus]`.
+fn hash_syntax_config(nums: &[i64]) -> shirobai_core::rules::hash_syntax::Config {
+    shirobai_core::rules::hash_syntax::Config {
+        style: nums[0] as u8,
+        shorthand: nums[1] as u8,
+        use_hash_rockets_with_symbol_values: nums[2] != 0,
+        prefer_hash_rockets_for_non_alnum_ending_symbols: nums[3] != 0,
+        ruby31_plus: nums[4] != 0,
+        ruby22_plus: nums[5] != 0,
+    }
+}
+
+/// Ruby entry point for `Style/HashSyntax`. Takes the source and the packed
+/// config nums (see `hash_syntax_config`). Returns one entry per offending pair
+/// (see `map_hash_syntax`).
+fn check_hash_syntax(
+    source: RString,
+    nums: Vec<i64>,
+) -> Vec<(bool, usize, usize, u8, u8, HashSyntaxOps)> {
+    let cfg = hash_syntax_config(&nums);
+    map_hash_syntax(shirobai_core::rules::hash_syntax::check_hash_syntax(
+        bytes(&source),
+        &cfg,
+    ))
+}
+
 /// Ruby entry point for `Style/HashEachMethods`. Takes the source and the
 /// `AllowedReceivers` list (matched by receiver source name, like the
 /// `AllowedReceivers` mixin). Returns one entry per offense: `[[start, end,
@@ -1576,6 +1640,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         "check_hash_each_methods",
         function!(check_hash_each_methods, 2),
     )?;
+    module.define_module_function("check_hash_syntax", function!(check_hash_syntax, 2))?;
     module.define_module_function("check_void", function!(check_void, 2))?;
     module.define_module_function(
         "check_empty_lines_around_body",
