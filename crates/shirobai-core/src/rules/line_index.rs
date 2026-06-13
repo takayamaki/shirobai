@@ -42,6 +42,13 @@ impl LineIndex {
         LineIndex { line_starts }
     }
 
+    /// Sorted byte offsets of every line start (`[0]` is always `0`); the
+    /// `k`-th entry is the offset just past the `k`-th `\n`. `line_starts[i]`
+    /// is the start of 1-based line `i + 1`.
+    pub fn line_starts(&self) -> &[usize] {
+        &self.line_starts
+    }
+
     /// 1-based line number of `off`.
     ///
     /// Equal to the number of `\n` bytes in `source[..off]` plus one. We count

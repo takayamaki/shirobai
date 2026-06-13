@@ -154,6 +154,11 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Metrics::AbcSize,
       Shirobai::Cop::Metrics::AbcSize,
       "def m\n#{(1..18).map { |i| "  v#{i} = #{i}" }.join("\n")}\nend\n"
+    ],
+    "Layout/EmptyLineBetweenDefs" => [
+      RuboCop::Cop::Layout::EmptyLineBetweenDefs,
+      Shirobai::Cop::Layout::EmptyLineBetweenDefs,
+      "def a\nend\ndef b\nend\n"
     ]
   }
 

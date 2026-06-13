@@ -9,6 +9,7 @@ pub mod complexity;
 pub mod debugger;
 pub mod dispatch;
 pub mod dot_position;
+pub mod empty_line_between_defs;
 pub mod empty_lines_around_body;
 pub mod first_argument_indentation;
 pub mod first_array_element_indentation;

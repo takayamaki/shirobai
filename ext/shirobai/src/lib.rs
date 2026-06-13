@@ -398,6 +398,18 @@ fn map_indentation_consistency(
         .collect()
 }
 
+/// `Layout/EmptyLineBetweenDefs`: `[[start, end, message, insert, pos, n], ...]`
+/// — `[start, end)` is the second member's `def_location`; `insert` selects the
+/// corrector arm (`true` = insert `"\n" * n` after `range_between(pos, pos+1)`,
+/// `false` = remove `range_between(pos, pos + n)`).
+fn map_empty_line_between_defs(
+    v: Vec<shirobai_core::rules::empty_line_between_defs::EmptyLineBetweenDefsOffense>,
+) -> Vec<(usize, usize, String, bool, usize, usize)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.message, o.insert, o.pos, o.n))
+        .collect()
+}
+
 /// `Style/BlockDelimiters` correction ops: `[kind, start, end, text]` —
 /// kind 0 = replace, 1 = remove, 2 = insert_before, 3 = insert_after,
 /// 4 = wrap in `begin\n` / `\nend` (text empty).
@@ -483,7 +495,8 @@ fn register_bundle_config(
 /// 25 empty_lines_around_module_body / 26 empty_lines_around_block_body /
 /// 27 empty_lines_around_begin_body /
 /// 28 empty_lines_around_exception_handling_keywords /
-/// 29 block_delimiters / 30 abc_size / 31 indentation_consistency
+/// 29 block_delimiters / 30 abc_size / 31 indentation_consistency /
+/// 32 empty_line_between_defs
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -532,6 +545,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_block_delimiters(r.block_delimiters))?;
         ary.push(map_abc_size(r.abc_size))?;
         ary.push(map_indentation_consistency(r.indentation_consistency))?;
+        ary.push(map_empty_line_between_defs(r.empty_line_between_defs))?;
         Ok(ary)
     })
 }
@@ -1095,6 +1109,32 @@ fn check_indentation_consistency(
     )
 }
 
+/// Ruby entry point for `Layout/EmptyLineBetweenDefs`. `nums` is
+/// `[method_defs, class_defs, module_defs, allow_adjacent_one_line_defs,
+/// minimum_empty_lines, maximum_empty_lines]`, `lists` is `[def_like_macros]`.
+/// Returns the shape documented on `map_empty_line_between_defs`.
+fn check_empty_line_between_defs(
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Vec<(usize, usize, String, bool, usize, usize)> {
+    let cfg = shirobai_core::rules::empty_line_between_defs::Config {
+        method_defs: nums.first().copied().unwrap_or(0) != 0,
+        class_defs: nums.get(1).copied().unwrap_or(0) != 0,
+        module_defs: nums.get(2).copied().unwrap_or(0) != 0,
+        allow_adjacent_one_line_defs: nums.get(3).copied().unwrap_or(0) != 0,
+        minimum_empty_lines: nums.get(4).copied().unwrap_or(1) as usize,
+        maximum_empty_lines: nums.get(5).copied().unwrap_or(1) as usize,
+        def_like_macros: lists.into_iter().next().unwrap_or_default(),
+    };
+    map_empty_line_between_defs(
+        shirobai_core::rules::empty_line_between_defs::check_empty_line_between_defs(
+            bytes(&source),
+            cfg,
+        ),
+    )
+}
+
 /// Unpacks the `Style/BlockDelimiters` wire config: `nums` is
 /// `[style, allow_braces_on_procedural_oneliners]`, `lists` is
 /// `[procedural, functional, allowed, braces_required]` (the same shapes the
@@ -1240,6 +1280,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_indentation_consistency",
         function!(check_indentation_consistency, 2),
+    )?;
+    module.define_module_function(
+        "check_empty_line_between_defs",
+        function!(check_empty_line_between_defs, 3),
     )?;
     module.define_module_function(
         "check_indentation_width",

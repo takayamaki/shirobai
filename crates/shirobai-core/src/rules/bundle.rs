@@ -10,7 +10,8 @@ use super::multiline_method_call_indentation::{self as mc, MethodCallIndentOffen
 use super::multiline_operation_indentation::{self as op, OperationIndentOffense};
 use super::{
     abc_size, argument_alignment, block_delimiters, block_length, block_nesting,
-    closing_parenthesis_indentation, complexity, debugger, dot_position, empty_lines_around_body,
+    closing_parenthesis_indentation, complexity, debugger, dot_position, empty_line_between_defs,
+    empty_lines_around_body,
     first_argument_indentation, first_array_element_indentation, hash_each_methods,
     indentation_consistency, indentation_width, line_end_concatenation, line_length,
     line_length_breakable, method_name, predicate_prefix, redundant_self, safe_navigation_chain,
@@ -77,8 +78,11 @@ pub fn check_multiline_bundle(
 /// | 45  | abc_size_max_floor (`Metrics/AbcSize` `Max.floor`, prefilter; `-1` reports every method) |
 /// | 46  | abc_size_discount_repeated (`!CountRepeatedAttributes`) |
 /// | 47  | indentation_consistency_internal (`Layout/IndentationConsistency` EnforcedStyle == 'indented_internal_methods') |
+/// | 48-50 | empty_line_between_defs method / class / module defs (`EmptyLineBetweenMethodDefs` / `...ClassDefs` / `...ModuleDefs`) |
+/// | 51  | empty_line_between_defs_allow_adjacent_one_line_defs (`AllowAdjacentOneLineDefs`) |
+/// | 52-53 | empty_line_between_defs min / max empty lines (`NumberOfEmptyLines` as `[min, max]`) |
 ///
-/// `lists` (`Vec<String>`), 16 entries:
+/// `lists` (`Vec<String>`), 17 entries:
 ///
 /// | idx | field |
 /// |-----|-------|
@@ -98,6 +102,7 @@ pub fn check_multiline_bundle(
 /// | 13  | block_delimiters_functional (`FunctionalMethods`) |
 /// | 14  | block_delimiters_allowed (`AllowedMethods`, deprecated lists merged) |
 /// | 15  | block_delimiters_braces_required (`BracesRequiredMethods`) |
+/// | 16  | empty_line_between_defs_def_like_macros (`DefLikeMacros`, verbatim names) |
 ///
 /// `Layout/IndentationWidth`'s `allowed_lines` and `prior_ranges` are fixed to
 /// empty in the bundle: the non-empty cases (configured `AllowedPatterns`,
@@ -153,10 +158,11 @@ pub struct BundleConfig {
     pub abc_size_max_floor: i64,
     pub abc_size_discount_repeated: bool,
     pub indentation_consistency: indentation_consistency::Config,
+    pub empty_line_between_defs: empty_line_between_defs::Config,
 }
 
-const NUMS_LEN: usize = 48;
-const LISTS_LEN: usize = 16;
+const NUMS_LEN: usize = 54;
+const LISTS_LEN: usize = 17;
 
 impl BundleConfig {
     /// Build a config from the flat wire format (see the struct docs for the
@@ -246,6 +252,15 @@ impl BundleConfig {
             indentation_consistency: indentation_consistency::Config {
                 indented_internal_methods: nums[47] != 0,
             },
+            empty_line_between_defs: empty_line_between_defs::Config {
+                method_defs: nums[48] != 0,
+                class_defs: nums[49] != 0,
+                module_defs: nums[50] != 0,
+                allow_adjacent_one_line_defs: nums[51] != 0,
+                minimum_empty_lines: nums[52] as usize,
+                maximum_empty_lines: nums[53] as usize,
+                def_like_macros: next_list(),
+            },
         })
     }
 }
@@ -281,6 +296,7 @@ pub struct BundleResult {
     pub block_delimiters: block_delimiters::BlockDelimitersResult,
     pub abc_size: Vec<abc_size::AbcMethod>,
     pub indentation_consistency: Vec<indentation_consistency::ConsistencyOffense>,
+    pub empty_line_between_defs: Vec<empty_line_between_defs::EmptyLineBetweenDefsOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -376,6 +392,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         cfg.abc_size_discount_repeated,
     );
     let mut ic_rule = indentation_consistency::build_rule(source, cfg.indentation_consistency);
+    let mut elbd_rule =
+        empty_line_between_defs::build_rule(source, cfg.empty_line_between_defs.clone());
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -400,6 +418,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut bd_rule,
         &mut abc_rule,
         &mut ic_rule,
+        &mut elbd_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -438,6 +457,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let block_delimiters = block_delimiters::resolve(bd_rule.events, &[]);
     let abc_size = abc_rule.out;
     let indentation_consistency = ic_rule.offenses;
+    let empty_line_between_defs = elbd_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -484,6 +504,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         block_delimiters,
         abc_size,
         indentation_consistency,
+        empty_line_between_defs,
     }
 }
 
@@ -540,6 +561,9 @@ mod tests {
             0, 0, // block_delimiters style / oneliners
             17, 0, // abc_size: max_floor (default Max 17) / discount_repeated
             0,     // indentation_consistency: indented_internal_methods
+            1, 1, 1, // empty_line_between_defs: method / class / module defs
+            1, // empty_line_between_defs: allow_adjacent_one_line_defs (default true)
+            1, 1, // empty_line_between_defs: min / max empty lines
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -562,6 +586,7 @@ mod tests {
             vec![],
             ["lambda", "proc", "it"].map(String::from).to_vec(),
             vec![],
+            vec![], // empty_line_between_defs: def_like_macros
         ];
         (nums, lists)
     }
@@ -1534,6 +1559,34 @@ mod tests {
             assert_eq!(
                 (a.start_offset, a.end_offset, a.column_delta, a.autocorrect),
                 (b.start_offset, b.end_offset, b.column_delta, b.autocorrect)
+            );
+        }
+    }
+
+    /// `Layout/EmptyLineBetweenDefs` merged into the shared walk must report
+    /// exactly what its standalone entry point reports, over a source exercising
+    /// adjacent method defs (insert), too-many-lines (remove), a class/module
+    /// pair and a nested-begin def pair.
+    #[test]
+    fn shared_walk_matches_standalone_empty_line_between_defs() {
+        let src = "def a\nend\ndef b\nend\n\n\n\ndef c; end\nclass Foo\nend\nmodule Baz\nend\nif x\n  def d\n  end\n  def e\n  end\nend\n";
+        let (mut nums, lists) = default_packed();
+        nums[51] = 0; // allow_adjacent_one_line_defs = false
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::empty_line_between_defs::check_empty_line_between_defs(
+            src.as_bytes(),
+            cfg.empty_line_between_defs.clone(),
+        );
+        assert!(alone.len() >= 4);
+        assert!(alone.iter().any(|o| o.insert));
+        assert!(alone.iter().any(|o| !o.insert));
+        assert_eq!(bundle.empty_line_between_defs.len(), alone.len());
+        for (a, b) in bundle.empty_line_between_defs.iter().zip(&alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, &a.message, a.insert, a.pos, a.n),
+                (b.start_offset, b.end_offset, &b.message, b.insert, b.pos, b.n)
             );
         }
     }

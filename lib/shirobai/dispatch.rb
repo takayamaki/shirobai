@@ -49,7 +49,8 @@ module Shirobai
       empty_lines_around_exception_handling_keywords: 28,
       block_delimiters: 29,
       abc_size: 30,
-      indentation_consistency: 31
+      indentation_consistency: 31,
+      empty_line_between_defs: 32
     }.freeze
 
     class << self
@@ -110,6 +111,7 @@ module Shirobai
         bd = Cop::Style::BlockDelimiters.bundle_args(config)
         abc = Cop::Metrics::AbcSize.bundle_args(config)
         ic = Cop::Layout::IndentationConsistency.bundle_args(config)
+        elbd = Cop::Layout::EmptyLineBetweenDefs.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -131,10 +133,11 @@ module Shirobai
           elb_class[0], elb_module[0], elb_block[0], # EmptyLinesAround{Class,Module,Block}Body styles
           *bd[0],                        # BlockDelimiters style / procedural-oneliners flag
           abc[0], abc[1],                # AbcSize max_floor / discount_repeated
-          ic[0]                          # IndentationConsistency indented_internal_methods
+          ic[0],                         # IndentationConsistency indented_internal_methods
+          *elbd[0]                        # EmptyLineBetweenDefs method/class/module/adjacent/min/max
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
-                 uam[0], uam[1], *bd[1]]
+                 uam[0], uam[1], *bd[1], elbd[1]]
         [nums, lists]
       end
 
