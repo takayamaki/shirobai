@@ -17,7 +17,7 @@ use super::{
     hash_alignment, hash_each_methods, hash_syntax,
     indentation_consistency, indentation_width, line_end_concatenation, line_length,
     line_length_breakable, method_name, predicate_prefix, redundant_self, safe_navigation_chain,
-    useless_access_modifier, variable_number, void,
+    string_literals, useless_access_modifier, variable_number, void,
 };
 
 /// Run `Layout/MultilineOperationIndentation` and
@@ -90,6 +90,7 @@ pub fn check_multiline_bundle(
 /// | 62  | hash_alignment last_argument_style (`EnforcedLastArgumentHashStyle`: 0 always_inspect, 1 always_ignore, 2 ignore_explicit, 3 ignore_implicit) |
 /// | 63  | hash_alignment enforce_fixed (`Layout/ArgumentAlignment` `with_fixed_indentation`) |
 /// | 64-69 | hash_syntax style / shorthand / UseHashRocketsWithSymbolValues / PreferHashRocketsForNonAlnumEndingSymbols / ruby31_plus (`TargetRubyVersion > 3.0`) / ruby22_plus (`TargetRubyVersion > 2.1`) |
+/// | 70-71 | string_literals style (`EnforcedStyle`: 0 single_quotes, 1 double_quotes) / consistent_multiline (`ConsistentQuotesInMultiline`) |
 ///
 /// `lists` (`Vec<String>`), 19 entries:
 ///
@@ -179,9 +180,10 @@ pub struct BundleConfig {
     pub first_hash_element_separators: first_hash_element_indentation::SeparatorConfig,
     pub hash_alignment: hash_alignment::Config,
     pub hash_syntax: hash_syntax::Config,
+    pub string_literals: string_literals::Config,
 }
 
-const NUMS_LEN: usize = 70;
+const NUMS_LEN: usize = 72;
 const LISTS_LEN: usize = 19;
 
 impl BundleConfig {
@@ -311,6 +313,10 @@ impl BundleConfig {
                 ruby31_plus: nums[68] != 0,
                 ruby22_plus: nums[69] != 0,
             },
+            string_literals: string_literals::Config {
+                style: nums[70] as u8,
+                consistent_multiline: nums[71] != 0,
+            },
         })
     }
 }
@@ -370,6 +376,7 @@ pub struct BundleResult {
         Vec<first_hash_element_indentation::FirstHashElemIndentOffense>,
     pub hash_alignment: Vec<hash_alignment::HashAlignmentOffense>,
     pub hash_syntax: Vec<hash_syntax::HashSyntaxOffense>,
+    pub string_literals: Vec<string_literals::StringLiteralsOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -480,6 +487,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     );
     let mut ha_rule = hash_alignment::build_rule(source, &cfg.hash_alignment);
     let mut hs_rule = hash_syntax::build_rule(source, &cfg.hash_syntax);
+    let mut sl_rule = string_literals::build_rule(source, &cfg.string_literals);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -512,6 +520,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut fhe_rule,
         &mut ha_rule,
         &mut hs_rule,
+        &mut sl_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -558,6 +567,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let first_hash_element_indentation = fhe_rule.offenses;
     let hash_alignment = ha_rule.offenses;
     let hash_syntax = hs_rule.offenses;
+    let string_literals = sl_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -612,6 +622,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         first_hash_element_indentation,
         hash_alignment,
         hash_syntax,
+        string_literals,
     }
 }
 
@@ -677,6 +688,7 @@ mod tests {
             0, 2, 0, 0, 0, // first_hash_element: style / indent / enforce / colon_sep / rocket_sep
             0, 0, // hash_alignment: last_argument_style (always_inspect) / enforce_fixed
             0, 2, 0, 0, 1, 1, // hash_syntax: style(ruby19) / shorthand(either) / urswsv / prfnaes / ruby31 / ruby22
+            0, 0, // string_literals: style(single_quotes) / consistent_multiline
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -1927,6 +1939,45 @@ mod tests {
                         (a.is_offense, a.start_offset, a.end_offset, a.message),
                         (b.is_offense, b.start_offset, b.end_offset, b.message),
                         "style={style} short={short}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shared_walk_matches_standalone_string_literals() {
+        let src = "a = \"plain\"\n\
+                   b = 'ok'\n\
+                   c = \"with 'apostrophe'\"\n\
+                   d = \"interp #{x}\"\n\
+                   e = \"x #{ 'inner' } y\"\n\
+                   f = 'a' \\\n'b'\n\
+                   g = \"a\" \\\n\"b\"\n\
+                   h = 'a' \\\n\"b\"\n\
+                   i = %(percent)\n\
+                   j = \"newline \\n here\"\n";
+        for style in 0..=1u8 {
+            for consistent in 0..=1i64 {
+                let (mut nums, lists) = default_packed();
+                nums[70] = style as i64;
+                nums[71] = consistent;
+                let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+                let bundle = check_all_bundle(src.as_bytes(), &cfg);
+                let alone = super::string_literals::check_string_literals(
+                    src.as_bytes(),
+                    &cfg.string_literals,
+                );
+                assert_eq!(
+                    bundle.string_literals.len(),
+                    alone.len(),
+                    "len mismatch style={style} consistent={consistent}"
+                );
+                for (a, b) in bundle.string_literals.iter().zip(&alone) {
+                    assert_eq!(
+                        (a.is_offense, a.start_offset, a.end_offset, a.message, a.fix, &a.content),
+                        (b.is_offense, b.start_offset, b.end_offset, b.message, b.fix, &b.content),
+                        "style={style} consistent={consistent}"
                     );
                 }
             }

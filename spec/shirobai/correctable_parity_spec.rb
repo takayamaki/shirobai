@@ -194,6 +194,15 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Style::HashSyntax,
       Shirobai::Cop::Style::HashSyntax,
       "h = { :a => 0, :b => 1 }\n"
+    ],
+    # A double-quoted string under the default single_quotes style: the offense
+    # carries a corrector (correctable), and the unaffected single-quoted string
+    # emits no offense. Guards that the wrapper attaches the corrector block in
+    # lint mode like stock.
+    "Style/StringLiterals" => [
+      RuboCop::Cop::Style::StringLiterals,
+      Shirobai::Cop::Style::StringLiterals,
+      "a = \"double\"\nb = 'single'\n"
     ]
   }
 

@@ -381,6 +381,32 @@ fn map_hash_syntax(
         .collect()
 }
 
+/// `Style/StringLiterals` records. Each entry is `[is_offense, start, end,
+/// message, detect, fix, content]`. `message` selects the text (0 prefer single
+/// / 1 prefer double / 2 inconsistent); `detect` is the replayed detection side
+/// effect (0 opposite_style / 1 correct_style / 3 none); `fix` is the
+/// autocorrect kind (0 single -> `to_string_literal(content)`, 1 double ->
+/// `content.inspect`, 2 none). When `is_offense` is false the record is a pure
+/// `correct_style_detected` marker.
+#[allow(clippy::type_complexity)]
+fn map_string_literals(
+    v: Vec<shirobai_core::rules::string_literals::StringLiteralsOffense>,
+) -> Vec<(bool, usize, usize, u8, u8, u8, String)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.is_offense,
+                o.start_offset,
+                o.end_offset,
+                o.message,
+                o.detect,
+                o.fix,
+                o.content,
+            )
+        })
+        .collect()
+}
+
 #[allow(clippy::type_complexity)]
 fn map_hash_each_methods(
     v: Vec<shirobai_core::rules::hash_each_methods::HashEachOffense>,
@@ -647,7 +673,7 @@ fn register_bundle_config(
 /// 29 block_delimiters / 30 abc_size / 31 indentation_consistency /
 /// 32 empty_line_between_defs / 33 end_alignment / 34 block_alignment /
 /// 35 else_alignment / 36 first_hash_element_indentation / 37 hash_alignment /
-/// 38 empty_lines_around_arguments / 39 hash_syntax
+/// 38 empty_lines_around_arguments / 39 hash_syntax / 40 string_literals
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -708,6 +734,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             r.empty_lines_around_arguments,
         ))?;
         ary.push(map_hash_syntax(r.hash_syntax))?;
+        ary.push(map_string_literals(r.string_literals))?;
         Ok(ary)
     })
 }
@@ -1213,6 +1240,23 @@ fn check_hash_syntax(
     ))
 }
 
+/// Ruby entry point for `Style/StringLiterals`. Takes the source and the packed
+/// config nums (`[style, consistent_multiline]`). Returns one entry per record
+/// (see `map_string_literals`).
+fn check_string_literals(
+    source: RString,
+    nums: Vec<i64>,
+) -> Vec<(bool, usize, usize, u8, u8, u8, String)> {
+    let cfg = shirobai_core::rules::string_literals::Config {
+        style: nums[0] as u8,
+        consistent_multiline: nums[1] != 0,
+    };
+    map_string_literals(shirobai_core::rules::string_literals::check_string_literals(
+        bytes(&source),
+        &cfg,
+    ))
+}
+
 /// Ruby entry point for `Style/HashEachMethods`. Takes the source and the
 /// `AllowedReceivers` list (matched by receiver source name, like the
 /// `AllowedReceivers` mixin). Returns one entry per offense: `[[start, end,
@@ -1641,6 +1685,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         function!(check_hash_each_methods, 2),
     )?;
     module.define_module_function("check_hash_syntax", function!(check_hash_syntax, 2))?;
+    module.define_module_function(
+        "check_string_literals",
+        function!(check_string_literals, 2),
+    )?;
     module.define_module_function("check_void", function!(check_void, 2))?;
     module.define_module_function(
         "check_empty_lines_around_body",

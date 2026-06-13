@@ -177,7 +177,13 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # The offending pair range plus every corrector op offset (key replace,
     # surrounding-space remove) handed to the wrapper, all shifted by the
     # multibyte comment; each rocket pair is rewritten to ruby19 syntax.
-    "Style/HashSyntax" => "h = { :a => 0, :b => 1 }\n"
+    "Style/HashSyntax" => "h = { :a => 0, :b => 1 }\n",
+    # The offending string node range plus the autocorrect replacement, all
+    # shifted by the multibyte comment. The string *content* is itself
+    # multibyte, so the wrapper's `to_string_literal` on the decoded content
+    # must round-trip the UTF-8 bytes (double quotes -> single under the default
+    # single_quotes style).
+    "Style/StringLiterals" => "x = \"日本語の文字列\"\n"
   }
 
   cases.each do |cop_name, body|
