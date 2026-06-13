@@ -407,6 +407,18 @@ fn map_string_literals(
         .collect()
 }
 
+/// `Style/TrailingCommaInArguments` records. Each entry is `[start, end,
+/// message, fix]`. `message` selects the text (0 avoid/no_comma, 1 avoid/comma,
+/// 2 avoid/consistent_comma, 3 avoid/diff_comma, 4 put); `fix` is the corrector
+/// op (0 avoid -> remove the comma, 1 put -> insert a comma after the range).
+fn map_trailing_comma_in_arguments(
+    v: Vec<shirobai_core::rules::trailing_comma_in_arguments::TrailingCommaInArgumentsOffense>,
+) -> Vec<(usize, usize, u8, u8)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.message, o.fix))
+        .collect()
+}
+
 #[allow(clippy::type_complexity)]
 fn map_hash_each_methods(
     v: Vec<shirobai_core::rules::hash_each_methods::HashEachOffense>,
@@ -673,7 +685,8 @@ fn register_bundle_config(
 /// 29 block_delimiters / 30 abc_size / 31 indentation_consistency /
 /// 32 empty_line_between_defs / 33 end_alignment / 34 block_alignment /
 /// 35 else_alignment / 36 first_hash_element_indentation / 37 hash_alignment /
-/// 38 empty_lines_around_arguments / 39 hash_syntax / 40 string_literals
+/// 38 empty_lines_around_arguments / 39 hash_syntax / 40 string_literals /
+/// 41 trailing_comma_in_arguments
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -684,7 +697,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(40);
+        let ary = ruby.ary_new_capa(42);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -735,6 +748,9 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ))?;
         ary.push(map_hash_syntax(r.hash_syntax))?;
         ary.push(map_string_literals(r.string_literals))?;
+        ary.push(map_trailing_comma_in_arguments(
+            r.trailing_comma_in_arguments,
+        ))?;
         Ok(ary)
     })
 }
@@ -1257,6 +1273,24 @@ fn check_string_literals(
     ))
 }
 
+/// Ruby entry point for `Style/TrailingCommaInArguments`. Takes the source and
+/// the packed config nums (`[style]`). Returns one entry per record (see
+/// `map_trailing_comma_in_arguments`).
+fn check_trailing_comma_in_arguments(
+    source: RString,
+    nums: Vec<i64>,
+) -> Vec<(usize, usize, u8, u8)> {
+    let cfg = shirobai_core::rules::trailing_comma_in_arguments::Config {
+        style: nums[0] as u8,
+    };
+    map_trailing_comma_in_arguments(
+        shirobai_core::rules::trailing_comma_in_arguments::check_trailing_comma_in_arguments(
+            bytes(&source),
+            &cfg,
+        ),
+    )
+}
+
 /// Ruby entry point for `Style/HashEachMethods`. Takes the source and the
 /// `AllowedReceivers` list (matched by receiver source name, like the
 /// `AllowedReceivers` mixin). Returns one entry per offense: `[[start, end,
@@ -1688,6 +1722,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_string_literals",
         function!(check_string_literals, 2),
+    )?;
+    module.define_module_function(
+        "check_trailing_comma_in_arguments",
+        function!(check_trailing_comma_in_arguments, 2),
     )?;
     module.define_module_function("check_void", function!(check_void, 2))?;
     module.define_module_function(

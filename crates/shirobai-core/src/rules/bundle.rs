@@ -17,7 +17,7 @@ use super::{
     hash_alignment, hash_each_methods, hash_syntax,
     indentation_consistency, indentation_width, line_end_concatenation, line_length,
     line_length_breakable, method_name, predicate_prefix, redundant_self, safe_navigation_chain,
-    string_literals, useless_access_modifier, variable_number, void,
+    string_literals, trailing_comma_in_arguments, useless_access_modifier, variable_number, void,
 };
 
 /// Run `Layout/MultilineOperationIndentation` and
@@ -91,6 +91,7 @@ pub fn check_multiline_bundle(
 /// | 63  | hash_alignment enforce_fixed (`Layout/ArgumentAlignment` `with_fixed_indentation`) |
 /// | 64-69 | hash_syntax style / shorthand / UseHashRocketsWithSymbolValues / PreferHashRocketsForNonAlnumEndingSymbols / ruby31_plus (`TargetRubyVersion > 3.0`) / ruby22_plus (`TargetRubyVersion > 2.1`) |
 /// | 70-71 | string_literals style (`EnforcedStyle`: 0 single_quotes, 1 double_quotes) / consistent_multiline (`ConsistentQuotesInMultiline`) |
+/// | 72  | trailing_comma_in_arguments style (`EnforcedStyleForMultiline`: 0 no_comma, 1 comma, 2 consistent_comma, 3 diff_comma) |
 ///
 /// `lists` (`Vec<String>`), 19 entries:
 ///
@@ -181,9 +182,10 @@ pub struct BundleConfig {
     pub hash_alignment: hash_alignment::Config,
     pub hash_syntax: hash_syntax::Config,
     pub string_literals: string_literals::Config,
+    pub trailing_comma_in_arguments: trailing_comma_in_arguments::Config,
 }
 
-const NUMS_LEN: usize = 72;
+const NUMS_LEN: usize = 73;
 const LISTS_LEN: usize = 19;
 
 impl BundleConfig {
@@ -317,6 +319,9 @@ impl BundleConfig {
                 style: nums[70] as u8,
                 consistent_multiline: nums[71] != 0,
             },
+            trailing_comma_in_arguments: trailing_comma_in_arguments::Config {
+                style: nums[72] as u8,
+            },
         })
     }
 }
@@ -377,6 +382,8 @@ pub struct BundleResult {
     pub hash_alignment: Vec<hash_alignment::HashAlignmentOffense>,
     pub hash_syntax: Vec<hash_syntax::HashSyntaxOffense>,
     pub string_literals: Vec<string_literals::StringLiteralsOffense>,
+    pub trailing_comma_in_arguments:
+        Vec<trailing_comma_in_arguments::TrailingCommaInArgumentsOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -488,6 +495,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut ha_rule = hash_alignment::build_rule(source, &cfg.hash_alignment);
     let mut hs_rule = hash_syntax::build_rule(source, &cfg.hash_syntax);
     let mut sl_rule = string_literals::build_rule(source, &cfg.string_literals);
+    let mut tca_rule =
+        trailing_comma_in_arguments::build_rule(source, &cfg.trailing_comma_in_arguments);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -521,6 +530,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut ha_rule,
         &mut hs_rule,
         &mut sl_rule,
+        &mut tca_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -568,6 +578,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let hash_alignment = ha_rule.offenses;
     let hash_syntax = hs_rule.offenses;
     let string_literals = sl_rule.offenses;
+    let trailing_comma_in_arguments = tca_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -623,6 +634,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         hash_alignment,
         hash_syntax,
         string_literals,
+        trailing_comma_in_arguments,
     }
 }
 
@@ -689,6 +701,7 @@ mod tests {
             0, 0, // hash_alignment: last_argument_style (always_inspect) / enforce_fixed
             0, 2, 0, 0, 1, 1, // hash_syntax: style(ruby19) / shorthand(either) / urswsv / prfnaes / ruby31 / ruby22
             0, 0, // string_literals: style(single_quotes) / consistent_multiline
+            0, // trailing_comma_in_arguments: style (no_comma)
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -1980,6 +1993,43 @@ mod tests {
                         "style={style} consistent={consistent}"
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn shared_walk_matches_standalone_trailing_comma_in_arguments() {
+        let src = "some_method(a, b, c,)\n\
+                   object[1, 2,]\n\
+                   func.(1, 2,)\n\
+                   obj&.foo(a, b,)\n\
+                   m(\n  a,\n  b,\n  c: 0,\n  d: 1,\n)\n\
+                   n(\n  a,\n  b\n)\n\
+                   p(a: 1,\n  c: 2,)\n\
+                   q(\n  a,\n  &block\n)\n\
+                   route(1, <<-HELP.chomp\n...\nHELP\n)\n\
+                   single(arg)\n\
+                   r(\n  a, b,\n  c,\n)\n";
+        for style in 0..=3u8 {
+            let (mut nums, lists) = default_packed();
+            nums[72] = style as i64;
+            let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+            let bundle = check_all_bundle(src.as_bytes(), &cfg);
+            let alone = super::trailing_comma_in_arguments::check_trailing_comma_in_arguments(
+                src.as_bytes(),
+                &cfg.trailing_comma_in_arguments,
+            );
+            assert_eq!(
+                bundle.trailing_comma_in_arguments.len(),
+                alone.len(),
+                "len mismatch style={style}"
+            );
+            for (a, b) in bundle.trailing_comma_in_arguments.iter().zip(&alone) {
+                assert_eq!(
+                    (a.start_offset, a.end_offset, a.message, a.fix),
+                    (b.start_offset, b.end_offset, b.message, b.fix),
+                    "style={style}"
+                );
             }
         }
     }

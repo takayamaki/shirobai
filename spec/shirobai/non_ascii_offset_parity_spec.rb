@@ -183,7 +183,11 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # multibyte, so the wrapper's `to_string_literal` on the decoded content
     # must round-trip the UTF-8 bytes (double quotes -> single under the default
     # single_quotes style).
-    "Style/StringLiterals" => "x = \"日本語の文字列\"\n"
+    "Style/StringLiterals" => "x = \"日本語の文字列\"\n",
+    # The trailing-comma offense (default `no_comma`) carries an `avoid_comma`
+    # caret range and a removal corrector; both offsets sit after the multibyte
+    # comment, so the byte->char conversion must shift them.
+    "Style/TrailingCommaInArguments" => "some_method(あ, い,)\n"
   }
 
   cases.each do |cop_name, body|

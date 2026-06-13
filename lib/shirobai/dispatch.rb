@@ -58,7 +58,8 @@ module Shirobai
       hash_alignment: 37,
       empty_lines_around_arguments: 38,
       hash_syntax: 39,
-      string_literals: 40
+      string_literals: 40,
+      trailing_comma_in_arguments: 41
     }.freeze
 
     class << self
@@ -127,6 +128,7 @@ module Shirobai
         ha = Cop::Layout::HashAlignment.bundle_args(config)
         hs = Cop::Style::HashSyntax.bundle_args(config)
         sl = Cop::Style::StringLiterals.bundle_args(config)
+        tca = Cop::Style::TrailingCommaInArguments.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -156,7 +158,8 @@ module Shirobai
           fhe[0], fhe[1], num(fhe[2]), num(fhe[3]), num(fhe[4]), # FirstHashElementIndentation style / indent / enforce / colon-sep / rocket-sep
           ha[2], num(ha[3]), # HashAlignment EnforcedLastArgumentHashStyle code / enforce_fixed
           *hs[0], # HashSyntax style / shorthand / urswsv / prfnaes / ruby31 / ruby22 (6 nums)
-          *sl[0] # StringLiterals style / consistent_multiline (2 nums)
+          *sl[0], # StringLiterals style / consistent_multiline (2 nums)
+          *tca[0] # TrailingCommaInArguments style (1 num)
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1]]

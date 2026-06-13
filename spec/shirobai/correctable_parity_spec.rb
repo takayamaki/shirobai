@@ -203,6 +203,13 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Style::StringLiterals,
       Shirobai::Cop::Style::StringLiterals,
       "a = \"double\"\nb = 'single'\n"
+    ],
+    # Default style is `no_comma`: the single-line trailing comma is an
+    # `avoid_comma` offense whose corrector removes the comma.
+    "Style/TrailingCommaInArguments" => [
+      RuboCop::Cop::Style::TrailingCommaInArguments,
+      Shirobai::Cop::Style::TrailingCommaInArguments,
+      "some_method(a, b, c,)\n"
     ]
   }
 
