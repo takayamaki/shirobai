@@ -13,6 +13,8 @@ require_relative "../vendor/rubocop/spec/support/misc_helper"
 require_relative "../vendor/rubocop/spec/core_ext/string"
 # Shared examples used by the EmptyLinesAround{Class,Module}Body specs.
 require_relative "../vendor/rubocop/spec/support/empty_lines_around_body_shared_examples"
+# Shared examples (`aligned` / `misaligned`) used by the EndAlignment spec.
+require_relative "../vendor/rubocop/spec/support/alignment_examples"
 
 RSpec.configure do |config|
   config.expect_with :rspec do |expectations|

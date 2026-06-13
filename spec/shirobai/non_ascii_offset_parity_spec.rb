@@ -152,7 +152,11 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # ignored-range accumulation (the autocorrect loop's second pass must not
     # resurrect the nested block suppressed by the first offense).
     "Style/BlockDelimiters" =>
-      "foo {\n  bar do |x| x end\n} # マルチバイト末尾コメント\neach do |y| end\n"
+      "foo {\n  bar do |x| x end\n} # マルチバイト末尾コメント\neach do |y| end\n",
+    # The `end` keyword range and the autocorrect whitespace range (`end`'s
+    # column run) plus the alignment column, all shifted by the multibyte
+    # comment; the replace arm re-indents `end` to the keyword column.
+    "Layout/EndAlignment" => "var = if test\nend\n"
   }
 
   cases.each do |cop_name, body|
