@@ -287,6 +287,25 @@ fn map_first_array_element_indentation(
         .collect()
 }
 
+/// Maps to `[start, end, column_delta, message, correct_target]` where
+/// `correct_target` is `-1` for a right brace (plain range correction), `0`
+/// when the first pair's value begins after its key (correct the key's line
+/// only), and `1` otherwise (correct the whole pair node).
+fn map_first_hash_element_indentation(
+    v: Vec<shirobai_core::rules::first_hash_element_indentation::FirstHashElemIndentOffense>,
+) -> Vec<(usize, usize, isize, String, i64)> {
+    v.into_iter()
+        .map(|o| {
+            let target = match o.correct_whole_pair {
+                None => -1,
+                Some(false) => 0,
+                Some(true) => 1,
+            };
+            (o.start_offset, o.end_offset, o.column_delta, o.message, target)
+        })
+        .collect()
+}
+
 #[allow(clippy::type_complexity)]
 fn map_hash_each_methods(
     v: Vec<shirobai_core::rules::hash_each_methods::HashEachOffense>,
@@ -541,7 +560,7 @@ fn register_bundle_config(
 /// 28 empty_lines_around_exception_handling_keywords /
 /// 29 block_delimiters / 30 abc_size / 31 indentation_consistency /
 /// 32 empty_line_between_defs / 33 end_alignment / 34 block_alignment /
-/// 35 else_alignment
+/// 35 else_alignment / 36 first_hash_element_indentation
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -552,7 +571,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(36);
+        let ary = ruby.ary_new_capa(37);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -594,6 +613,9 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_end_alignment(r.end_alignment))?;
         ary.push(map_block_alignment(r.block_alignment))?;
         ary.push(map_else_alignment(r.else_alignment))?;
+        ary.push(map_first_hash_element_indentation(
+            r.first_hash_element_indentation,
+        ))?;
         Ok(ary)
     })
 }
@@ -990,6 +1012,36 @@ fn check_first_array_element_indentation(
             style,
             indent_width,
             enforce_fixed_indentation,
+        ),
+    )
+}
+
+/// Ruby entry point for `Layout/FirstHashElementIndentation`. Takes the
+/// source, the enforced style (0=special_inside_parentheses, 1=consistent,
+/// 2=align_braces), the configured indentation width, whether
+/// `Layout/ArgumentAlignment` enforces `with_fixed_indentation` (which only
+/// suppresses the paren claim, never the cop), and the two
+/// `Layout/HashAlignment` separator flags (colon / hash-rocket). Returns one
+/// entry per misindented first pair or hanging right brace: `[[start, end,
+/// column_delta, message, correct_target], ...]`.
+fn check_first_hash_element_indentation(
+    source: RString,
+    style: u8,
+    indent_width: usize,
+    enforce_fixed_indentation: bool,
+    colon_separator: bool,
+    rocket_separator: bool,
+) -> Vec<(usize, usize, isize, String, i64)> {
+    map_first_hash_element_indentation(
+        shirobai_core::rules::first_hash_element_indentation::check_first_hash_element_indentation(
+            bytes(&source),
+            style,
+            indent_width,
+            enforce_fixed_indentation,
+            shirobai_core::rules::first_hash_element_indentation::SeparatorConfig {
+                colon_separator,
+                rocket_separator,
+            },
         ),
     )
 }
@@ -1394,6 +1446,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_first_array_element_indentation",
         function!(check_first_array_element_indentation, 4),
+    )?;
+    module.define_module_function(
+        "check_first_hash_element_indentation",
+        function!(check_first_hash_element_indentation, 6),
     )?;
     module.define_module_function(
         "check_hash_each_methods",

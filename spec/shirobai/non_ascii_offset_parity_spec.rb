@@ -88,6 +88,8 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     "Layout/FirstArgumentIndentation" => "run(\n:foo)\n",
     # first element and hanging `]` ranges + node-resolved realignment.
     "Layout/FirstArrayElementIndentation" => "a << [\n 1\n  ]\n",
+    # first pair and hanging `}` ranges + node-resolved / key-line realignment.
+    "Layout/FirstHashElementIndentation" => "a << {\n a: 1\n  }\n",
     # start/fin (the offending child node range) + the node-resolved
     # AlignmentCorrector realignment by column_delta.
     "Layout/IndentationConsistency" => "def m\n  a\n   b\nend\n",

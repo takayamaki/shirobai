@@ -73,6 +73,11 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Layout::FirstArrayElementIndentation,
       "a << [\n 1\n  ]\n"
     ],
+    "Layout/FirstHashElementIndentation" => [
+      RuboCop::Cop::Layout::FirstHashElementIndentation,
+      Shirobai::Cop::Layout::FirstHashElementIndentation,
+      "a << {\n a: 1\n  }\n"
+    ],
     # A nested offense-within-offense: the inner block's misindentation is
     # reported but stays correctable-without-correction (`within?` the outer
     # range) while the outer one carries a corrector. Both statuses must match
