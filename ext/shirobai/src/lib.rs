@@ -407,6 +407,32 @@ fn map_string_literals(
         .collect()
 }
 
+/// `Style/StringLiteralsInInterpolation` records. Each entry is `[is_offense,
+/// start, end, detect, fix, content]`. `detect` is the replayed detection side
+/// effect (0 opposite_style / 1 correct_style); `fix` is the autocorrect kind
+/// (0 single -> `to_string_literal(content)`, 1 double -> `content.inspect`).
+/// When `is_offense` is false the record is a pure `correct_style_detected`
+/// marker.
+#[allow(clippy::type_complexity)]
+fn map_string_literals_in_interpolation(
+    v: Vec<
+        shirobai_core::rules::string_literals_in_interpolation::StringLiteralsInInterpolationOffense,
+    >,
+) -> Vec<(bool, usize, usize, u8, u8, String)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.is_offense,
+                o.start_offset,
+                o.end_offset,
+                o.detect,
+                o.fix,
+                o.content,
+            )
+        })
+        .collect()
+}
+
 /// `Style/TrailingCommaInArguments` records. Each entry is `[start, end,
 /// message, fix]`. `message` selects the text (0 avoid/no_comma, 1 avoid/comma,
 /// 2 avoid/consistent_comma, 3 avoid/diff_comma, 4 put); `fix` is the corrector
@@ -686,7 +712,7 @@ fn register_bundle_config(
 /// 32 empty_line_between_defs / 33 end_alignment / 34 block_alignment /
 /// 35 else_alignment / 36 first_hash_element_indentation / 37 hash_alignment /
 /// 38 empty_lines_around_arguments / 39 hash_syntax / 40 string_literals /
-/// 41 trailing_comma_in_arguments
+/// 41 trailing_comma_in_arguments / 42 string_literals_in_interpolation
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -750,6 +776,9 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_string_literals(r.string_literals))?;
         ary.push(map_trailing_comma_in_arguments(
             r.trailing_comma_in_arguments,
+        ))?;
+        ary.push(map_string_literals_in_interpolation(
+            r.string_literals_in_interpolation,
         ))?;
         Ok(ary)
     })
@@ -1273,6 +1302,24 @@ fn check_string_literals(
     ))
 }
 
+/// Ruby entry point for `Style/StringLiteralsInInterpolation`. Takes the source
+/// and the packed config nums (`[style]`). Returns one entry per record (see
+/// `map_string_literals_in_interpolation`).
+fn check_string_literals_in_interpolation(
+    source: RString,
+    nums: Vec<i64>,
+) -> Vec<(bool, usize, usize, u8, u8, String)> {
+    let cfg = shirobai_core::rules::string_literals_in_interpolation::Config {
+        style: nums[0] as u8,
+    };
+    map_string_literals_in_interpolation(
+        shirobai_core::rules::string_literals_in_interpolation::check_string_literals_in_interpolation(
+            bytes(&source),
+            &cfg,
+        ),
+    )
+}
+
 /// Ruby entry point for `Style/TrailingCommaInArguments`. Takes the source and
 /// the packed config nums (`[style]`). Returns one entry per record (see
 /// `map_trailing_comma_in_arguments`).
@@ -1722,6 +1769,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_string_literals",
         function!(check_string_literals, 2),
+    )?;
+    module.define_module_function(
+        "check_string_literals_in_interpolation",
+        function!(check_string_literals_in_interpolation, 2),
     )?;
     module.define_module_function(
         "check_trailing_comma_in_arguments",

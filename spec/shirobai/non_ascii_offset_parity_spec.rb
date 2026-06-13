@@ -187,7 +187,13 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # The trailing-comma offense (default `no_comma`) carries an `avoid_comma`
     # caret range and a removal corrector; both offsets sit after the multibyte
     # comment, so the byte->char conversion must shift them.
-    "Style/TrailingCommaInArguments" => "some_method(あ, い,)\n"
+    "Style/TrailingCommaInArguments" => "some_method(あ, い,)\n",
+    # The offending interpolation-internal string node range plus the autocorrect
+    # replacement, all shifted by the multibyte comment. The inner string content
+    # is itself multibyte, so the wrapper's `to_string_literal` on the decoded
+    # content must round-trip the UTF-8 bytes (double -> single under the default
+    # single_quotes style); the outer double-quoted string stays untouched.
+    "Style/StringLiteralsInInterpolation" => "x = \"前 \#{\"日本語\"} 後\"\n"
   }
 
   cases.each do |cop_name, body|

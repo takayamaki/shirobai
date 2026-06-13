@@ -210,6 +210,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Style::TrailingCommaInArguments,
       Shirobai::Cop::Style::TrailingCommaInArguments,
       "some_method(a, b, c,)\n"
+    ],
+    # A double-quoted string inside an interpolation under the default
+    # single_quotes style: the offense carries a corrector (correctable), and
+    # the outer double-quoted string is unaffected (not inside interpolation).
+    "Style/StringLiteralsInInterpolation" => [
+      RuboCop::Cop::Style::StringLiteralsInInterpolation,
+      Shirobai::Cop::Style::StringLiteralsInInterpolation,
+      "a = \"x \#{\"inner\"} y\"\n"
     ]
   }
 
