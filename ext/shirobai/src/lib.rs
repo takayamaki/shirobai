@@ -40,6 +40,27 @@ fn map_block_length(
         .collect()
 }
 
+/// `Metrics/MethodLength` per-method results: `[start, end, head_end, length,
+/// name, filterable]`. The Ruby wrapper applies the `AllowedMethods` /
+/// `AllowedPatterns` filter (only to `filterable` candidates) and builds the
+/// message.
+fn map_method_length(
+    v: Vec<shirobai_core::rules::method_length::MethodLengthCandidate>,
+) -> Vec<(usize, usize, usize, usize, String, bool)> {
+    v.into_iter()
+        .map(|c| {
+            (
+                c.start_offset,
+                c.end_offset,
+                c.head_end,
+                c.length,
+                c.name,
+                c.filterable,
+            )
+        })
+        .collect()
+}
+
 fn map_block_nesting(
     (offenses, deepest): (
         Vec<shirobai_core::rules::block_nesting::BlockNestingOffense>,
@@ -778,7 +799,8 @@ fn register_bundle_config(
 /// 38 empty_lines_around_arguments / 39 hash_syntax / 40 string_literals /
 /// 41 trailing_comma_in_arguments / 42 string_literals_in_interpolation /
 /// 43 trailing_empty_lines / 44 space_around_method_call_operator /
-/// 45 space_around_keyword / 46 space_inside_block_braces
+/// 45 space_around_keyword / 46 space_inside_block_braces /
+/// 47 method_length
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -789,7 +811,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(47);
+        let ary = ruby.ary_new_capa(48);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -852,6 +874,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ))?;
         ary.push(map_space_around_keyword(r.space_around_keyword))?;
         ary.push(map_space_inside_block_braces(r.space_inside_block_braces))?;
+        ary.push(map_method_length(r.method_length))?;
         Ok(ary)
     })
 }
@@ -894,6 +917,23 @@ fn check_block_length(
             filtered,
         ),
     )
+}
+
+/// Ruby entry point for `Metrics/MethodLength`. Returns one entry per method
+/// whose body exceeds `max`: `[[start, end, head_end, length, name,
+/// filterable], ...]`. Allow filtering stays on the Ruby side.
+fn check_method_length(
+    source: RString,
+    max: usize,
+    count_comments: bool,
+    count_as_one: Vec<String>,
+) -> Vec<(usize, usize, usize, usize, String, bool)> {
+    map_method_length(shirobai_core::rules::method_length::check_method_length(
+        bytes(&source),
+        max,
+        count_comments,
+        &count_as_one,
+    ))
 }
 
 /// Ruby entry point for `Metrics/BlockNesting`. Takes the source, the `Max`
@@ -1799,6 +1839,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function("check_all", function!(check_all, 2))?;
     module.define_module_function("check_debugger", function!(check_debugger, 3))?;
     module.define_module_function("check_block_length", function!(check_block_length, 6))?;
+    module.define_module_function("check_method_length", function!(check_method_length, 4))?;
     module.define_module_function("check_complexity", function!(check_complexity, 3))?;
     module.define_module_function("check_abc_size", function!(check_abc_size, 3))?;
     module.define_module_function("check_block_nesting", function!(check_block_nesting, 4))?;

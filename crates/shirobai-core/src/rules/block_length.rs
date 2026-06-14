@@ -1,5 +1,7 @@
 use ruby_prism::{Node, Visit, visit_call_node, visit_lambda_node};
 
+use super::code_length::{CodeLength, Fold};
+
 /// A block whose body length exceeds `Max`. On the default fast path the
 /// `AllowedMethods` exclusion (incl. receiver-qualified entries) is applied
 /// here too; the regex-based `AllowedPatterns` filtering always stays on the
@@ -62,49 +64,17 @@ pub(crate) fn build_rule<'a>(
     Visitor {
         source,
         max,
-        count_comments,
-        fold: Fold::from_types(count_as_one),
+        calc: CodeLength::new(source, count_comments, Fold::from_types(count_as_one)),
         allowed_methods,
         filtered,
         out: Vec::new(),
     }
 }
 
-/// Which constructs `CountAsOne` folds. Unknown types are ignored here; the
-/// Ruby side raises `RuboCop::Warning` for them.
-#[derive(Clone, Copy, Default)]
-struct Fold {
-    array: bool,
-    hash: bool,
-    heredoc: bool,
-    method_call: bool,
-}
-
-impl Fold {
-    fn from_types(types: &[String]) -> Self {
-        let mut f = Fold::default();
-        for t in types {
-            match t.as_str() {
-                "array" => f.array = true,
-                "hash" => f.hash = true,
-                "heredoc" => f.heredoc = true,
-                "method_call" => f.method_call = true,
-                _ => {}
-            }
-        }
-        f
-    }
-
-    fn any(&self) -> bool {
-        self.array || self.hash || self.heredoc || self.method_call
-    }
-}
-
 pub(crate) struct Visitor<'a> {
     source: &'a [u8],
     max: usize,
-    count_comments: bool,
-    fold: Fold,
+    calc: CodeLength<'a>,
     allowed_methods: &'a [String],
     filtered: bool,
     pub(crate) out: Vec<BlockLengthCandidate>,
@@ -115,82 +85,10 @@ impl Visitor<'_> {
         String::from_utf8_lossy(&self.source[start..end])
     }
 
-    /// Body length of a block, matching RuboCop's `CodeLengthCalculator`:
-    /// non-blank/non-comment line count of the body, with `CountAsOne`
-    /// foldable constructs collapsed to a single line each.
+    /// Body length of a block via the shared `CodeLength` calculator (matching
+    /// RuboCop's `CodeLengthCalculator`).
     fn body_length(&self, body: Option<Node<'_>>) -> usize {
-        let Some(body) = body else { return 0 };
-        let base = self.count_source_lines(&body) as isize;
-        if !self.fold.any() {
-            return base.max(0) as usize;
-        }
-        let mut fv = FoldVisitor {
-            outer: self,
-            suppress: 0,
-            stack: Vec::new(),
-            delta: 0,
-        };
-        fv.visit(&body);
-        (base + fv.delta).max(0) as usize
-    }
-
-    /// Non-blank, non-comment line count of a node's own source span
-    /// (`node.source.lines.count { !irrelevant_line?(line) }`), with heredocs
-    /// measured by their body like RuboCop's `heredoc_length`.
-    fn code_length(&self, node: &Node<'_>) -> usize {
-        if let Some(loc) = self.heredoc_body_loc(node) {
-            let text = self.source_text(loc.start_offset(), loc.end_offset());
-            return text.lines().filter(|line| !self.irrelevant(line)).count() + 2;
-        }
-        self.count_source_lines(node)
-    }
-
-    fn count_source_lines(&self, node: &Node<'_>) -> usize {
-        let loc = node.location();
-        let text = self.source_text(loc.start_offset(), loc.end_offset());
-        text.lines().filter(|line| !self.irrelevant(line)).count()
-    }
-
-    fn is_foldable(&self, node: &Node<'_>) -> bool {
-        (self.fold.array && node.as_array_node().is_some())
-            || (self.fold.hash && node.as_hash_node().is_some())
-            || (self.fold.method_call && node.as_call_node().is_some())
-            || (self.fold.heredoc && self.is_heredoc(node))
-    }
-
-    fn opening_is_heredoc(&self, opening: Option<ruby_prism::Location<'_>>) -> bool {
-        match opening {
-            Some(loc) => self
-                .source
-                .get(loc.start_offset()..loc.end_offset())
-                .is_some_and(|s| s.starts_with(b"<<")),
-            None => false,
-        }
-    }
-
-    fn is_heredoc(&self, node: &Node<'_>) -> bool {
-        if let Some(s) = node.as_string_node() {
-            self.opening_is_heredoc(s.opening_loc())
-        } else if let Some(s) = node.as_interpolated_string_node() {
-            self.opening_is_heredoc(s.opening_loc())
-        } else {
-            false
-        }
-    }
-
-    /// Body location of a heredoc string (between the marker and the closing
-    /// delimiter), or `None` when the node is not a plain heredoc string.
-    fn heredoc_body_loc<'a>(&self, node: &Node<'a>) -> Option<ruby_prism::Location<'a>> {
-        let s = node.as_string_node()?;
-        if self.opening_is_heredoc(s.opening_loc()) {
-            Some(s.content_loc())
-        } else {
-            None
-        }
-    }
-
-    fn irrelevant(&self, line: &str) -> bool {
-        line.trim().is_empty() || (!self.count_comments && line.trim_start().starts_with('#'))
+        self.calc.body_length(body)
     }
 
     /// Port of `Node#class_constructor?` restricted to the block case: the
@@ -303,59 +201,6 @@ fn top_level_const_name<'a>(node: &Node<'a>) -> Option<&'a [u8]> {
         return path.name().map(|n| n.as_slice());
     }
     None
-}
-
-fn is_classlike(node: &Node<'_>) -> bool {
-    matches!(node, Node::ClassNode { .. } | Node::ModuleNode { .. })
-}
-
-/// Applies `CountAsOne` folding over a block body, mirroring RuboCop's
-/// `each_top_level_descendant`: each outermost foldable construct collapses to
-/// one line, and class/module bodies are not descended into.
-struct FoldVisitor<'a, 'b> {
-    outer: &'b Visitor<'a>,
-    /// Depth of foldable/classlike boundaries we are nested inside.
-    suppress: usize,
-    /// Per-node record of whether it raised `suppress`, popped on leave.
-    stack: Vec<bool>,
-    delta: isize,
-}
-
-impl FoldVisitor<'_, '_> {
-    fn count_top_level(&mut self, node: &Node<'_>) {
-        self.delta += 1 - self.outer.code_length(node) as isize;
-    }
-}
-
-impl<'pr> Visit<'pr> for FoldVisitor<'_, '_> {
-    fn visit_branch_node_enter(&mut self, node: Node<'pr>) {
-        let boundary = if self.suppress == 0 {
-            if self.outer.is_foldable(&node) {
-                self.count_top_level(&node);
-                true
-            } else {
-                is_classlike(&node)
-            }
-        } else {
-            false
-        };
-        if boundary {
-            self.suppress += 1;
-        }
-        self.stack.push(boundary);
-    }
-
-    fn visit_branch_node_leave(&mut self) {
-        if self.stack.pop().unwrap_or(false) {
-            self.suppress -= 1;
-        }
-    }
-
-    fn visit_leaf_node_enter(&mut self, node: Node<'pr>) {
-        if self.suppress == 0 && self.outer.is_foldable(&node) {
-            self.count_top_level(&node);
-        }
-    }
 }
 
 impl Visitor<'_> {

@@ -64,7 +64,8 @@ module Shirobai
       trailing_empty_lines: 43,
       space_around_method_call_operator: 44,
       space_around_keyword: 45,
-      space_inside_block_braces: 46
+      space_inside_block_braces: 46,
+      method_length: 47
     }.freeze
 
     class << self
@@ -137,6 +138,7 @@ module Shirobai
         sli = Cop::Style::StringLiteralsInInterpolation.bundle_args(config)
         tel = Cop::Layout::TrailingEmptyLines.bundle_args(config)
         sibb = Cop::Layout::SpaceInsideBlockBraces.bundle_args(config)
+        ml = Cop::Metrics::MethodLength.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -170,10 +172,11 @@ module Shirobai
           *tca[0], # TrailingCommaInArguments style (1 num)
           *sli[0], # StringLiteralsInInterpolation style (1 num)
           *tel[0], # TrailingEmptyLines style (1 num)
-          *sibb[0] # SpaceInsideBlockBraces style / empty style / SpaceBeforeBlockParameters (3 nums)
+          *sibb[0], # SpaceInsideBlockBraces style / empty style / SpaceBeforeBlockParameters (3 nums)
+          ml[0], num(ml[1]) # MethodLength Max / CountComments
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
-                 uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1]]
+                 uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2]]
         [nums, lists]
       end
 

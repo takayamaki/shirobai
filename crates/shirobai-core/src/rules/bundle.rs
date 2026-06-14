@@ -16,7 +16,8 @@ use super::{
     first_argument_indentation, first_array_element_indentation, first_hash_element_indentation,
     hash_alignment, hash_each_methods, hash_syntax,
     indentation_consistency, indentation_width, line_end_concatenation, line_length,
-    line_length_breakable, method_name, predicate_prefix, redundant_self, safe_navigation_chain,
+    line_length_breakable, method_length, method_name, predicate_prefix, redundant_self,
+    safe_navigation_chain,
     space_around_keyword, space_around_method_call_operator, space_inside_block_braces,
     string_literals,
     string_literals_in_interpolation,
@@ -101,8 +102,10 @@ pub fn check_multiline_bundle(
 /// | 75  | space_inside_block_braces style (`EnforcedStyle`: 0 space, 1 no_space) |
 /// | 76  | space_inside_block_braces empty style (`EnforcedStyleForEmptyBraces`: 0 space, 1 no_space) |
 /// | 77  | space_inside_block_braces space_before_block_parameters (`SpaceBeforeBlockParameters`) |
+/// | 78  | method_length_max (`Metrics/MethodLength` `Max`, default 10) |
+/// | 79  | method_length_count_comments (`CountComments`) |
 ///
-/// `lists` (`Vec<String>`), 19 entries:
+/// `lists` (`Vec<String>`), 20 entries:
 ///
 /// | idx | field |
 /// |-----|-------|
@@ -125,6 +128,7 @@ pub fn check_multiline_bundle(
 /// | 16  | empty_line_between_defs_def_like_macros (`DefLikeMacros`, verbatim names) |
 /// | 17  | hash_alignment_rocket_styles (`EnforcedHashRocketStyle`, comma-joined `key`/`separator`/`table`) |
 /// | 18  | hash_alignment_colon_styles (`EnforcedColonStyle`, comma-joined) |
+/// | 19  | method_length_count_as_one (`Metrics/MethodLength` `CountAsOne`) |
 ///
 /// `Layout/IndentationWidth`'s `allowed_lines` and `prior_ranges` are fixed to
 /// empty in the bundle: the non-empty cases (configured `AllowedPatterns`,
@@ -195,10 +199,13 @@ pub struct BundleConfig {
     pub trailing_comma_in_arguments: trailing_comma_in_arguments::Config,
     pub trailing_empty_lines: trailing_empty_lines::Config,
     pub space_inside_block_braces: space_inside_block_braces::Config,
+    pub method_length_max: usize,
+    pub method_length_count_comments: bool,
+    pub method_length_count_as_one: Vec<String>,
 }
 
-const NUMS_LEN: usize = 78;
-const LISTS_LEN: usize = 19;
+const NUMS_LEN: usize = 80;
+const LISTS_LEN: usize = 20;
 
 impl BundleConfig {
     /// Build a config from the flat wire format (see the struct docs for the
@@ -353,6 +360,9 @@ impl BundleConfig {
                 },
                 space_before_block_parameters: nums[77] != 0,
             },
+            method_length_max: nums[78] as usize,
+            method_length_count_comments: nums[79] != 0,
+            method_length_count_as_one: next_list(),
         })
     }
 }
@@ -424,6 +434,7 @@ pub struct BundleResult {
     pub space_around_keyword: Vec<space_around_keyword::SpaceAroundKeywordOffense>,
     pub space_inside_block_braces:
         Vec<space_inside_block_braces::SpaceInsideBlockBracesOffense>,
+    pub method_length: Vec<method_length::MethodLengthCandidate>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -544,6 +555,12 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut samco_rule = space_around_method_call_operator::build_rule(source);
     let mut sak_rule = space_around_keyword::build_rule(source);
     let mut sibb_rule = space_inside_block_braces::build_rule(source, cfg.space_inside_block_braces);
+    let mut ml_rule = method_length::build_rule(
+        source,
+        cfg.method_length_max,
+        cfg.method_length_count_comments,
+        &cfg.method_length_count_as_one,
+    );
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -582,6 +599,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut samco_rule,
         &mut sak_rule,
         &mut sibb_rule,
+        &mut ml_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -634,6 +652,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let space_around_method_call_operator = samco_rule.offenses;
     let space_around_keyword = sak_rule.offenses;
     let space_inside_block_braces = sibb_rule.offenses;
+    let method_length = ml_rule.out;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -698,6 +717,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         space_around_method_call_operator,
         space_around_keyword,
         space_inside_block_braces,
+        method_length,
     }
 }
 
@@ -768,6 +788,7 @@ mod tests {
             0, // string_literals_in_interpolation: style (single_quotes)
             0, // trailing_empty_lines: style (final_newline)
             0, 1, 1, // space_inside_block_braces: style(space) / empty(no_space) / sbbp(true)
+            10, 0, // method_length: max(10) / count_comments
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -793,6 +814,7 @@ mod tests {
             vec![], // empty_line_between_defs: def_like_macros
             vec!["key".to_string()], // hash_alignment: rocket styles
             vec!["key".to_string()], // hash_alignment: colon styles
+            vec![],                  // method_length: count_as_one
         ];
         (nums, lists)
     }
@@ -1695,6 +1717,38 @@ mod tests {
         // Sanity: the canonical <3, 4, 5> vector from the vendor spec.
         let m = &bundle.abc_size[0];
         assert_eq!((m.assignments, m.branches, m.conditions), (3, 4, 5));
+    }
+
+    /// `Metrics/MethodLength` merged into the shared walk must report exactly
+    /// what its standalone entry point reports, over a source exercising a `def`,
+    /// a `def self.`, a `define_method` block and a dynamically-named
+    /// `define_method` (the unfilterable case).
+    #[test]
+    fn shared_walk_matches_standalone_method_length() {
+        let src = "def a\n  x = 1\n  x = 2\n  x = 3\nend\n\
+                   def self.b\n  y = 1\n  y = 2\n  y = 3\nend\n\
+                   define_method(:c) do\n  z = 1\n  z = 2\n  z = 3\nend\n\
+                   define_method(name) do\n  w = 1\n  w = 2\n  w = 3\nend\n";
+        let (mut nums, lists) = default_packed();
+        nums[78] = 2; // method_length max
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::method_length::check_method_length(
+            src.as_bytes(),
+            cfg.method_length_max,
+            cfg.method_length_count_comments,
+            &cfg.method_length_count_as_one,
+        );
+        assert_eq!(alone.len(), 4);
+        assert!(alone.iter().any(|c| !c.filterable));
+        assert_eq!(bundle.method_length.len(), alone.len());
+        for (a, b) in bundle.method_length.iter().zip(&alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.head_end, a.length, &a.name, a.filterable),
+                (b.start_offset, b.end_offset, b.head_end, b.length, &b.name, b.filterable)
+            );
+        }
     }
 
     /// `Layout/IndentationConsistency` merged into the shared walk must report
