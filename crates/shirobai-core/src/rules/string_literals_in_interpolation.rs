@@ -83,7 +83,6 @@ pub(crate) fn build_rule<'a>(source: &'a [u8], cfg: &Config) -> Visitor<'a> {
         source,
         cfg: *cfg,
         stack: Vec::new(),
-        interp_depth: 0,
         offenses: Vec::new(),
     }
 }
@@ -92,17 +91,28 @@ fn loc(l: &Location<'_>) -> (usize, usize) {
     (l.start_offset(), l.end_offset())
 }
 
+/// Mirrors `string_literals::Frame` minus the dstr-ignored field (this cop has
+/// no `on_dstr` / `ConsistentQuotesInMultiline` path). Reproduces stock's
+/// `inside_interpolation?` semantics: a `#{...}` only counts as
+/// "interpolation" when its immediate `:dstr` / `:dsym` / `:regexp` parent
+/// (i.e. a `dstr`/`dsym`/`regexp` ancestor strictly *outside* the closest
+/// `Embedded*`) is present. Notably **xstr** (backticks) is not on stock's
+/// recognised list, so backtick `#{...}` interior strings are *not* inside an
+/// interpolation by this cop's contract.
+struct Frame {
+    /// Frame is an `EmbeddedStatementsNode` / `EmbeddedVariableNode`.
+    is_interp: bool,
+    /// Frame is a parser-gem `:dstr` / `:dsym` / `:regexp` (Prism
+    /// `InterpolatedStringNode` / `InterpolatedSymbolNode` /
+    /// `InterpolatedRegularExpressionNode` / `RegularExpressionNode`).
+    is_dstr_dsym_or_regexp: bool,
+}
+
 pub(crate) struct Visitor<'a> {
     source: &'a [u8],
     cfg: Config,
-    /// One entry per entered node: whether that node was an interpolation
-    /// marker (`EmbeddedStatementsNode` / `EmbeddedVariableNode`). The generic
-    /// walk calls `leave` once per entered node, so a parallel stack keeps
-    /// `interp_depth` balanced.
-    stack: Vec<bool>,
-    /// Number of enclosing interpolation markers; `> 0` means "inside
-    /// interpolation".
-    interp_depth: usize,
+    /// One frame per entered node; `leave` pops in lockstep.
+    stack: Vec<Frame>,
     pub offenses: Vec<StringLiteralsInInterpolationOffense>,
 }
 
@@ -113,6 +123,24 @@ impl<'a> Visitor<'a> {
 
     fn decoded(&self, n: &ruby_prism::StringNode<'_>) -> String {
         String::from_utf8_lossy(n.unescaped()).into_owned()
+    }
+
+    /// Port of stock `StringHelp#inside_interpolation?`: ancestors are scanned
+    /// inner→outer, drop until the first `:begin` (Prism `Embedded*`), then
+    /// `any?` over the rest for `:dstr` / `:dsym` / `:regexp`. See the
+    /// `string_literals` twin for the full discourse parity rationale; the
+    /// short version is that `xstr` (backticks) is **not** on stock's list, so
+    /// a `#{...}` inside backticks is not "inside interpolation" and a
+    /// double-quoted string literal there is claimed by `Style/StringLiterals`,
+    /// not by this cop.
+    fn inside_interpolation(&self) -> bool {
+        let mut iter = self.stack.iter().rev();
+        for f in iter.by_ref() {
+            if f.is_interp {
+                break;
+            }
+        }
+        iter.any(|f| f.is_dstr_dsym_or_regexp)
     }
 
     /// Replicate `StringHelp#on_str` for a single `:str` node, with this cop's
@@ -146,7 +174,7 @@ impl<'a> Visitor<'a> {
         }
 
         // `offense?(node) = inside_interpolation?(node) && wrong_quotes?(node)`.
-        let offending = self.interp_depth > 0 && wrong_quotes(node_src, self.cfg.style);
+        let offending = self.inside_interpolation() && wrong_quotes(node_src, self.cfg.style);
 
         if offending {
             let fix = if self.cfg.style == STYLE_SINGLE {
@@ -184,16 +212,27 @@ impl super::dispatch::Rule for Visitor<'_> {
             node,
             Node::EmbeddedStatementsNode { .. } | Node::EmbeddedVariableNode { .. }
         );
-        if is_interp {
-            self.interp_depth += 1;
-        }
-        self.stack.push(is_interp);
+        // Mirrors `string_literals::Visitor::enter` recognition of the
+        // parser-gem `:dstr` / `:dsym` / `:regexp` carriers. `xstr` (backticks)
+        // is intentionally not on this list, so a `#{...}` inside backticks is
+        // *not* "inside interpolation" for this cop either — that string is
+        // claimed by `Style/StringLiterals`, not by this cop. See the discourse
+        // parity rationale in `string_literals.rs`.
+        let is_dstr_dsym_or_regexp = matches!(
+            node,
+            Node::InterpolatedStringNode { .. }
+                | Node::InterpolatedSymbolNode { .. }
+                | Node::InterpolatedRegularExpressionNode { .. }
+                | Node::RegularExpressionNode { .. }
+        );
+        self.stack.push(Frame {
+            is_interp,
+            is_dstr_dsym_or_regexp,
+        });
     }
 
     fn leave(&mut self) {
-        if self.stack.pop() == Some(true) {
-            self.interp_depth -= 1;
-        }
+        self.stack.pop();
     }
 
     fn enter_leaf(&mut self, node: &Node<'_>) {

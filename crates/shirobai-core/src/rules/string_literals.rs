@@ -99,15 +99,26 @@ fn loc(l: &Location<'_>) -> (usize, usize) {
 }
 
 /// A frame for an enclosing branch node: tracks whether the current position is
-/// inside an interpolation (`#{...}` / `#@x`) and whether it is inside a `dstr`
-/// that `on_dstr` ignored (consistent mode).
+/// inside an interpolation (`#{...}` / `#@x`), whether it is inside a `dstr`
+/// that `on_dstr` ignored (consistent mode), and whether the frame itself is a
+/// `dstr` / `dsym` / `regexp` (the only parser-gem node types stock's
+/// `inside_interpolation?` recognises as carrying interpolation semantics).
 struct Frame {
     /// This frame is an `EmbeddedStatementsNode` / `EmbeddedVariableNode`
-    /// (interpolation marker): descendants are "inside interpolation".
+    /// (interpolation marker): the `:begin` ancestor in stock's
+    /// `inside_interpolation?` traversal.
     is_interp: bool,
     /// This frame is a `dstr` ignored by `on_dstr`: descendant `on_str` is
     /// suppressed (`part_of_ignored_node?`).
     is_ignored_dstr: bool,
+    /// This frame corresponds to a parser-gem `:dstr` / `:dsym` / `:regexp`
+    /// (Prism `InterpolatedStringNode` / `InterpolatedSymbolNode` /
+    /// `InterpolatedRegularExpressionNode`, plus the heredoc forms). The
+    /// physical-string `StringNode` / `SymbolNode` / `RegularExpressionNode`
+    /// (no interpolation) are *not* dstr-equivalent. Crucially `xstr` /
+    /// `InterpolatedXStringNode` are *not* on this list, so a `#{...}` inside
+    /// backticks is **not** "inside interpolation" by stock's definition.
+    is_dstr_dsym_or_regexp: bool,
 }
 
 pub(crate) struct Visitor<'a> {
@@ -118,8 +129,40 @@ pub(crate) struct Visitor<'a> {
 }
 
 impl<'a> Visitor<'a> {
+    /// Port of stock `StringHelp#inside_interpolation?`:
+    ///
+    /// ```ruby
+    /// node.ancestors
+    ///     .drop_while { |a| !a.begin_type? }
+    ///     .any? { |a| a.type?(:dstr, :dsym, :regexp) }
+    /// ```
+    ///
+    /// Ancestors are ordered inner→outer. We scan the frame stack from leaf
+    /// (innermost) to root: find the closest interpolation marker
+    /// (`Embedded*` = parser-gem `:begin`), then look strictly *outside* it for
+    /// a `dstr` / `dsym` / `regexp` frame. If no `Embedded*` is on the stack at
+    /// all, the result is `false` regardless of what else is enclosing — this
+    /// is exactly the `drop_while` behaviour (empty list yields `any? = false`).
+    ///
+    /// The discourse parity bug: previously this just checked
+    /// `any(|f| f.is_interp)`, which fired for *any* `Embedded*` ancestor
+    /// including ones inside an `xstr` (backticks). Stock excludes that case
+    /// because `xstr` is not in the recognised type list, so `xstr` interior
+    /// strings are *not* "inside interpolation" and `Style/StringLiterals`
+    /// claims them. We now require an outer dstr/dsym/regexp frame, matching
+    /// stock.
     fn inside_interpolation(&self) -> bool {
-        self.stack.iter().any(|f| f.is_interp)
+        let mut iter = self.stack.iter().rev();
+        // drop_while !begin_type?
+        for f in iter.by_ref() {
+            if f.is_interp {
+                break;
+            }
+        }
+        // any?(:dstr, :dsym, :regexp) over the strictly-outer remaining
+        // ancestors (and over any further Embedded*'s, which are not in the
+        // type list anyway — irrelevant either way).
+        iter.any(|f| f.is_dstr_dsym_or_regexp)
     }
 
     fn inside_ignored_dstr(&self) -> bool {
@@ -471,6 +514,24 @@ impl super::dispatch::Rule for Visitor<'_> {
     fn enter(&mut self, node: &Node<'_>) {
         let mut is_interp = false;
         let mut is_ignored_dstr = false;
+        // `:dstr` / `:dsym` / `:regexp` cover both the with-interpolation Prism
+        // forms (`Interpolated*Node`) and the heredoc / multi-line forms of
+        // `:dstr` (a Prism `InterpolatedStringNode` is also a `:dstr` to
+        // parser-gem). String / Symbol / RegularExpression without interpolation
+        // are *not* in stock's recognised list (`:str` / `:sym` / `:regexp` —
+        // wait, `:regexp` matches both! A regexp without interpolation is still
+        // a `:regexp` to parser-gem). So a `RegularExpressionNode` (no interp)
+        // also counts. Similarly a heredoc string with no interpolation is a
+        // `:dstr` to parser-gem — Prism keeps it an `InterpolatedStringNode`
+        // when the heredoc has any escapes or always — but a single-line
+        // non-interp string is `:str`, not `:dstr`.
+        let is_dstr_dsym_or_regexp = matches!(
+            node,
+            Node::InterpolatedStringNode { .. }
+                | Node::InterpolatedSymbolNode { .. }
+                | Node::InterpolatedRegularExpressionNode { .. }
+                | Node::RegularExpressionNode { .. }
+        );
         match node {
             Node::EmbeddedStatementsNode { .. } | Node::EmbeddedVariableNode { .. } => {
                 is_interp = true;
@@ -486,6 +547,7 @@ impl super::dispatch::Rule for Visitor<'_> {
         self.stack.push(Frame {
             is_interp,
             is_ignored_dstr,
+            is_dstr_dsym_or_regexp,
         });
     }
 
