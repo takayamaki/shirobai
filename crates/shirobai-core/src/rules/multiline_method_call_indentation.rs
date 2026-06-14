@@ -15,7 +15,7 @@
 
 use std::rc::Rc;
 
-use ruby_prism::{CallNode, Location, Node};
+use ruby_prism::{CallNode, Location, Node, Visit};
 
 use super::line_index::LineIndex;
 
@@ -528,35 +528,59 @@ impl<'a> Visitor<'a> {
         if let Some(b) = self.block_receiver_dot(&receiver) {
             return Some(b);
         }
-        // `node.each_descendant(:any_block).first&.multiline?` over the receiver
-        // chain: the deepest call carrying a multiline block.
-        let owner_dot = self.deepest_block_owner_dot(node)?;
+        // Stock: `block_node = node.each_descendant(:any_block).first&.multiline?`.
+        // In parser-AST `:block` packs `call + block` into a single node, so
+        // `.foo do ... end` sitting as a chain link IS a `:block` and is hit
+        // BEFORE its inner `:send` is descended into. In prism the call and
+        // block are separate (`CallNode { block: BlockNode { ... } }`), so a
+        // naive `visit_call_node` default (receiver → args → block) descends
+        // through the whole chain before ever seeing a block field, getting
+        // the order wrong. We mirror stock by visiting `block` BEFORE
+        // `receiver` — this way the outer chain link's block fires before any
+        // descent into deeper chain links, recovering the parser-AST DFS.
+        //
+        // What stock returns when the first block is multi-line:
+        //   - `receiver.call_type? ? receiver : block_node.parent`.
+        //   - In parser-AST `receiver` is `:block` iff the IMMEDIATE chain
+        //     link `node.receiver` carries a block; otherwise it is `:send`.
+        //     - `:block` (not call_type) -> `block_node.parent` = `node`
+        //       itself. Return `node.dot.join(node.selector)`.
+        //     - `:send` (call_type) -> Return `receiver.dot.join(receiver.selector)`.
+        let first = stock_first_descendant_block(node, self.line_index.as_ref())?;
+        if !first.multiline {
+            return None;
+        }
+        // Stock: `receiver.call_type? ? receiver : block_node.parent`.
+        // Parser-AST `receiver` is `:block` (NOT call_type) iff the IMMEDIATE
+        // chain link `node.receiver` carries the block — i.e. `.foo do end`
+        // sits as `node.receiver`. In prism that maps to "`node.receiver` is
+        // a CallNode and HAS a BlockNode child directly", or "`node.receiver`
+        // is a LambdaNode". When the block is found further up the chain
+        // (e.g. `.foo do end.bar.baz`: `.baz.receiver` = `.bar`, a plain
+        // CallNode without a block, and the block lives in `.bar.receiver`),
+        // parser-AST `receiver` is `:send` (call_type) and stock returns it
+        // directly. Argument-borne blocks also fall into the call_type
+        // branch since `node.receiver` itself has no chain block.
+        let receiver_owns_block = receiver
+            .as_call_node()
+            .and_then(|rc| rc.block())
+            .and_then(|b| b.as_block_node())
+            .is_some()
+            || receiver.as_lambda_node().is_some();
+        if receiver_owns_block {
+            // Chain-direct: return `node.dot.join(node.selector)`.
+            let dot = node.call_operator_loc()?;
+            let sel = node.message_loc()?;
+            return Some((dot.start_offset(), sel.end_offset()));
+        }
+        // Chain-deeper OR block-in-arguments: `receiver` is `:send`, return
+        // `receiver.dot.join(receiver.selector)`.
         if let Some(rc) = receiver.as_call_node()
             && let (Some(dot), Some(sel)) = (rc.call_operator_loc(), rc.message_loc())
         {
             return Some((dot.start_offset(), sel.end_offset()));
         }
-        Some(owner_dot)
-    }
-
-    /// The bottom-most call in the receiver chain that carries a multiline block;
-    /// returns its `dot.join(selector)`. `None` if there is no such block.
-    fn deepest_block_owner_dot(&self, node: &CallNode<'_>) -> Option<(usize, usize)> {
-        let mut found: Option<(usize, usize)> = None;
-        let mut current = node.as_node();
-        while let Some(c) = current.as_call_node() {
-            if let Some(blk) = c.block().and_then(|b| b.as_block_node())
-                && !self.is_single_line(loc(&blk.as_node().location()))
-                && let (Some(dot), Some(sel)) = (c.call_operator_loc(), c.message_loc())
-            {
-                found = Some((dot.start_offset(), sel.end_offset()));
-            }
-            match c.receiver() {
-                Some(r) => current = r,
-                None => break,
-            }
-        }
-        found
+        None
     }
 
     /// `syntactic_alignment_base`: keyword expression / assignment rhs /
@@ -1093,6 +1117,21 @@ impl<'a> Visitor<'a> {
                 body: n.body().map(|b| loc(&b.location())),
             };
         }
+        // Stabby lambdas (`->() { ... }` / `->() do ... end`) are wrapped in a
+        // parser-gem `:block` node, so stock's `disqualified_rhs?`
+        // (`ancestor.block_type? && part_of_block_body?(candidate, ancestor)`)
+        // breaks the `part_of_assignment_rhs` walk at the lambda. In prism the
+        // call/lambda layout is flat (`LambdaNode` is its own type, not a
+        // `BlockNode`), so without this branch the walk passes straight
+        // through the lambda and hits the enclosing `Assignment` frame,
+        // anchoring `.x` chains in the body to the assignment's rhs (the
+        // lambda itself). Treat `LambdaNode` as a `Block` frame to mirror
+        // stock's break semantics.
+        if let Some(n) = node.as_lambda_node() {
+            return FrameKind::Block {
+                body: n.body().map(|b| loc(&b.location())),
+            };
+        }
         if let Some(n) = node.as_splat_node() {
             let op = n.operator_loc();
             return FrameKind::Splat {
@@ -1227,6 +1266,97 @@ impl super::dispatch::Rule for Visitor<'_> {
     fn leave(&mut self) {
         self.stack.pop();
     }
+}
+
+/// The first `:any_block` descendant (`BlockNode` / `LambdaNode`) in
+/// parser-AST DFS order, with multi-line status. The "chain-direct vs.
+/// chain-deeper vs. argument-borne" identification is recovered cheaply by
+/// inspecting `node.receiver()` after the fact in [`handle_descendant_base`].
+struct FirstBlock {
+    multiline: bool,
+}
+
+/// Stock's `node.each_descendant(:any_block).first` over the call's whole
+/// subtree, recovered for prism's flat layout by visiting `block` BEFORE
+/// `receiver` on every encountered CallNode. This mirrors parser-AST DFS
+/// because parser packs `call + block` into a single `:block` node which is
+/// hit at its own root before any descent into the inner `:send`.
+fn stock_first_descendant_block(node: &CallNode<'_>, line_index: &LineIndex) -> Option<FirstBlock> {
+    struct V<'a> {
+        line_index: &'a LineIndex,
+        result: Option<FirstBlock>,
+    }
+    impl<'a> V<'a> {
+        fn is_multiline(&self, l: &Location<'_>) -> bool {
+            self.line_index.line_of(l.start_offset()) != self.line_index.line_of(l.end_offset())
+        }
+    }
+    impl<'pr> Visit<'pr> for V<'_> {
+        fn visit_call_node(&mut self, n: &ruby_prism::CallNode<'pr>) {
+            if self.result.is_some() {
+                return;
+            }
+            // Block FIRST (parser :block is encountered before its inner :send).
+            if let Some(blk_n) = n.block() {
+                self.visit(&blk_n);
+                if self.result.is_some() {
+                    return;
+                }
+            }
+            if let Some(r) = n.receiver() {
+                self.visit(&r);
+                if self.result.is_some() {
+                    return;
+                }
+            }
+            if let Some(args) = n.arguments() {
+                self.visit_arguments_node(&args);
+            }
+        }
+        fn visit_block_node(&mut self, n: &ruby_prism::BlockNode<'pr>) {
+            if self.result.is_some() {
+                return;
+            }
+            // The owner is the parent CallNode in prism, but stock returns the
+            // parser :block node itself which spans `call.dot ~ end`. The
+            // parent call's full range is the closest match for chain-link
+            // identification. We store the BlockNode's own range though —
+            // identification is done by intersecting with receiver's range,
+            // which contains the block's range when the receiver owns it.
+            let l = n.as_node().location();
+            self.result = Some(FirstBlock {
+                multiline: self.is_multiline(&l),
+            });
+        }
+        fn visit_lambda_node(&mut self, n: &ruby_prism::LambdaNode<'pr>) {
+            if self.result.is_some() {
+                return;
+            }
+            let l = n.as_node().location();
+            self.result = Some(FirstBlock {
+                multiline: self.is_multiline(&l),
+            });
+        }
+    }
+    let mut v = V {
+        line_index,
+        result: None,
+    };
+    // Mimic `each_descendant`: skip the root, descend into its children only.
+    if let Some(blk_n) = node.block() {
+        v.visit(&blk_n);
+    }
+    if v.result.is_none()
+        && let Some(r) = node.receiver()
+    {
+        v.visit(&r);
+    }
+    if v.result.is_none()
+        && let Some(args) = node.arguments()
+    {
+        v.visit_arguments_node(&args);
+    }
+    v.result
 }
 
 #[cfg(test)]

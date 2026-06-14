@@ -71,14 +71,16 @@ module Shirobai
 
         # The outermost AST node whose source range is exactly `range`
         # (pre-order, so the array element wins over any same-range
-        # descendant), or nil when no node matches.
+        # descendant), or nil when no node matches. Skip nodes without a
+        # source range — implicit `begin`/`mlhs` wrappers and synthetic nodes
+        # built by parser-gem have `source_range == nil`.
         def node_for(range)
           root = processed_source.ast
           return nil unless root
 
           root.each_node.find do |node|
-            node.source_range.begin_pos == range.begin_pos &&
-              node.source_range.end_pos == range.end_pos
+            sr = node.source_range
+            sr && sr.begin_pos == range.begin_pos && sr.end_pos == range.end_pos
           end
         end
       end

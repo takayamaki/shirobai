@@ -99,4 +99,112 @@ RSpec.describe Shirobai::Cop::Layout::MultilineMethodCallIndentation do
     stock = expect_lint_parity(*klasses, src, aligned_config)
     expect(stock.first[2]).to include("Align `.reject` with `.map`")
   end
+
+  it "does not anchor a stabby lambda body's chain to the lambda's assignment" do
+    # Minimised from Discourse `app/models/remote_theme.rb` 383-387. Stock's
+    # `disqualified_rhs?` breaks `part_of_assignment_rhs` at the surrounding
+    # `:block` (a Parser-AST `:block` wraps every stabby lambda's body), so the
+    # `.theme_fields` continuation aligns against `.theme_fields` itself —
+    # delta 0, no offense. Prism makes the lambda a separate `LambdaNode`, so
+    # without a `Block` frame entry for it the assignment-rhs walk climbs
+    # through to the enclosing `transaction_block =` and anchors `.x` chains
+    # to the lambda's source range (column 20: `->(*) do`), producing two
+    # `Align `.theme_fields` with `->(*) do`` ghosts.
+    src = <<~RUBY
+      transaction_block = ->(*) do
+        theme
+          .theme_fields
+          .where(id: 1)
+      end
+    RUBY
+    expect_lint_parity(*klasses, src, aligned_config, expect_offenses: false)
+  end
+
+  it "treats a stabby lambda with parameter list as a chain anchor barrier" do
+    # Multiple stabby lambdas with diverse parameter lists (Discourse
+    # `discourse-ai/lib/sentiment/emotion_filter_order.rb` 8 ff,
+    # `discourse-solved/lib/discourse_solved/register_filters.rb` 6 ff). The
+    # body's `.with/.joins/.order` chain must align against its own first
+    # dot-link, not the lambda's `->(scope, ...) do` source.
+    src = <<~RUBY
+      callback = ->(scope, order_direction, _guardian) do
+        scope
+          .with(topic_emotion: 1)
+          .joins("foo")
+          .order("bar")
+      end
+    RUBY
+    expect_lint_parity(*klasses, src, aligned_config, expect_offenses: false)
+  end
+
+  it "finds a descendant block buried inside argument lists (Discourse Notifications chain)" do
+    # Minimised from `discourse-reactions/plugin.rb` 321 ff. Stock's
+    # `handle_descendant_block` walks `node.each_descendant(:any_block).first`
+    # — a FULL DFS over the call's subtree, so a `Proc.new do ... end` buried
+    # inside an argument hash counts as a descendant block. When such a block
+    # is found and the receiver is a call_type, the chain link aligns against
+    # the receiver's `.method`. shirobai used to only walk the receiver chain
+    # for blocks, missing the argument case, then fell through to the
+    # assignment-rhs path and anchored `.set_mutations` to the constant path
+    # base (`Notifications::DeletePreviousNotifications`).
+    src = <<~RUBY
+      reacted_by_two_users =
+        Notifications::DeletePreviousNotifications
+          .new(
+            type: 1,
+            previous_query_blk:
+              Proc.new do |notifications, data|
+                notifications.where(id: data[:previous_notification_id])
+              end,
+          )
+          .set_mutations(
+            set_data_blk:
+              Proc.new do |notification|
+                existing = 1
+              end,
+          )
+    RUBY
+    # Stock reports only the `.new` link (which is genuinely misaligned vs.
+    # `Notifications::DeletePreviousNotifications`); `.set_mutations` aligns
+    # against `.new` via the descendant-block path and is silent.
+    stock = expect_lint_parity(*klasses, src, aligned_config)
+    expect(stock.size).to eq(1)
+    expect(stock.first[2]).to include("Align `.new` with")
+  end
+
+  it "respects only the FIRST descendant block's single-line/multi-line status" do
+    # Minimised from `discourse-reactions/plugin.rb` 268 ff. The hash on `.new`
+    # leads with `threshold: -> { ... }` — a single-line lambda. Stock's
+    # `each_descendant(:any_block).first&.multiline?` therefore returns nil
+    # (the leading lambda is single-line) regardless of any later multi-line
+    # `Proc.new do ... end`, so the chain falls back to syntactic alignment
+    # against the constant path base — `.set_mutations` SHOULD report
+    # `Align with Notifications::ConsolidateNotifications`. A naive "any
+    # multiline descendant block" check would silence the offense.
+    src = <<~RUBY
+      foo =
+        Notifications::ConsolidateNotifications
+          .new(
+            from: 1,
+            threshold: -> { 5 },
+            unconsolidated_query_blk:
+              Proc.new do |notifications, data|
+                notifications.where("foo = ?", data[:x])
+              end,
+          )
+          .set_mutations(
+            set_data_blk:
+              Proc.new do |notification|
+                notification
+              end,
+          )
+    RUBY
+    stock = expect_lint_parity(*klasses, src, aligned_config)
+    # `.new` and `.set_mutations` should both report against the constant base.
+    expect(stock.size).to eq(2)
+    expect(stock.map { |o| o[2] }).to include(
+      a_string_including("Align `.new` with `Notifications::ConsolidateNotifications`"),
+      a_string_including("Align `.set_mutations` with `Notifications::ConsolidateNotifications`")
+    )
+  end
 end

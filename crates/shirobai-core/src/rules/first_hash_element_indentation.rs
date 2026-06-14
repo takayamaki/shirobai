@@ -324,9 +324,13 @@ impl Visitor<'_> {
         });
 
         if let Some(pair) = &first_pair {
+            // `return if same_line?(first_pair, left_brace)` in stock:
+            // the entire `check` returns, so `check_right_brace` is not run
+            // either when the first pair sits on the same line as `{`.
             if self.line_of(pair.range.0) == self.line_of(open_start) {
-                // Still check the right brace below.
-            } else if self.separator_style(pair) {
+                return;
+            }
+            if self.separator_style(pair) {
                 let offset = self.longest_key_offset(h, pair);
                 self.check_first(pair, open_start, paren, offset);
             } else {
