@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
-# End-to-end benchmark across all three modes, each in a fresh process, the
-# modes interleaved and repeated N rounds (default 3) to average out drift.
+# End-to-end benchmark, each mode in a fresh process, modes interleaved and
+# repeated N rounds (default 3) to average out drift.
 #
-#   stock    - all 394 default cops, unchanged
+#   stock    - all 394 default cops, unchanged. NOT run here: its compute is
+#              ~invariant (~40s) regardless of how many cops shirobai replaces,
+#              so re-running it every bench just wastes ~40s/round. We hardcode
+#              it (STOCK_FIXED, default 40.0s, override via env) purely so the
+#              net-vs-stock lines stay meaningful. For a real stock measurement
+#              (nighttime net), run `ruby benches/e2e_bench.rb stock` yourself.
 #   removed  - the implemented cops dropped entirely (baseline: stock minus
-#              those cops' Ruby evaluation cost)
-#   shirobai - the implemented cops swapped for the Rust drop-ins
+#              those cops' Ruby evaluation cost). This is the limit/floor.
+#   shirobai - the implemented cops swapped for the Rust drop-ins (effective).
 #
-# The `removed` baseline isolates the economics of the replaced cops, which the
-# raw stock-vs-shirobai difference buries under per-run noise:
-#   replaced cops' Ruby eval cost = stock   - removed
+#   replaced cops' Ruby eval cost = stock   - removed  (stock hardcoded)
 #   replaced cops' Rust  cost     = shirobai - removed
-#   net win                       = stock   - shirobai
+#   net win                       = stock   - shirobai  (stock hardcoded)
 #
-# Usage: benches/run_e2e.sh [rounds]
+# Usage: benches/run_e2e.sh [rounds]   (STOCK_FIXED=41.6 benches/run_e2e.sh ...)
 set -euo pipefail
 
 rounds="${1:-3}"
@@ -22,12 +25,12 @@ out="$(mktemp)"
 trap 'rm -f "$out"' EXIT
 
 for _ in $(seq "$rounds"); do
-  for mode in stock removed shirobai; do
+  for mode in removed shirobai; do
     ruby "$here/e2e_bench.rb" "$mode"
   done
 done | tee "$out"
 
-ruby -e '
+STOCK_FIXED="${STOCK_FIXED:-40.0}" ruby -e '
 cpu     = Hash.new { |h, k| h[k] = [] }
 compute = Hash.new { |h, k| h[k] = [] }
 gc      = Hash.new { |h, k| h[k] = [] }
@@ -40,6 +43,14 @@ File.foreach(ARGV[0]) do |line|
   compute[$1] << $4.to_f
   gc[$1]      << $5.to_f
   wall[$1]    << $6.to_f
+end
+# stock is ~invariant, so we do not run it; hardcode its compute/cpu so the
+# net-vs-stock lines stay meaningful. (gc/wall left empty -> shown as 0.00.)
+stock_fixed = ENV.fetch("STOCK_FIXED").to_f
+stock_run   = !compute["stock"].empty?
+unless stock_run
+  compute["stock"] = [stock_fixed]
+  cpu["stock"]     = [stock_fixed]
 end
 median = lambda do |a|
   return 0.0 if a.empty?
@@ -63,7 +74,14 @@ printf("           compute med  (min .. max)      gc med    cpu med   wall med  
          median.call(gc[m]), median.call(cpu[m]), median.call(wall[m]), offenses[m] || 0)
 end
 puts
-parity = offenses["stock"] == offenses["shirobai"] ? "OK (= stock)" : "MISMATCH vs stock=#{offenses["stock"]}"
+printf("stock: %s\n", stock_run ? "measured" : "NOT run (compute hardcoded #{"%.1f" % stock_fixed}s; override via STOCK_FIXED)")
+parity = if !stock_run
+           "stock not run; shirobai offenses=#{offenses["shirobai"]} (expected 15857)"
+         elsif offenses["stock"] == offenses["shirobai"]
+           "OK (= stock)"
+         else
+           "MISMATCH vs stock=#{offenses["stock"]}"
+         end
 printf("offense parity:               %s\n", parity)
 printf("replaced cops Ruby compute:   %+.2fs  (stock - removed, compute median)\n", sc - rc)
 printf("replaced cops Rust  compute:  %+.2fs  (shirobai - removed, compute median)\n", hc - rc)
