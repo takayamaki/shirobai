@@ -38,6 +38,7 @@ pub mod predicate_prefix;
 pub mod redundant_self;
 pub mod require_parentheses;
 pub mod safe_navigation_chain;
+pub mod self_assignment;
 pub mod space_around_keyword;
 pub mod space_around_method_call_operator;
 pub mod space_inside_block_braces;

@@ -269,6 +269,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Lint::RequireParentheses,
       Shirobai::Cop::Lint::RequireParentheses,
       "day.is? 'monday' && month == :jan\n"
+    ],
+    # `foo = foo` is a stock no-autocorrect cop, so both stock and shirobai
+    # offenses must stay `:unsupported` (never correctable). Guards against
+    # the wrapper accidentally attaching a corrector block.
+    "Lint/SelfAssignment" => [
+      RuboCop::Cop::Lint::SelfAssignment,
+      Shirobai::Cop::Lint::SelfAssignment,
+      "foo = foo\nfoo.bar = foo.bar\nfoo['k'] = foo['k']\n"
     ]
   }
 

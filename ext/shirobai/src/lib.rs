@@ -712,6 +712,18 @@ fn map_require_parentheses(
         .collect()
 }
 
+/// `Lint/SelfAssignment`: `[[start_offset, end_offset, rbs_anchor_offset], ...]`.
+/// `rbs_anchor_offset` is the end byte of the subnode stock would key into
+/// `processed_source.ast_with_comments` for an `#:` RBS inline annotation —
+/// the Ruby wrapper only consults it when `AllowRBSInlineAnnotation: true`.
+fn map_self_assignment(
+    v: Vec<shirobai_core::rules::self_assignment::SelfAssignmentOffense>,
+) -> Vec<(usize, usize, usize)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.rbs_anchor_offset))
+        .collect()
+}
+
 /// `Layout/BlockAlignment`: `[[end_start, end_end, message, align_column], ...]`
 /// — `[end_start, end_end)` is the closing-token range (`end` / `}`);
 /// `message`/`align_column` carry the offense detail (only misaligned blocks
@@ -905,6 +917,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_method_length(r.method_length))?;
         ary.push(map_def_end_alignment(r.def_end_alignment))?;
         ary.push(map_require_parentheses(r.require_parentheses))?;
+        ary.push(map_self_assignment(r.self_assignment))?;
         Ok(ary)
     })
 }
@@ -1771,6 +1784,16 @@ fn check_require_parentheses(source: RString) -> Vec<(usize, usize)> {
     )
 }
 
+/// Ruby entry point for `Lint/SelfAssignment`. Config-less from the Rust side
+/// (the `AllowRBSInlineAnnotation` filter is applied in the Ruby wrapper using
+/// `processed_source.ast_with_comments`, exactly like stock). Returns
+/// `[[start_offset, end_offset, rbs_anchor_offset], ...]`.
+fn check_self_assignment(source: RString) -> Vec<(usize, usize, usize)> {
+    map_self_assignment(shirobai_core::rules::self_assignment::check_self_assignment(
+        bytes(&source),
+    ))
+}
+
 /// Ruby entry point for `Layout/BlockAlignment`. `style` is the
 /// `EnforcedStyleAlignWith` selector (0 = either, 1 = start_of_block,
 /// 2 = start_of_line). Returns the shape documented on `map_block_alignment`.
@@ -1968,6 +1991,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_require_parentheses",
         function!(check_require_parentheses, 1),
+    )?;
+    module.define_module_function(
+        "check_self_assignment",
+        function!(check_self_assignment, 1),
     )?;
     module.define_module_function(
         "check_block_alignment",

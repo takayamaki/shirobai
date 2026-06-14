@@ -221,7 +221,14 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # Predicate-style call with an `&&` argument: the whole-call offense range
     # sits after the multibyte comment, so the byte offsets must be converted
     # to character offsets. No autocorrect, so no other ranges to check.
-    "Lint/RequireParentheses" => "day.is? '日本語' && month == :jan\n"
+    "Lint/RequireParentheses" => "day.is? '日本語' && month == :jan\n",
+    # `foo = foo` sits after the multibyte comment; the byte offsets of the
+    # whole-assignment offense range must be converted to character offsets.
+    # The body mixes assignment shapes (lvasgn, masgn, casgn, attribute setter
+    # and `[]=`) so each shape's offset path runs through `SourceOffsets`.
+    # No autocorrect, so no other ranges to check.
+    "Lint/SelfAssignment" =>
+      "x = x\nfoo, bar = foo, bar\nFoo = Foo\nself.あ = self.あ\nh[\"日本語\"] = h[\"日本語\"]\n"
   }
 
   cases.each do |cop_name, body|
