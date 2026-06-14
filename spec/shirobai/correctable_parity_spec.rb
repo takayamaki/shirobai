@@ -180,6 +180,11 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Layout::EndAlignment,
       "var = if test\nend\n"
     ],
+    "Layout/DefEndAlignment" => [
+      RuboCop::Cop::Layout::DefEndAlignment,
+      Shirobai::Cop::Layout::DefEndAlignment,
+      "def foo\n  end\n"
+    ],
     "Layout/BlockAlignment" => [
       RuboCop::Cop::Layout::BlockAlignment,
       Shirobai::Cop::Layout::BlockAlignment,

@@ -9,6 +9,7 @@ pub mod closing_parenthesis_indentation;
 pub mod code_length;
 pub mod complexity;
 pub mod debugger;
+pub mod def_end_alignment;
 pub mod dispatch;
 pub mod dot_position;
 pub mod empty_line_between_defs;

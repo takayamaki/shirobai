@@ -684,6 +684,25 @@ fn map_end_alignment(
         .collect()
 }
 
+/// `Layout/DefEndAlignment`: `[[end_start, end_end, matching, message, align_column], ...]`
+/// — same shape as `map_end_alignment`. `matching` lists the style ids the
+/// `end` already aligns with (0 = start_of_line, 1 = def), in the path's hash
+/// order; `message`/`align_column` are empty/0 when the configured style is
+/// matched (no offense).
+fn map_def_end_alignment(
+    v: Vec<shirobai_core::rules::def_end_alignment::DefEndAlignmentRecord>,
+) -> Vec<(usize, usize, Vec<u8>, String, usize)> {
+    v.into_iter()
+        .map(|r| {
+            let (message, align) = r
+                .offense
+                .map(|o| (o.message, o.align_column))
+                .unwrap_or_default();
+            (r.end_start, r.end_end, r.matching, message, align)
+        })
+        .collect()
+}
+
 /// `Layout/BlockAlignment`: `[[end_start, end_end, message, align_column], ...]`
 /// — `[end_start, end_end)` is the closing-token range (`end` / `}`);
 /// `message`/`align_column` carry the offense detail (only misaligned blocks
@@ -800,7 +819,7 @@ fn register_bundle_config(
 /// 41 trailing_comma_in_arguments / 42 string_literals_in_interpolation /
 /// 43 trailing_empty_lines / 44 space_around_method_call_operator /
 /// 45 space_around_keyword / 46 space_inside_block_braces /
-/// 47 method_length
+/// 47 method_length / 48 def_end_alignment
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -811,7 +830,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(48);
+        let ary = ruby.ary_new_capa(49);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -875,6 +894,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_space_around_keyword(r.space_around_keyword))?;
         ary.push(map_space_inside_block_braces(r.space_inside_block_braces))?;
         ary.push(map_method_length(r.method_length))?;
+        ary.push(map_def_end_alignment(r.def_end_alignment))?;
         Ok(ary)
     })
 }
@@ -1719,6 +1739,20 @@ fn check_end_alignment(source: RString, style: u8) -> Vec<(usize, usize, Vec<u8>
     ))
 }
 
+/// Ruby entry point for `Layout/DefEndAlignment`. `style` is the
+/// `EnforcedStyleAlignWith` selector (0 = start_of_line, 1 = def). Returns the
+/// shape documented on `map_def_end_alignment`.
+fn check_def_end_alignment(
+    source: RString,
+    style: u8,
+) -> Vec<(usize, usize, Vec<u8>, String, usize)> {
+    let cfg = shirobai_core::rules::def_end_alignment::Config { style };
+    map_def_end_alignment(shirobai_core::rules::def_end_alignment::check_def_end_alignment(
+        bytes(&source),
+        cfg,
+    ))
+}
+
 /// Ruby entry point for `Layout/BlockAlignment`. `style` is the
 /// `EnforcedStyleAlignWith` selector (0 = either, 1 = start_of_block,
 /// 2 = start_of_line). Returns the shape documented on `map_block_alignment`.
@@ -1909,6 +1943,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         function!(check_space_inside_block_braces, 4),
     )?;
     module.define_module_function("check_end_alignment", function!(check_end_alignment, 2))?;
+    module.define_module_function(
+        "check_def_end_alignment",
+        function!(check_def_end_alignment, 2),
+    )?;
     module.define_module_function(
         "check_block_alignment",
         function!(check_block_alignment, 2),

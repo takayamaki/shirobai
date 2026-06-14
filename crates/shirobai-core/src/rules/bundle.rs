@@ -10,7 +10,8 @@ use super::multiline_method_call_indentation::{self as mc, MethodCallIndentOffen
 use super::multiline_operation_indentation::{self as op, OperationIndentOffense};
 use super::{
     abc_size, argument_alignment, block_delimiters, block_length, block_nesting,
-    closing_parenthesis_indentation, complexity, debugger, dot_position, empty_line_between_defs,
+    closing_parenthesis_indentation, complexity, debugger, def_end_alignment, dot_position,
+    empty_line_between_defs,
     block_alignment, else_alignment, empty_lines_around_arguments, empty_lines_around_body,
     end_alignment,
     first_argument_indentation, first_array_element_indentation, first_hash_element_indentation,
@@ -104,6 +105,7 @@ pub fn check_multiline_bundle(
 /// | 77  | space_inside_block_braces space_before_block_parameters (`SpaceBeforeBlockParameters`) |
 /// | 78  | method_length_max (`Metrics/MethodLength` `Max`, default 10) |
 /// | 79  | method_length_count_comments (`CountComments`) |
+/// | 80  | def_end_alignment style (`Layout/DefEndAlignment` `EnforcedStyleAlignWith`: 0 = start_of_line, 1 = def) |
 ///
 /// `lists` (`Vec<String>`), 20 entries:
 ///
@@ -202,9 +204,10 @@ pub struct BundleConfig {
     pub method_length_max: usize,
     pub method_length_count_comments: bool,
     pub method_length_count_as_one: Vec<String>,
+    pub def_end_alignment: def_end_alignment::Config,
 }
 
-const NUMS_LEN: usize = 80;
+const NUMS_LEN: usize = 81;
 const LISTS_LEN: usize = 20;
 
 impl BundleConfig {
@@ -363,6 +366,9 @@ impl BundleConfig {
             method_length_max: nums[78] as usize,
             method_length_count_comments: nums[79] != 0,
             method_length_count_as_one: next_list(),
+            def_end_alignment: def_end_alignment::Config {
+                style: nums[80] as u8,
+            },
         })
     }
 }
@@ -435,6 +441,7 @@ pub struct BundleResult {
     pub space_inside_block_braces:
         Vec<space_inside_block_braces::SpaceInsideBlockBracesOffense>,
     pub method_length: Vec<method_length::MethodLengthCandidate>,
+    pub def_end_alignment: Vec<def_end_alignment::DefEndAlignmentRecord>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -561,6 +568,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         cfg.method_length_count_comments,
         &cfg.method_length_count_as_one,
     );
+    let mut dea_rule = def_end_alignment::build_rule(source, cfg.def_end_alignment);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -600,6 +608,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut sak_rule,
         &mut sibb_rule,
         &mut ml_rule,
+        &mut dea_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -653,6 +662,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let space_around_keyword = sak_rule.offenses;
     let space_inside_block_braces = sibb_rule.offenses;
     let method_length = ml_rule.out;
+    let def_end_alignment = dea_rule.records;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -718,6 +728,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         space_around_keyword,
         space_inside_block_braces,
         method_length,
+        def_end_alignment,
     }
 }
 
@@ -789,6 +800,7 @@ mod tests {
             0, // trailing_empty_lines: style (final_newline)
             0, 1, 1, // space_inside_block_braces: style(space) / empty(no_space) / sbbp(true)
             10, 0, // method_length: max(10) / count_comments
+            0, // def_end_alignment: style (start_of_line)
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
