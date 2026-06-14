@@ -1,4 +1,6 @@
-use ruby_prism::{Node, Visit, visit_call_node, visit_lambda_node};
+use ruby_prism::{
+    Node, Visit, visit_call_node, visit_forwarding_super_node, visit_lambda_node, visit_super_node,
+};
 
 use super::code_length::{CodeLength, Fold};
 
@@ -245,6 +247,40 @@ impl Visitor<'_> {
             );
         }
     }
+
+    /// `on_block` for `super do..end` / `super(arg) do..end`. parser-gem
+    /// represents this as a `block` whose send is a `super`/`zsuper`, with
+    /// `method_name == :super` and no receiver, so stock's `on_block` runs
+    /// `check_code_length` on it. Prism splits it off as `SuperNode` /
+    /// `ForwardingSuperNode` (carrying a `BlockNode`), which the generic call
+    /// visit doesn't see — without this hook a long `super do..end` is silently
+    /// missed (the BlockLength taking-too-many-lines offense on Discourse's
+    /// `plugins/chat/lib/discourse_dev/category_channel.rb` was this case).
+    fn process_super(&mut self, loc: ruby_prism::Location<'_>, block: Option<Node<'_>>) {
+        let Some(block) = block else { return };
+        let Some(block_node) = block.as_block_node() else {
+            return;
+        };
+        let length = self.body_length(block_node.body());
+        if length > self.max && !self.excluded("super", "") {
+            self.push_candidate(
+                loc.start_offset(),
+                loc.end_offset(),
+                block_node.opening_loc().end_offset(),
+                length,
+                "super".to_string(),
+                String::new(),
+            );
+        }
+    }
+
+    fn process_super_call(&mut self, node: &ruby_prism::SuperNode<'_>) {
+        self.process_super(node.location(), node.block());
+    }
+
+    fn process_forwarding_super(&mut self, node: &ruby_prism::ForwardingSuperNode<'_>) {
+        self.process_super(node.location(), node.block().map(|b| b.as_node()));
+    }
 }
 
 impl<'pr> Visit<'pr> for Visitor<'_> {
@@ -257,18 +293,33 @@ impl<'pr> Visit<'pr> for Visitor<'_> {
         self.process_lambda(node);
         visit_lambda_node(self, node);
     }
+
+    fn visit_super_node(&mut self, node: &ruby_prism::SuperNode<'pr>) {
+        self.process_super_call(node);
+        visit_super_node(self, node);
+    }
+
+    fn visit_forwarding_super_node(&mut self, node: &ruby_prism::ForwardingSuperNode<'pr>) {
+        self.process_forwarding_super(node);
+        visit_forwarding_super_node(self, node);
+    }
 }
 
 /// Shared-walk driver. The generic branch hook fires for every `CallNode` /
-/// `LambdaNode` the typed visits see except the `CallNode` reached through
-/// `MatchWriteNode`'s concretely-typed `call` field — an `=~` operator call,
-/// which never carries a block literal, so `process_call` skips it anyway.
+/// `LambdaNode` / `SuperNode` / `ForwardingSuperNode` the typed visits see
+/// except the `CallNode` reached through `MatchWriteNode`'s concretely-typed
+/// `call` field — an `=~` operator call, which never carries a block literal,
+/// so `process_call` skips it anyway.
 impl super::dispatch::Rule for Visitor<'_> {
     fn enter(&mut self, node: &Node<'_>) {
         if let Some(call) = node.as_call_node() {
             self.process_call(&call);
         } else if let Some(lambda) = node.as_lambda_node() {
             self.process_lambda(&lambda);
+        } else if let Some(s) = node.as_super_node() {
+            self.process_super_call(&s);
+        } else if let Some(s) = node.as_forwarding_super_node() {
+            self.process_forwarding_super(&s);
         }
     }
 
