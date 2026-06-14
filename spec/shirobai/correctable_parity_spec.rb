@@ -277,6 +277,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Lint::SelfAssignment,
       Shirobai::Cop::Lint::SelfAssignment,
       "foo = foo\nfoo.bar = foo.bar\nfoo['k'] = foo['k']\n"
+    ],
+    # A nested unparenthesized call inside a parenthesized one: the offense
+    # carries a `replace`+`insert_after` corrector (correctable). Guards that
+    # the wrapper attaches the corrector block in lint mode like stock.
+    "Style/NestedParenthesizedCalls" => [
+      RuboCop::Cop::Style::NestedParenthesizedCalls,
+      Shirobai::Cop::Style::NestedParenthesizedCalls,
+      "puts(compute something)\n"
     ]
   }
 

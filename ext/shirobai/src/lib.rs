@@ -724,6 +724,28 @@ fn map_self_assignment(
         .collect()
 }
 
+/// `Style/NestedParenthesizedCalls`: `[[start, end, ac_open_start, ac_open_end,
+/// ac_close_pos], ...]`. `[start, end)` is the inner unparenthesized call's
+/// full source range (offense highlight and message source); the wrapper
+/// replaces `[ac_open_start, ac_open_end)` with `(` (stock's surrounding-space
+/// `replace` op) and inserts `)` at `ac_close_pos` (right after the last inner
+/// argument).
+fn map_nested_parenthesized_calls(
+    v: Vec<shirobai_core::rules::nested_parenthesized_calls::NestedParenthesizedCallsOffense>,
+) -> Vec<(usize, usize, usize, usize, usize)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.start_offset,
+                o.end_offset,
+                o.ac_open_start,
+                o.ac_open_end,
+                o.ac_close_pos,
+            )
+        })
+        .collect()
+}
+
 /// `Layout/BlockAlignment`: `[[end_start, end_end, message, align_column], ...]`
 /// — `[end_start, end_end)` is the closing-token range (`end` / `}`);
 /// `message`/`align_column` carry the offense detail (only misaligned blocks
@@ -840,7 +862,8 @@ fn register_bundle_config(
 /// 41 trailing_comma_in_arguments / 42 string_literals_in_interpolation /
 /// 43 trailing_empty_lines / 44 space_around_method_call_operator /
 /// 45 space_around_keyword / 46 space_inside_block_braces /
-/// 47 method_length / 48 def_end_alignment
+/// 47 method_length / 48 def_end_alignment / 49 require_parentheses /
+/// 50 self_assignment / 51 nested_parenthesized_calls
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -918,6 +941,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_def_end_alignment(r.def_end_alignment))?;
         ary.push(map_require_parentheses(r.require_parentheses))?;
         ary.push(map_self_assignment(r.self_assignment))?;
+        ary.push(map_nested_parenthesized_calls(r.nested_parenthesized_calls))?;
         Ok(ary)
     })
 }
@@ -1794,6 +1818,21 @@ fn check_self_assignment(source: RString) -> Vec<(usize, usize, usize)> {
     ))
 }
 
+/// Ruby entry point for `Style/NestedParenthesizedCalls`. Takes the source and
+/// the `AllowedMethods` list (matched verbatim against the inner call's name).
+/// Returns `[[start, end, ac_open_start, ac_open_end, ac_close_pos], ...]`.
+fn check_nested_parenthesized_calls(
+    source: RString,
+    allowed_methods: Vec<String>,
+) -> Vec<(usize, usize, usize, usize, usize)> {
+    map_nested_parenthesized_calls(
+        shirobai_core::rules::nested_parenthesized_calls::check_nested_parenthesized_calls(
+            bytes(&source),
+            &allowed_methods,
+        ),
+    )
+}
+
 /// Ruby entry point for `Layout/BlockAlignment`. `style` is the
 /// `EnforcedStyleAlignWith` selector (0 = either, 1 = start_of_block,
 /// 2 = start_of_line). Returns the shape documented on `map_block_alignment`.
@@ -1995,6 +2034,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_self_assignment",
         function!(check_self_assignment, 1),
+    )?;
+    module.define_module_function(
+        "check_nested_parenthesized_calls",
+        function!(check_nested_parenthesized_calls, 2),
     )?;
     module.define_module_function(
         "check_block_alignment",

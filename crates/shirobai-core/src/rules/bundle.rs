@@ -17,7 +17,8 @@ use super::{
     first_argument_indentation, first_array_element_indentation, first_hash_element_indentation,
     hash_alignment, hash_each_methods, hash_syntax,
     indentation_consistency, indentation_width, line_end_concatenation, line_length,
-    line_length_breakable, method_length, method_name, predicate_prefix, redundant_self,
+    line_length_breakable, method_length, method_name, nested_parenthesized_calls,
+    predicate_prefix, redundant_self,
     require_parentheses, safe_navigation_chain, self_assignment,
     space_around_keyword, space_around_method_call_operator, space_inside_block_braces,
     string_literals,
@@ -131,6 +132,7 @@ pub fn check_multiline_bundle(
 /// | 17  | hash_alignment_rocket_styles (`EnforcedHashRocketStyle`, comma-joined `key`/`separator`/`table`) |
 /// | 18  | hash_alignment_colon_styles (`EnforcedColonStyle`, comma-joined) |
 /// | 19  | method_length_count_as_one (`Metrics/MethodLength` `CountAsOne`) |
+/// | 20  | nested_parenthesized_calls_allowed_methods (`Style/NestedParenthesizedCalls` `AllowedMethods`) |
 ///
 /// `Layout/IndentationWidth`'s `allowed_lines` and `prior_ranges` are fixed to
 /// empty in the bundle: the non-empty cases (configured `AllowedPatterns`,
@@ -205,10 +207,11 @@ pub struct BundleConfig {
     pub method_length_count_comments: bool,
     pub method_length_count_as_one: Vec<String>,
     pub def_end_alignment: def_end_alignment::Config,
+    pub nested_parenthesized_calls_allowed_methods: Vec<String>,
 }
 
 const NUMS_LEN: usize = 81;
-const LISTS_LEN: usize = 20;
+const LISTS_LEN: usize = 21;
 
 impl BundleConfig {
     /// Build a config from the flat wire format (see the struct docs for the
@@ -369,6 +372,7 @@ impl BundleConfig {
             def_end_alignment: def_end_alignment::Config {
                 style: nums[80] as u8,
             },
+            nested_parenthesized_calls_allowed_methods: next_list(),
         })
     }
 }
@@ -444,6 +448,8 @@ pub struct BundleResult {
     pub def_end_alignment: Vec<def_end_alignment::DefEndAlignmentRecord>,
     pub require_parentheses: Vec<require_parentheses::RequireParenthesesOffense>,
     pub self_assignment: Vec<self_assignment::SelfAssignmentOffense>,
+    pub nested_parenthesized_calls:
+        Vec<nested_parenthesized_calls::NestedParenthesizedCallsOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -573,6 +579,10 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut dea_rule = def_end_alignment::build_rule(source, cfg.def_end_alignment);
     let mut rp_rule = require_parentheses::build_rule();
     let mut sa_rule = self_assignment::build_rule(source);
+    let mut npc_rule = nested_parenthesized_calls::build_rule(
+        source,
+        &cfg.nested_parenthesized_calls_allowed_methods,
+    );
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -615,6 +625,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut dea_rule,
         &mut rp_rule,
         &mut sa_rule,
+        &mut npc_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -671,6 +682,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let def_end_alignment = dea_rule.records;
     let require_parentheses = rp_rule.offenses;
     let self_assignment = sa_rule.offenses;
+    let nested_parenthesized_calls = npc_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -739,6 +751,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         def_end_alignment,
         require_parentheses,
         self_assignment,
+        nested_parenthesized_calls,
     }
 }
 
@@ -837,6 +850,9 @@ mod tests {
             vec!["key".to_string()], // hash_alignment: rocket styles
             vec!["key".to_string()], // hash_alignment: colon styles
             vec![],                  // method_length: count_as_one
+            ["be", "be_a", "be_an", "be_between", "be_falsey", "be_kind_of", "be_instance_of",
+             "be_truthy", "be_within", "eq", "eql", "end_with", "include", "match",
+             "raise_error", "respond_to", "start_with"].map(String::from).to_vec(),
         ];
         (nums, lists)
     }

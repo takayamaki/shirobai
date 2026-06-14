@@ -68,7 +68,8 @@ module Shirobai
       method_length: 47,
       def_end_alignment: 48,
       require_parentheses: 49,
-      self_assignment: 50
+      self_assignment: 50,
+      nested_parenthesized_calls: 51
     }.freeze
 
     class << self
@@ -143,6 +144,7 @@ module Shirobai
         sibb = Cop::Layout::SpaceInsideBlockBraces.bundle_args(config)
         ml = Cop::Metrics::MethodLength.bundle_args(config)
         dea = Cop::Layout::DefEndAlignment.bundle_args(config)
+        npc = Cop::Style::NestedParenthesizedCalls.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -181,7 +183,7 @@ module Shirobai
           dea[0] # DefEndAlignment style
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
-                 uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2]]
+                 uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0]]
         [nums, lists]
       end
 

@@ -228,7 +228,14 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # and `[]=`) so each shape's offset path runs through `SourceOffsets`.
     # No autocorrect, so no other ranges to check.
     "Lint/SelfAssignment" =>
-      "x = x\nfoo, bar = foo, bar\nFoo = Foo\nself.あ = self.あ\nh[\"日本語\"] = h[\"日本語\"]\n"
+      "x = x\nfoo, bar = foo, bar\nFoo = Foo\nself.あ = self.あ\nh[\"日本語\"] = h[\"日本語\"]\n",
+    # Nested unparenthesized call inside a parenthesized one, with multibyte
+    # method names and arguments after the multibyte comment. Exercises the
+    # offense range and both autocorrect anchors (the surrounding-space
+    # replace `[ac_open_start, ac_open_end)` and the zero-width
+    # `insert_after` at `ac_close_pos`).
+    "Style/NestedParenthesizedCalls" =>
+      "puts(compute 日本語)\n"
   }
 
   cases.each do |cop_name, body|
