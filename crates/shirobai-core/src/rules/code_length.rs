@@ -179,7 +179,21 @@ impl<'a> CodeLength<'a> {
             span(r.location());
         }
         if let Some(e) = begin.else_clause() {
-            span(e.location());
+            // Prism's `ElseNode` (in a begin/rescue/else context) location
+            // extends through the enclosing `end` keyword when no `ensure`
+            // follows; with `ensure`, it ends at the `ensure` keyword. The
+            // parser-gem `else` body stops before whichever closing keyword
+            // comes next. Cap the span at `end_keyword_loc` (which always
+            // points to that closing keyword) so the trailing `end` / `ensure`
+            // line is not counted — matching the existing `ensure_clause`
+            // handling below. Without this, methods that close a `rescue` body
+            // with `else` count the `end` line as one extra body line.
+            let loc = e.location();
+            let content_end = e
+                .end_keyword_loc()
+                .map_or(loc.end_offset(), |k| k.start_offset());
+            lo = Some(lo.map_or(loc.start_offset(), |v| v.min(loc.start_offset())));
+            hi = Some(hi.map_or(content_end, |v| v.max(content_end)));
         }
         if let Some(e) = begin.ensure_clause() {
             // Prism's `EnsureNode` location includes the enclosing `end`
