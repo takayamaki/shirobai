@@ -145,6 +145,16 @@ enum FrameKind {
     Pair {
         key: (usize, usize),
     },
+    /// `HashNode` or `KeywordHashNode` — the parser-AST `:hash` parent of a
+    /// pair. Tracked explicitly so `inside_multiline_chain_arg?` can find
+    /// `pair.parent` (the hash) without confusing it with arbitrary `Other`
+    /// frames sitting between the pair and the hash.
+    Hash,
+    /// `ArgumentsNode` — a prism-only wrapper that holds the actual argument
+    /// nodes of a `CallNode`. Parser-gem has no equivalent: arguments are
+    /// direct children of `:send`. To mirror stock's `hash.parent == call`
+    /// step we must transparently walk through this wrapper.
+    Arguments,
     Paren,
     Unaligned,
     Other,
@@ -935,10 +945,30 @@ impl<'a> Visitor<'a> {
         self.line_of(dot) == self.line_of(node_range.0) && self.col(dot) == self.col(rhs.0)
     }
 
-    /// `inside_multiline_chain_arg?`: the hash holding this pair is an argument of
-    /// an enclosing dotted call whose selector and receiver sit on different
-    /// lines. (Prism interposes `KeywordHashNode`/`ArgumentsNode` between the
-    /// pair and the call, where parser links the hash straight to the send.)
+    /// `inside_multiline_chain_arg?`: the hash holding this pair is an argument
+    /// of an enclosing dotted call whose selector and receiver sit on different
+    /// lines.
+    ///
+    /// Stock walks `pair.parent` (the hash) and looks at `hash.parent` —
+    /// the **direct** AST parent. In parser-gem the hash is linked straight to
+    /// the enclosing `:send` (as a regular or kwargs argument), so a single
+    /// `.parent` lands on the call. In prism the same structural relationship
+    /// has an extra `ArgumentsNode` wrapper between the hash and the call (and,
+    /// for braceless kwargs, a `KeywordHashNode` between the pair and the
+    /// `ArgumentsNode`). Both wrappers are inert positional containers that
+    /// parser does not emit; we must walk through them transparently — but
+    /// nothing else.
+    ///
+    /// Crucially, if the next non-wrapper frame above the hash is NOT a Send
+    /// (e.g. a `StatementsNode` sitting inside a block body, an `if` body, a
+    /// method body), then the hash is *not* a direct argument of an enclosing
+    /// call. Stock returns nil there. We must not keep climbing in search of
+    /// an arbitrarily distant enclosing chain, or we misattribute the hash to
+    /// whichever far-up multi-line Send happens to be reachable (the
+    /// Discourse `xml_tool_processor.rb` regress: a hash sat inside a
+    /// `.map do …` block body and we picked up `.map` as the enclosing
+    /// chain, returning a false `inside_multiline_chain_arg? == true` and
+    /// suppressing the legitimate hash-pair offense).
     fn inside_multiline_chain_arg(&self, _node_range: (usize, usize)) -> bool {
         let mut it = self.stack.iter().rev();
         for f in it.by_ref() {
@@ -950,17 +980,25 @@ impl<'a> Visitor<'a> {
         let Some(hash_start) = it.next().map(|f| f.start) else {
             return false;
         };
-        // Nearest enclosing call above the pair (skipping hash/arguments wrappers).
+        // Walk only `ArgumentsNode` wrappers (FrameKind::Arguments) on the way
+        // up; the first non-wrapper frame must be Send to count. Any other
+        // node type means the hash is not a direct call argument and stock
+        // returns nil (= false).
         for f in it {
-            if let FrameKind::Send { dot, selector, .. } = &f.kind {
-                return match (dot, selector) {
-                    // `hash_arg_in_chain?`: the call must not have the hash as its
-                    // receiver, and its selector/receiver span different lines.
-                    (Some(_), Some(sel)) => {
-                        f.start != hash_start && self.line_of(sel.0) != self.line_of(f.start)
-                    }
-                    _ => false,
-                };
+            match &f.kind {
+                FrameKind::Arguments => continue,
+                FrameKind::Send { dot, selector, .. } => {
+                    return match (dot, selector) {
+                        // `hash_arg_in_chain?`: the call must not have the hash
+                        // as its receiver, and its selector/receiver span
+                        // different lines.
+                        (Some(_), Some(sel)) => {
+                            f.start != hash_start && self.line_of(sel.0) != self.line_of(f.start)
+                        }
+                        _ => false,
+                    };
+                }
+                _ => return false,
             }
         }
         false
@@ -1148,6 +1186,12 @@ impl<'a> Visitor<'a> {
             return FrameKind::Pair {
                 key: loc(&n.key().location()),
             };
+        }
+        if node.as_hash_node().is_some() || node.as_keyword_hash_node().is_some() {
+            return FrameKind::Hash;
+        }
+        if node.as_arguments_node().is_some() {
+            return FrameKind::Arguments;
         }
         if let Some(rhs) = assignment_value(node) {
             return FrameKind::Assignment { rhs };
@@ -1396,4 +1440,5 @@ mod tests {
         assert_eq!(got[0].2, 2);
         assert!(got[0].3.contains("Use 2 (not 0)"), "{}", got[0].3);
     }
+
 }

@@ -172,6 +172,88 @@ RSpec.describe Shirobai::Cop::Layout::MultilineMethodCallIndentation do
     expect(stock.first[2]).to include("Align `.new` with")
   end
 
+  it "flags hash-pair value chain links when the hash sits inside a block body (Discourse xml_tool_processor)" do
+    # Minimised from `discourse-ai/lib/completions/xml_tool_processor.rb`
+    # 178-191. The pattern is `hash_key: value_chain` where `value_chain` is
+    # `receiver\n  .scan(...)\n  .each_with_object(...)`, and the hash itself
+    # sits inside a `.map do |...| { ... } end` block body. Stock walks
+    # `pair.parent` (the hash) and inspects `hash.parent` — the IMMEDIATE AST
+    # parent — finding the StatementsNode of the block body, NOT a call. So
+    # `inside_multiline_chain_arg?` returns nil and the cop falls through to
+    # `first_dot_alignment_base`/`lhs.source_range`, flagging the chain
+    # links against the value anchor `params` on the previous line.
+    #
+    # shirobai used to keep climbing past the StatementsNode (and the block
+    # body, and the block, and the receiver chain wrappers) until it found
+    # the multi-line `.map` selector on a different line from its receiver,
+    # then misattribute the hash to `.map` as an "enclosing chain arg".
+    # That silenced the offense (Discourse -2 MMCI; sh-only=0, st-only=2).
+    src = <<~RUBY
+      def foo
+        bar
+          .map do |tool_name, params|
+            {
+              tool_name: tool_name.strip,
+              parameters:
+                params
+                  .scan(%r{<([^>]+)>(.*?)</\\1>}mx)
+                  .each_with_object({}) do |(name, value), hash|
+                    hash[name.to_sym] = value
+                  end,
+            }
+          end
+      end
+    RUBY
+    stock = expect_lint_parity(*klasses, src, aligned_config)
+    # `.scan` and `.each_with_object` both align against `params`.
+    expect(stock.size).to eq(2)
+    expect(stock.map { |o| o[2] }).to include(
+      a_string_including("Align `.scan` with `params`"),
+      a_string_including("Align `.each_with_object` with `params`")
+    )
+  end
+
+  it "still suppresses chain link alignment when the hash IS a direct call argument" do
+    # Positive control of the previous spec's negative pivot: when the hash
+    # IS a direct argument of an enclosing multi-line dotted call (i.e.
+    # `hash.parent` truly is a CallNode with a dot, mediated only by prism's
+    # ArgumentsNode wrapper), `inside_multiline_chain_arg?` SHOULD return
+    # true and stock returns nil from `check_hash_pair_indentation` — no
+    # offense for the chain link. Guards against over-flagging the genuine
+    # "hash as a chain argument" pattern.
+    src = <<~RUBY
+      foo
+        .bar(
+          parameters:
+            params
+              .scan(/x/)
+              .each { |x| x },
+        )
+    RUBY
+    expect_lint_parity(*klasses, src, aligned_config, expect_offenses: false)
+  end
+
+  it "flags a genuinely misaligned hash-pair chain value as a negative control" do
+    # Both `.bar` and `.baz` are mis-indented past the value anchor `params`.
+    # Stock reports an offense for each link aligning them with `params`.
+    # Guards against the fix over-suppressing legitimate offenses in the
+    # hash-pair chain context.
+    src = <<~RUBY
+      def m
+        { key:
+            params
+              .bar
+                .baz }
+      end
+    RUBY
+    stock = expect_lint_parity(*klasses, src, aligned_config)
+    expect(stock.size).to eq(2)
+    expect(stock.map { |o| o[2] }).to include(
+      a_string_including("Align `.bar` with `params`"),
+      a_string_including("Align `.baz` with `params`")
+    )
+  end
+
   it "respects only the FIRST descendant block's single-line/multi-line status" do
     # Minimised from `discourse-reactions/plugin.rb` 268 ff. The hash on `.new`
     # leads with `threshold: -> { ... }` — a single-line lambda. Stock's
