@@ -476,16 +476,22 @@ impl<'a> Visitor<'a> {
     }
 
     /// `single_line_block_receiver?` → `receiver.send_node`'s `dot.join(selector)`:
-    /// a single-line call carrying a block.
+    /// a single-line call carrying a block. In stock the Parser AST wraps the
+    /// `send` in a `:block` whose `single_line?` covers `dot ~ block-end` only —
+    /// not the full receiver chain. In prism a `CallNode` location spans the
+    /// whole chain, so we measure single-line-ness from the call's dot (or its
+    /// message when there is no dot) to its block's end.
     fn block_receiver_dot(&self, receiver: &Node<'_>) -> Option<(usize, usize)> {
         let c = receiver.as_call_node()?;
-        c.block().and_then(|b| b.as_block_node())?;
-        if !self.is_single_line(loc(&receiver.location())) {
-            return None;
-        }
+        let blk = c.block().and_then(|b| b.as_block_node())?;
         let dot = c.call_operator_loc()?;
         let sel = c.message_loc()?;
-        Some((dot.start_offset(), sel.end_offset()))
+        let span_start = dot.start_offset();
+        let span_end = blk.as_node().location().end_offset();
+        if self.line_of(span_start) != self.line_of(span_end) {
+            return None;
+        }
+        Some((span_start, sel.end_offset()))
     }
 
     fn find_continuation_base(
@@ -681,7 +687,18 @@ impl<'a> Visitor<'a> {
             return;
         }
 
-        let lhs = self.left_hand_side(node_range);
+        // Stock's `left_hand_side` walks `lhs.parent` while it is a call_type
+        // with a dot. In Parser AST a call carrying a block is wrapped in a
+        // `:block` (not call_type), so the walk terminates at the call itself.
+        // In prism the same call has the block as a *child*, so a naive parent
+        // walk happily climbs through to the enclosing send. Mirror stock by
+        // stopping at `node_range` when this call has a block.
+        let call_has_block = call.block().and_then(|b| b.as_block_node()).is_some();
+        let lhs = if call_has_block {
+            node_range
+        } else {
+            self.left_hand_side(node_range)
+        };
         let Some((correct_column, message)) = self.offending(call, node_range, lhs, rhs) else {
             return;
         };
