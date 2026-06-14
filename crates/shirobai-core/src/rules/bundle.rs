@@ -18,6 +18,7 @@ use super::{
     hash_alignment, hash_each_methods, hash_syntax,
     indentation_consistency, indentation_width, line_end_concatenation, line_length,
     line_length_breakable, method_length, method_name, nested_parenthesized_calls,
+    parentheses_as_grouped_expression,
     predicate_prefix, redundant_self,
     require_parentheses, safe_navigation_chain, self_assignment,
     space_around_keyword, space_around_method_call_operator, space_inside_block_braces,
@@ -209,6 +210,10 @@ pub struct BundleConfig {
     pub def_end_alignment: def_end_alignment::Config,
     pub nested_parenthesized_calls_allowed_methods: Vec<String>,
 }
+
+// `Lint/ParenthesesAsGroupedExpression` carries no config so it doesn't appear
+// in the `nums` / `lists` packing; the bundle still computes its slot in the
+// shared walk (see `check_all_bundle` below).
 
 const NUMS_LEN: usize = 81;
 const LISTS_LEN: usize = 21;
@@ -450,6 +455,8 @@ pub struct BundleResult {
     pub self_assignment: Vec<self_assignment::SelfAssignmentOffense>,
     pub nested_parenthesized_calls:
         Vec<nested_parenthesized_calls::NestedParenthesizedCallsOffense>,
+    pub parentheses_as_grouped_expression:
+        Vec<parentheses_as_grouped_expression::ParenthesesAsGroupedExpressionOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -583,6 +590,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         source,
         &cfg.nested_parenthesized_calls_allowed_methods,
     );
+    let mut pag_rule = parentheses_as_grouped_expression::build_rule();
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -626,6 +634,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut rp_rule,
         &mut sa_rule,
         &mut npc_rule,
+        &mut pag_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -683,6 +692,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let require_parentheses = rp_rule.offenses;
     let self_assignment = sa_rule.offenses;
     let nested_parenthesized_calls = npc_rule.offenses;
+    let parentheses_as_grouped_expression = pag_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -752,6 +762,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         require_parentheses,
         self_assignment,
         nested_parenthesized_calls,
+        parentheses_as_grouped_expression,
     }
 }
 

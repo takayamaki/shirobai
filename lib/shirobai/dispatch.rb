@@ -69,7 +69,8 @@ module Shirobai
       def_end_alignment: 48,
       require_parentheses: 49,
       self_assignment: 50,
-      nested_parenthesized_calls: 51
+      nested_parenthesized_calls: 51,
+      parentheses_as_grouped_expression: 52
     }.freeze
 
     class << self
@@ -145,6 +146,8 @@ module Shirobai
         ml = Cop::Metrics::MethodLength.bundle_args(config)
         dea = Cop::Layout::DefEndAlignment.bundle_args(config)
         npc = Cop::Style::NestedParenthesizedCalls.bundle_args(config)
+        # Lint::ParenthesesAsGroupedExpression is config-less; its
+        # `bundle_args` returns `[]` and contributes nothing to `nums` / `lists`.
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)

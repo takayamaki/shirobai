@@ -746,6 +746,22 @@ fn map_nested_parenthesized_calls(
         .collect()
 }
 
+/// `Lint/ParenthesesAsGroupedExpression`: `[[space_start, space_end, arg_start,
+/// arg_end], ...]`. `[space_start, space_end)` is the whitespace run between
+/// the selector and the `(` — this is both the offense highlight and the
+/// autocorrect `remove` range (matches stock's `corrector.remove(range)`).
+/// `[arg_start, arg_end)` is the first argument's full source range; the
+/// wrapper reads `source[arg_start..arg_end]` for the `MSG` substitution.
+fn map_parentheses_as_grouped_expression(
+    v: Vec<
+        shirobai_core::rules::parentheses_as_grouped_expression::ParenthesesAsGroupedExpressionOffense,
+    >,
+) -> Vec<(usize, usize, usize, usize)> {
+    v.into_iter()
+        .map(|o| (o.space_start, o.space_end, o.arg_start, o.arg_end))
+        .collect()
+}
+
 /// `Layout/BlockAlignment`: `[[end_start, end_end, message, align_column], ...]`
 /// — `[end_start, end_end)` is the closing-token range (`end` / `}`);
 /// `message`/`align_column` carry the offense detail (only misaligned blocks
@@ -863,7 +879,8 @@ fn register_bundle_config(
 /// 43 trailing_empty_lines / 44 space_around_method_call_operator /
 /// 45 space_around_keyword / 46 space_inside_block_braces /
 /// 47 method_length / 48 def_end_alignment / 49 require_parentheses /
-/// 50 self_assignment / 51 nested_parenthesized_calls
+/// 50 self_assignment / 51 nested_parenthesized_calls /
+/// 52 parentheses_as_grouped_expression
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -942,6 +959,9 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_require_parentheses(r.require_parentheses))?;
         ary.push(map_self_assignment(r.self_assignment))?;
         ary.push(map_nested_parenthesized_calls(r.nested_parenthesized_calls))?;
+        ary.push(map_parentheses_as_grouped_expression(
+            r.parentheses_as_grouped_expression,
+        ))?;
         Ok(ary)
     })
 }
@@ -1833,6 +1853,18 @@ fn check_nested_parenthesized_calls(
     )
 }
 
+/// Ruby entry point for `Lint/ParenthesesAsGroupedExpression`. Config-less.
+/// Returns `[[space_start, space_end, arg_start, arg_end], ...]`.
+fn check_parentheses_as_grouped_expression(
+    source: RString,
+) -> Vec<(usize, usize, usize, usize)> {
+    map_parentheses_as_grouped_expression(
+        shirobai_core::rules::parentheses_as_grouped_expression::check_parentheses_as_grouped_expression(
+            bytes(&source),
+        ),
+    )
+}
+
 /// Ruby entry point for `Layout/BlockAlignment`. `style` is the
 /// `EnforcedStyleAlignWith` selector (0 = either, 1 = start_of_block,
 /// 2 = start_of_line). Returns the shape documented on `map_block_alignment`.
@@ -2038,6 +2070,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_nested_parenthesized_calls",
         function!(check_nested_parenthesized_calls, 2),
+    )?;
+    module.define_module_function(
+        "check_parentheses_as_grouped_expression",
+        function!(check_parentheses_as_grouped_expression, 1),
     )?;
     module.define_module_function(
         "check_block_alignment",

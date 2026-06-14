@@ -235,7 +235,13 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # replace `[ac_open_start, ac_open_end)` and the zero-width
     # `insert_after` at `ac_close_pos`).
     "Style/NestedParenthesizedCalls" =>
-      "puts(compute 日本語)\n"
+      "puts(compute 日本語)\n",
+    # Space-before-`(` call where both the offense (the space) and the message
+    # source (the `(...)` argument) come after the multibyte comment. The
+    # message embeds the multibyte argument source verbatim, so the wrapper's
+    # `arg_start..arg_end` byte→char conversion is on the offense path.
+    "Lint/ParenthesesAsGroupedExpression" =>
+      "あ.func (日本語)\n"
   }
 
   cases.each do |cop_name, body|

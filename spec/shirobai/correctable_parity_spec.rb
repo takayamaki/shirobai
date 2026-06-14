@@ -285,6 +285,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Style::NestedParenthesizedCalls,
       Shirobai::Cop::Style::NestedParenthesizedCalls,
       "puts(compute something)\n"
+    ],
+    # A space-before-`(` call: the offense carries a `remove(range)` corrector
+    # (correctable). Guards that the wrapper attaches the corrector block in
+    # lint mode like stock.
+    "Lint/ParenthesesAsGroupedExpression" => [
+      RuboCop::Cop::Lint::ParenthesesAsGroupedExpression,
+      Shirobai::Cop::Lint::ParenthesesAsGroupedExpression,
+      "a.func (x)\n"
     ]
   }
 
