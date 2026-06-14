@@ -260,6 +260,15 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Layout::SpaceInsideBlockBraces,
       Shirobai::Cop::Layout::SpaceInsideBlockBraces,
       "foo.each {puts x}\n"
+    ],
+    # A predicate-style call with an `&&` argument: stock has no autocorrect,
+    # so both stock and shirobai offenses must stay `:unsupported` (never
+    # correctable). Guards that the wrapper does not accidentally attach a
+    # corrector block.
+    "Lint/RequireParentheses" => [
+      RuboCop::Cop::Lint::RequireParentheses,
+      Shirobai::Cop::Lint::RequireParentheses,
+      "day.is? 'monday' && month == :jan\n"
     ]
   }
 

@@ -703,6 +703,15 @@ fn map_def_end_alignment(
         .collect()
 }
 
+/// `Lint/RequireParentheses`: `[[start_offset, end_offset], ...]`.
+fn map_require_parentheses(
+    v: Vec<shirobai_core::rules::require_parentheses::RequireParenthesesOffense>,
+) -> Vec<(usize, usize)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset))
+        .collect()
+}
+
 /// `Layout/BlockAlignment`: `[[end_start, end_end, message, align_column], ...]`
 /// — `[end_start, end_end)` is the closing-token range (`end` / `}`);
 /// `message`/`align_column` carry the offense detail (only misaligned blocks
@@ -830,7 +839,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(49);
+        let ary = ruby.ary_new_capa(50);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -895,6 +904,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_space_inside_block_braces(r.space_inside_block_braces))?;
         ary.push(map_method_length(r.method_length))?;
         ary.push(map_def_end_alignment(r.def_end_alignment))?;
+        ary.push(map_require_parentheses(r.require_parentheses))?;
         Ok(ary)
     })
 }
@@ -1753,6 +1763,14 @@ fn check_def_end_alignment(
     ))
 }
 
+/// Ruby entry point for `Lint/RequireParentheses`. Config-less. Returns
+/// `[[start_offset, end_offset], ...]`.
+fn check_require_parentheses(source: RString) -> Vec<(usize, usize)> {
+    map_require_parentheses(
+        shirobai_core::rules::require_parentheses::check_require_parentheses(bytes(&source)),
+    )
+}
+
 /// Ruby entry point for `Layout/BlockAlignment`. `style` is the
 /// `EnforcedStyleAlignWith` selector (0 = either, 1 = start_of_block,
 /// 2 = start_of_line). Returns the shape documented on `map_block_alignment`.
@@ -1946,6 +1964,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_def_end_alignment",
         function!(check_def_end_alignment, 2),
+    )?;
+    module.define_module_function(
+        "check_require_parentheses",
+        function!(check_require_parentheses, 1),
     )?;
     module.define_module_function(
         "check_block_alignment",

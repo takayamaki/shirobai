@@ -66,7 +66,8 @@ module Shirobai
       space_around_keyword: 45,
       space_inside_block_braces: 46,
       method_length: 47,
-      def_end_alignment: 48
+      def_end_alignment: 48,
+      require_parentheses: 49
     }.freeze
 
     class << self

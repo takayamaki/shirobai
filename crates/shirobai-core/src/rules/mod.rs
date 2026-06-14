@@ -36,6 +36,7 @@ pub mod multiline_operation_indentation;
 pub mod parse_cache;
 pub mod predicate_prefix;
 pub mod redundant_self;
+pub mod require_parentheses;
 pub mod safe_navigation_chain;
 pub mod space_around_keyword;
 pub mod space_around_method_call_operator;

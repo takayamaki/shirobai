@@ -217,7 +217,11 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # before `}`) sit after the multibyte comment and contain a multibyte inner
     # body, so their byte offsets are shifted ahead of the char offsets and must
     # be converted; both spaces are inserted under the default `space` style.
-    "Layout/SpaceInsideBlockBraces" => "foo.each {puts 日本語}\n"
+    "Layout/SpaceInsideBlockBraces" => "foo.each {puts 日本語}\n",
+    # Predicate-style call with an `&&` argument: the whole-call offense range
+    # sits after the multibyte comment, so the byte offsets must be converted
+    # to character offsets. No autocorrect, so no other ranges to check.
+    "Lint/RequireParentheses" => "day.is? '日本語' && month == :jan\n"
   }
 
   cases.each do |cop_name, body|

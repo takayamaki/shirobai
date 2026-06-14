@@ -18,7 +18,7 @@ use super::{
     hash_alignment, hash_each_methods, hash_syntax,
     indentation_consistency, indentation_width, line_end_concatenation, line_length,
     line_length_breakable, method_length, method_name, predicate_prefix, redundant_self,
-    safe_navigation_chain,
+    require_parentheses, safe_navigation_chain,
     space_around_keyword, space_around_method_call_operator, space_inside_block_braces,
     string_literals,
     string_literals_in_interpolation,
@@ -442,6 +442,7 @@ pub struct BundleResult {
         Vec<space_inside_block_braces::SpaceInsideBlockBracesOffense>,
     pub method_length: Vec<method_length::MethodLengthCandidate>,
     pub def_end_alignment: Vec<def_end_alignment::DefEndAlignmentRecord>,
+    pub require_parentheses: Vec<require_parentheses::RequireParenthesesOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -569,6 +570,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &cfg.method_length_count_as_one,
     );
     let mut dea_rule = def_end_alignment::build_rule(source, cfg.def_end_alignment);
+    let mut rp_rule = require_parentheses::build_rule();
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -609,6 +611,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut sibb_rule,
         &mut ml_rule,
         &mut dea_rule,
+        &mut rp_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -663,6 +666,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let space_inside_block_braces = sibb_rule.offenses;
     let method_length = ml_rule.out;
     let def_end_alignment = dea_rule.records;
+    let require_parentheses = rp_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -729,6 +733,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         space_inside_block_braces,
         method_length,
         def_end_alignment,
+        require_parentheses,
     }
 }
 
@@ -1759,6 +1764,33 @@ mod tests {
             assert_eq!(
                 (a.start_offset, a.end_offset, a.head_end, a.length, &a.name, a.filterable),
                 (b.start_offset, b.end_offset, b.head_end, b.length, &b.name, b.filterable)
+            );
+        }
+    }
+
+    /// `Lint/RequireParentheses` merged into the shared walk must report
+    /// exactly what its standalone entry point reports, over a source that
+    /// covers the two stock branches: a predicate send with an `&&` last
+    /// argument, and a non-predicate ternary first-argument whose condition is
+    /// `&&` (the latter must NOT trigger the ternary branch — first argument is
+    /// an `IfNode` only when the method's first argument actually IS a
+    /// ternary).
+    #[test]
+    fn shared_walk_matches_standalone_require_parentheses() {
+        let src = "day.is? 'monday' && month == :jan\n\
+                   wd.include? 'tuesday' && true == true ? a : b\n\
+                   weekdays.foo 'tuesday' && true == true\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::require_parentheses::check_require_parentheses(src.as_bytes());
+        assert_eq!(bundle.require_parentheses.len(), alone.len());
+        assert_eq!(bundle.require_parentheses.len(), 2);
+        for (a, b) in bundle.require_parentheses.iter().zip(&alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset),
+                (b.start_offset, b.end_offset)
             );
         }
     }
