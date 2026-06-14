@@ -352,9 +352,27 @@ impl Scorer<'_> {
 
     fn score_simple(&mut self, node: &Node<'_>) {
         match node {
-            Node::WhileNode { .. }
-            | Node::UntilNode { .. }
-            | Node::ForNode { .. }
+            // `while` / `until`. A `begin ... end while expr` post-loop is a
+            // distinct `while_post` / `until_post` node in parser-gem, which
+            // stock's `COUNTED_NODES` does not include; prism collapses both
+            // into `WhileNode` / `UntilNode` flagged by `begin_modifier?`. Skip
+            // the post-loop variant so its decision point is not counted, just
+            // like stock.
+            Node::WhileNode { .. } => {
+                if let Some(w) = node.as_while_node()
+                    && !w.is_begin_modifier()
+                {
+                    self.add_both(1);
+                }
+            }
+            Node::UntilNode { .. } => {
+                if let Some(u) = node.as_until_node()
+                    && !u.is_begin_modifier()
+                {
+                    self.add_both(1);
+                }
+            }
+            Node::ForNode { .. }
             | Node::InNode { .. }
             | Node::AndNode { .. }
             | Node::OrNode { .. }
