@@ -42,6 +42,7 @@ pub mod parse_cache;
 pub mod percent_literal_delimiters;
 pub mod predicate_prefix;
 pub mod redundant_self;
+pub mod redundant_self_assignment;
 pub mod require_parentheses;
 pub mod safe_navigation_chain;
 pub mod self_assignment;

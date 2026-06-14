@@ -22,7 +22,7 @@ use super::{
     multiline_method_call_brace_layout, nested_parenthesized_calls,
     parentheses_as_grouped_expression,
     percent_literal_delimiters,
-    predicate_prefix, redundant_self,
+    predicate_prefix, redundant_self, redundant_self_assignment,
     require_parentheses, safe_navigation_chain, self_assignment,
     space_around_keyword, space_around_method_call_operator, space_inside_block_braces,
     string_literals,
@@ -511,6 +511,8 @@ pub struct BundleResult {
     pub access_modifier_indentation:
         Vec<access_modifier_indentation::AccessModifierIndentationRecord>,
     pub assignment_indentation: Vec<assignment_indentation::AssignmentIndentationOffense>,
+    pub redundant_self_assignment:
+        Vec<redundant_self_assignment::RedundantSelfAssignmentOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -654,6 +656,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut ami_rule =
         access_modifier_indentation::build_rule(source, cfg.access_modifier_indentation);
     let mut ai_rule = assignment_indentation::build_rule(source, cfg.assignment_indentation);
+    let mut rsa_rule = redundant_self_assignment::build_rule(source);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -702,6 +705,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut mmcbl_rule,
         &mut ami_rule,
         &mut ai_rule,
+        &mut rsa_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -764,6 +768,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let multiline_method_call_brace_layout = mmcbl_rule.offenses;
     let access_modifier_indentation = ami_rule.records;
     let assignment_indentation = ai_rule.offenses;
+    let redundant_self_assignment = rsa_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -838,6 +843,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         multiline_method_call_brace_layout,
         access_modifier_indentation,
         assignment_indentation,
+        redundant_self_assignment,
     }
 }
 

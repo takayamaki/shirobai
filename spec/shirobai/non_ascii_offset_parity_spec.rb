@@ -270,7 +270,15 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # `(rhs_start, rhs_end)` byte→char conversion as well as relocating the
     # `Parser::AST::Node` by char offset for `AlignmentCorrector#correct`.
     "Layout/AssignmentIndentation" =>
-      "日本語 =\nif b ; end\n"
+      "日本語 =\nif b ; end\n",
+    # Both flavors (variable assignment + setter) plus the rhs slice the
+    # wrapper does `source.byteslice` on for kind=0 — every offset must be
+    # converted from prism's byte basis to `Parser::Source::Range` characters,
+    # and `byteslice(rhs_start, rhs_end - rhs_start)` must use the *byte*
+    # offset (Rust hands us byte indices) so the multibyte rhs source survives
+    # round-trip.
+    "Style/RedundantSelfAssignment" =>
+      "foo = foo.concat(日本)\nother.bar = other.bar.concat(日本)\n"
   }
 
   cases.each do |cop_name, body|

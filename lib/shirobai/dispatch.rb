@@ -74,7 +74,8 @@ module Shirobai
       percent_literal_delimiters: 53,
       multiline_method_call_brace_layout: 54,
       access_modifier_indentation: 55,
-      assignment_indentation: 56
+      assignment_indentation: 56,
+      redundant_self_assignment: 57
     }.freeze
 
     class << self

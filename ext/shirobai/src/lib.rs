@@ -850,6 +850,37 @@ fn map_assignment_indentation(
         .collect()
 }
 
+/// `Style/RedundantSelfAssignment`: `[[op_start, op_end, method_name,
+/// kind, range_start, range_end, rhs_start, rhs_end], ...]`.
+///
+/// `kind` is `0` for variable-assignment style (the wrapper replaces
+/// `[range_start, range_end)` with `source[rhs_start..rhs_end]`) and `1`
+/// for setter style (the wrapper removes `[range_start, range_end)`; the
+/// `rhs_*` fields are unused / zero). `method_name` is the destructive
+/// method (`concat`, `delete_if`, ...) the offense message reports.
+fn map_redundant_self_assignment(
+    v: Vec<shirobai_core::rules::redundant_self_assignment::RedundantSelfAssignmentOffense>,
+    source: &[u8],
+) -> Vec<(usize, usize, String, u8, usize, usize, usize, usize)> {
+    v.into_iter()
+        .map(|o| {
+            let method_name = std::str::from_utf8(&source[o.method_name_start..o.method_name_end])
+                .unwrap_or("")
+                .to_string();
+            (
+                o.op_start,
+                o.op_end,
+                method_name,
+                o.kind,
+                o.range_start,
+                o.range_end,
+                o.rhs_start,
+                o.rhs_end,
+            )
+        })
+        .collect()
+}
+
 /// `Layout/BlockAlignment`: `[[end_start, end_end, message, align_column], ...]`
 /// — `[end_start, end_end)` is the closing-token range (`end` / `}`);
 /// `message`/`align_column` carry the offense detail (only misaligned blocks
@@ -970,7 +1001,7 @@ fn register_bundle_config(
 /// 50 self_assignment / 51 nested_parenthesized_calls /
 /// 52 parentheses_as_grouped_expression / 53 percent_literal_delimiters /
 /// 54 multiline_method_call_brace_layout / 55 access_modifier_indentation /
-/// 56 assignment_indentation
+/// 56 assignment_indentation / 57 redundant_self_assignment
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1062,6 +1093,10 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             r.access_modifier_indentation,
         ))?;
         ary.push(map_assignment_indentation(r.assignment_indentation))?;
+        ary.push(map_redundant_self_assignment(
+            r.redundant_self_assignment,
+            bytes(&source),
+        ))?;
         Ok(ary)
     })
 }
@@ -1960,6 +1995,20 @@ fn check_self_assignment(source: RString) -> Vec<(usize, usize, usize)> {
     ))
 }
 
+/// Ruby entry point for `Style/RedundantSelfAssignment`. Config-less. Returns
+/// the shape documented on `map_redundant_self_assignment`.
+fn check_redundant_self_assignment(
+    source: RString,
+) -> Vec<(usize, usize, String, u8, usize, usize, usize, usize)> {
+    let src_bytes = bytes(&source);
+    map_redundant_self_assignment(
+        shirobai_core::rules::redundant_self_assignment::check_redundant_self_assignment(
+            src_bytes,
+        ),
+        src_bytes,
+    )
+}
+
 /// Ruby entry point for `Style/NestedParenthesizedCalls`. Takes the source and
 /// the `AllowedMethods` list (matched verbatim against the inner call's name).
 /// Returns `[[start, end, ac_open_start, ac_open_end, ac_close_pos], ...]`.
@@ -2271,6 +2320,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_self_assignment",
         function!(check_self_assignment, 1),
+    )?;
+    module.define_module_function(
+        "check_redundant_self_assignment",
+        function!(check_redundant_self_assignment, 1),
     )?;
     module.define_module_function(
         "check_nested_parenthesized_calls",
