@@ -836,6 +836,20 @@ fn map_multiline_method_call_brace_layout(
         .collect()
 }
 
+/// `Layout/AssignmentIndentation`:
+/// `[[rhs_start, rhs_end, column_delta], ...]` — `[rhs_start, rhs_end)` is the
+/// RHS's source range (the offense location). `column_delta` is the signed
+/// `expected_column - actual_column`; the wrapper relocates the matching
+/// `Parser::AST::Node` by `rhs_start` and hands it to stock's
+/// `AlignmentCorrector#correct` with that delta.
+fn map_assignment_indentation(
+    v: Vec<shirobai_core::rules::assignment_indentation::AssignmentIndentationOffense>,
+) -> Vec<(usize, usize, i64)> {
+    v.into_iter()
+        .map(|o| (o.rhs_start, o.rhs_end, o.column_delta))
+        .collect()
+}
+
 /// `Layout/BlockAlignment`: `[[end_start, end_end, message, align_column], ...]`
 /// — `[end_start, end_end)` is the closing-token range (`end` / `}`);
 /// `message`/`align_column` carry the offense detail (only misaligned blocks
@@ -955,7 +969,8 @@ fn register_bundle_config(
 /// 47 method_length / 48 def_end_alignment / 49 require_parentheses /
 /// 50 self_assignment / 51 nested_parenthesized_calls /
 /// 52 parentheses_as_grouped_expression / 53 percent_literal_delimiters /
-/// 54 multiline_method_call_brace_layout / 55 access_modifier_indentation
+/// 54 multiline_method_call_brace_layout / 55 access_modifier_indentation /
+/// 56 assignment_indentation
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1046,6 +1061,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_access_modifier_indentation(
             r.access_modifier_indentation,
         ))?;
+        ary.push(map_assignment_indentation(r.assignment_indentation))?;
         Ok(ary)
     })
 }
@@ -2040,6 +2056,20 @@ fn check_multiline_method_call_brace_layout(
     )
 }
 
+/// Ruby entry point for `Layout/AssignmentIndentation`. `indentation_width` is
+/// `Layout/AssignmentIndentation.IndentationWidth` falling back to
+/// `Layout/IndentationWidth.Width` falling back to 2. Returns the shape
+/// documented on `map_assignment_indentation`.
+fn check_assignment_indentation(source: RString, indentation_width: usize) -> Vec<(usize, usize, i64)> {
+    let cfg = shirobai_core::rules::assignment_indentation::Config { indentation_width };
+    map_assignment_indentation(
+        shirobai_core::rules::assignment_indentation::check_assignment_indentation(
+            bytes(&source),
+            cfg,
+        ),
+    )
+}
+
 /// Ruby entry point for `Layout/BlockAlignment`. `style` is the
 /// `EnforcedStyleAlignWith` selector (0 = either, 1 = start_of_block,
 /// 2 = start_of_line). Returns the shape documented on `map_block_alignment`.
@@ -2261,6 +2291,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_access_modifier_indentation",
         function!(check_access_modifier_indentation, 3),
+    )?;
+    module.define_module_function(
+        "check_assignment_indentation",
+        function!(check_assignment_indentation, 2),
     )?;
     module.define_module_function(
         "check_block_alignment",

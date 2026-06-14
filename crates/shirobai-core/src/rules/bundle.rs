@@ -9,8 +9,8 @@ use std::collections::HashSet;
 use super::multiline_method_call_indentation::{self as mc, MethodCallIndentOffense};
 use super::multiline_operation_indentation::{self as op, OperationIndentOffense};
 use super::{
-    abc_size, access_modifier_indentation,
-    argument_alignment, block_delimiters, block_length, block_nesting,
+    abc_size, access_modifier_indentation, argument_alignment, assignment_indentation,
+    block_delimiters, block_length, block_nesting,
     closing_parenthesis_indentation, complexity, debugger, def_end_alignment, dot_position,
     empty_line_between_defs,
     block_alignment, else_alignment, empty_lines_around_arguments, empty_lines_around_body,
@@ -114,6 +114,7 @@ pub fn check_multiline_bundle(
 /// | 81  | multiline_method_call_brace_layout style (`Layout/MultilineMethodCallBraceLayout` `EnforcedStyle`: 0 = symmetrical, 1 = new_line, 2 = same_line) |
 /// | 82  | access_modifier_indentation style (`Layout/AccessModifierIndentation` `EnforcedStyle`: 0 = indent, 1 = outdent) |
 /// | 83  | access_modifier_indentation indentation_width (`Layout/AccessModifierIndentation` `IndentationWidth` override, falling back to `Layout/IndentationWidth` `Width`) |
+/// | 84  | assignment_indentation indentation_width (`Layout/AssignmentIndentation` `IndentationWidth` falling back to `Layout/IndentationWidth.Width` falling back to 2) |
 ///
 /// `lists` (`Vec<String>`), 20 entries:
 ///
@@ -219,13 +220,14 @@ pub struct BundleConfig {
     pub nested_parenthesized_calls_allowed_methods: Vec<String>,
     pub percent_literal_delimiters: percent_literal_delimiters::Config,
     pub access_modifier_indentation: access_modifier_indentation::Config,
+    pub assignment_indentation: assignment_indentation::Config,
 }
 
 // `Lint/ParenthesesAsGroupedExpression` carries no config so it doesn't appear
 // in the `nums` / `lists` packing; the bundle still computes its slot in the
 // shared walk (see `check_all_bundle` below).
 
-const NUMS_LEN: usize = 84;
+const NUMS_LEN: usize = 85;
 const LISTS_LEN: usize = 22;
 
 impl BundleConfig {
@@ -394,6 +396,9 @@ impl BundleConfig {
                 style: nums[82] as u8,
                 indentation_width: nums[83] as usize,
             },
+            assignment_indentation: assignment_indentation::Config {
+                indentation_width: nums[84] as usize,
+            },
         })
     }
 }
@@ -505,6 +510,7 @@ pub struct BundleResult {
         Vec<multiline_method_call_brace_layout::MmcblOffense>,
     pub access_modifier_indentation:
         Vec<access_modifier_indentation::AccessModifierIndentationRecord>,
+    pub assignment_indentation: Vec<assignment_indentation::AssignmentIndentationOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -647,6 +653,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     );
     let mut ami_rule =
         access_modifier_indentation::build_rule(source, cfg.access_modifier_indentation);
+    let mut ai_rule = assignment_indentation::build_rule(source, cfg.assignment_indentation);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -694,6 +701,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut pld_rule,
         &mut mmcbl_rule,
         &mut ami_rule,
+        &mut ai_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -755,6 +763,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let percent_literal_delimiters = pld_rule.offenses;
     let multiline_method_call_brace_layout = mmcbl_rule.offenses;
     let access_modifier_indentation = ami_rule.records;
+    let assignment_indentation = ai_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -828,6 +837,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         percent_literal_delimiters,
         multiline_method_call_brace_layout,
         access_modifier_indentation,
+        assignment_indentation,
     }
 }
 
@@ -902,6 +912,7 @@ mod tests {
             0, // def_end_alignment: style (start_of_line)
             0, // multiline_method_call_brace_layout: style (symmetrical)
             0, 2, // access_modifier_indentation: style (indent) / indentation_width (2)
+            2, // assignment_indentation: indentation_width (default 2)
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],

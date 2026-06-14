@@ -263,7 +263,14 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # computed in character space. Exercises both the offense highlight and
     # `AlignmentCorrector.correct`'s insert/remove arm in non-ASCII source.
     "Layout/AccessModifierIndentation" =>
-      "class A\n  X = 1\nprivate\nend\n"
+      "class A\n  X = 1\nprivate\nend\n",
+    # An assignment whose multibyte LHS sits after the multibyte comment; the
+    # RHS sits on a fresh line at column 0 and the offense range plus the
+    # autocorrect target both fall after the multibyte prefix. Exercises the
+    # `(rhs_start, rhs_end)` byte→char conversion as well as relocating the
+    # `Parser::AST::Node` by char offset for `AlignmentCorrector#correct`.
+    "Layout/AssignmentIndentation" =>
+      "日本語 =\nif b ; end\n"
   }
 
   cases.each do |cop_name, body|

@@ -328,6 +328,15 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Layout::AccessModifierIndentation,
       Shirobai::Cop::Layout::AccessModifierIndentation,
       "class A\n  X = 1\nprivate\nend\n"
+    ],
+    # An RHS on a fresh line at column 0 under `IndentationWidth=2`: stock
+    # emits an `AlignmentCorrector#correct` corrector (correctable) — the
+    # wrapper must hand the located `Parser::AST::Node` to the same corrector
+    # so the offense stays correctable in lint mode like stock.
+    "Layout/AssignmentIndentation" => [
+      RuboCop::Cop::Layout::AssignmentIndentation,
+      Shirobai::Cop::Layout::AssignmentIndentation,
+      "a =\nif b ; end\n"
     ]
   }
 
