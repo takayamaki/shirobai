@@ -19,6 +19,7 @@ use super::{
     indentation_consistency, indentation_width, line_end_concatenation, line_length,
     line_length_breakable, method_length, method_name, nested_parenthesized_calls,
     parentheses_as_grouped_expression,
+    percent_literal_delimiters,
     predicate_prefix, redundant_self,
     require_parentheses, safe_navigation_chain, self_assignment,
     space_around_keyword, space_around_method_call_operator, space_inside_block_braces,
@@ -134,6 +135,7 @@ pub fn check_multiline_bundle(
 /// | 18  | hash_alignment_colon_styles (`EnforcedColonStyle`, comma-joined) |
 /// | 19  | method_length_count_as_one (`Metrics/MethodLength` `CountAsOne`) |
 /// | 20  | nested_parenthesized_calls_allowed_methods (`Style/NestedParenthesizedCalls` `AllowedMethods`) |
+/// | 21  | percent_literal_delimiters_pairs (`Style/PercentLiteralDelimiters` `PreferredDelimiters`, resolved to 10 two-byte strings in `[%, %i, %I, %q, %Q, %r, %s, %w, %W, %x]` order) |
 ///
 /// `Layout/IndentationWidth`'s `allowed_lines` and `prior_ranges` are fixed to
 /// empty in the bundle: the non-empty cases (configured `AllowedPatterns`,
@@ -209,6 +211,7 @@ pub struct BundleConfig {
     pub method_length_count_as_one: Vec<String>,
     pub def_end_alignment: def_end_alignment::Config,
     pub nested_parenthesized_calls_allowed_methods: Vec<String>,
+    pub percent_literal_delimiters: percent_literal_delimiters::Config,
 }
 
 // `Lint/ParenthesesAsGroupedExpression` carries no config so it doesn't appear
@@ -216,7 +219,7 @@ pub struct BundleConfig {
 // shared walk (see `check_all_bundle` below).
 
 const NUMS_LEN: usize = 81;
-const LISTS_LEN: usize = 21;
+const LISTS_LEN: usize = 22;
 
 impl BundleConfig {
     /// Build a config from the flat wire format (see the struct docs for the
@@ -378,8 +381,35 @@ impl BundleConfig {
                 style: nums[80] as u8,
             },
             nested_parenthesized_calls_allowed_methods: next_list(),
+            percent_literal_delimiters: parse_percent_pairs(&next_list()[..])?,
         })
     }
+}
+
+/// Parse the 10-entry `PreferredDelimiters` list into a [`percent_literal_delimiters::Config`].
+/// Every entry must be exactly two ASCII bytes (open, close); anything else is
+/// a Ruby-side packing bug and fails loudly.
+fn parse_percent_pairs(
+    pairs: &[String],
+) -> Result<percent_literal_delimiters::Config, String> {
+    if pairs.len() != 10 {
+        return Err(format!(
+            "Style/PercentLiteralDelimiters expects 10 pair strings, got {}",
+            pairs.len()
+        ));
+    }
+    use percent_literal_delimiters::DelimPair;
+    let mut out: [DelimPair; 10] = [DelimPair { open: b'(', close: b')' }; 10];
+    for (i, p) in pairs.iter().enumerate() {
+        let bytes = p.as_bytes();
+        if bytes.len() != 2 {
+            return Err(format!(
+                "Style/PercentLiteralDelimiters pair #{i} must be 2 bytes, got {p:?}"
+            ));
+        }
+        out[i] = DelimPair { open: bytes[0], close: bytes[1] };
+    }
+    Ok(percent_literal_delimiters::Config { pairs: out })
 }
 
 /// Parse a `Layout/HashAlignment` style list (`key` / `separator` / `table`)
@@ -457,6 +487,8 @@ pub struct BundleResult {
         Vec<nested_parenthesized_calls::NestedParenthesizedCallsOffense>,
     pub parentheses_as_grouped_expression:
         Vec<parentheses_as_grouped_expression::ParenthesesAsGroupedExpressionOffense>,
+    pub percent_literal_delimiters:
+        Vec<percent_literal_delimiters::PercentLiteralDelimitersOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -591,6 +623,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &cfg.nested_parenthesized_calls_allowed_methods,
     );
     let mut pag_rule = parentheses_as_grouped_expression::build_rule();
+    let mut pld_rule =
+        percent_literal_delimiters::build_rule(source, cfg.percent_literal_delimiters.clone());
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -635,6 +669,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut sa_rule,
         &mut npc_rule,
         &mut pag_rule,
+        &mut pld_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -693,6 +728,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let self_assignment = sa_rule.offenses;
     let nested_parenthesized_calls = npc_rule.offenses;
     let parentheses_as_grouped_expression = pag_rule.offenses;
+    let percent_literal_delimiters = pld_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -763,6 +799,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         self_assignment,
         nested_parenthesized_calls,
         parentheses_as_grouped_expression,
+        percent_literal_delimiters,
     }
 }
 
@@ -864,6 +901,21 @@ mod tests {
             ["be", "be_a", "be_an", "be_between", "be_falsey", "be_kind_of", "be_instance_of",
              "be_truthy", "be_within", "eq", "eql", "end_with", "include", "match",
              "raise_error", "respond_to", "start_with"].map(String::from).to_vec(),
+            // percent_literal_delimiters: 10 PreferredDelimiters entries in
+            // `[%, %i, %I, %q, %Q, %r, %s, %w, %W, %x]` order. RuboCop default
+            // is `default: ()` with `%i/%I/%w/%W => []` and `%r => {}`.
+            vec![
+                "()".to_string(),
+                "[]".to_string(),
+                "[]".to_string(),
+                "()".to_string(),
+                "()".to_string(),
+                "{}".to_string(),
+                "()".to_string(),
+                "[]".to_string(),
+                "[]".to_string(),
+                "()".to_string(),
+            ],
         ];
         (nums, lists)
     }

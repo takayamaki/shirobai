@@ -762,6 +762,32 @@ fn map_parentheses_as_grouped_expression(
         .collect()
 }
 
+/// `Style/PercentLiteralDelimiters`: `[[start, end, begin_start, begin_end,
+/// end_start, end_end, type_index], ...]`. `[start, end)` is the literal's
+/// full source range (offense highlight); `[begin_start, begin_end)` is the
+/// opening token (e.g. `%w(`) the wrapper replaces with `<type><open>`;
+/// `[end_start, end_end)` is the **single-byte** closer (`)` of `%r(.*)i`),
+/// so options are preserved when the wrapper substitutes the close byte.
+/// `type_index` is the `[%, %i, %I, %q, %Q, %r, %s, %w, %W, %x]` slot the
+/// Ruby side uses for the `MSG` token and the preferred-pair lookup.
+fn map_percent_literal_delimiters(
+    v: Vec<shirobai_core::rules::percent_literal_delimiters::PercentLiteralDelimitersOffense>,
+) -> Vec<(usize, usize, usize, usize, usize, usize, u8)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.start_offset,
+                o.end_offset,
+                o.begin_start,
+                o.begin_end,
+                o.end_start,
+                o.end_end,
+                o.type_index,
+            )
+        })
+        .collect()
+}
+
 /// `Layout/BlockAlignment`: `[[end_start, end_end, message, align_column], ...]`
 /// — `[end_start, end_end)` is the closing-token range (`end` / `}`);
 /// `message`/`align_column` carry the offense detail (only misaligned blocks
@@ -880,7 +906,7 @@ fn register_bundle_config(
 /// 45 space_around_keyword / 46 space_inside_block_braces /
 /// 47 method_length / 48 def_end_alignment / 49 require_parentheses /
 /// 50 self_assignment / 51 nested_parenthesized_calls /
-/// 52 parentheses_as_grouped_expression
+/// 52 parentheses_as_grouped_expression / 53 percent_literal_delimiters
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -961,6 +987,9 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_nested_parenthesized_calls(r.nested_parenthesized_calls))?;
         ary.push(map_parentheses_as_grouped_expression(
             r.parentheses_as_grouped_expression,
+        ))?;
+        ary.push(map_percent_literal_delimiters(
+            r.percent_literal_delimiters,
         ))?;
         Ok(ary)
     })
@@ -1865,6 +1894,60 @@ fn check_parentheses_as_grouped_expression(
     )
 }
 
+/// Unpacks the `Style/PercentLiteralDelimiters` config: `pairs` is a 10-entry
+/// list of 2-byte strings in `[%, %i, %I, %q, %Q, %r, %s, %w, %W, %x]` order.
+/// The Ruby side resolves `PreferredDelimiters` (default + per-type overrides)
+/// down to this fixed array.
+fn percent_literal_delimiters_config(
+    ruby: &Ruby,
+    pairs: Vec<String>,
+) -> Result<shirobai_core::rules::percent_literal_delimiters::Config, Error> {
+    if pairs.len() != 10 {
+        return Err(Error::new(
+            ruby.exception_arg_error(),
+            format!(
+                "Style/PercentLiteralDelimiters expects 10 pair strings, got {}",
+                pairs.len()
+            ),
+        ));
+    }
+    use shirobai_core::rules::percent_literal_delimiters::{Config, DelimPair};
+    let mut out: [DelimPair; 10] = [DelimPair { open: b'(', close: b')' }; 10];
+    for (i, p) in pairs.iter().enumerate() {
+        let bytes = p.as_bytes();
+        if bytes.len() != 2 {
+            return Err(Error::new(
+                ruby.exception_arg_error(),
+                format!(
+                    "Style/PercentLiteralDelimiters pair #{i} must be 2 bytes, got {:?}",
+                    p
+                ),
+            ));
+        }
+        out[i] = DelimPair {
+            open: bytes[0],
+            close: bytes[1],
+        };
+    }
+    Ok(Config { pairs: out })
+}
+
+/// Ruby entry point for `Style/PercentLiteralDelimiters`. Takes the source and
+/// the resolved per-type preferred-delimiter list (10 entries).
+fn check_percent_literal_delimiters(
+    ruby: &Ruby,
+    source: RString,
+    pairs: Vec<String>,
+) -> Result<Vec<(usize, usize, usize, usize, usize, usize, u8)>, Error> {
+    let cfg = percent_literal_delimiters_config(ruby, pairs)?;
+    Ok(map_percent_literal_delimiters(
+        shirobai_core::rules::percent_literal_delimiters::check_percent_literal_delimiters(
+            bytes(&source),
+            &cfg,
+        ),
+    ))
+}
+
 /// Ruby entry point for `Layout/BlockAlignment`. `style` is the
 /// `EnforcedStyleAlignWith` selector (0 = either, 1 = start_of_block,
 /// 2 = start_of_line). Returns the shape documented on `map_block_alignment`.
@@ -2074,6 +2157,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_parentheses_as_grouped_expression",
         function!(check_parentheses_as_grouped_expression, 1),
+    )?;
+    module.define_module_function(
+        "check_percent_literal_delimiters",
+        function!(check_percent_literal_delimiters, 2),
     )?;
     module.define_module_function(
         "check_block_alignment",

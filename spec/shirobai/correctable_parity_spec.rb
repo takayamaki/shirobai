@@ -293,6 +293,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Lint::ParenthesesAsGroupedExpression,
       Shirobai::Cop::Lint::ParenthesesAsGroupedExpression,
       "a.func (x)\n"
+    ],
+    # A `%w(...)` with the default preferred `[]`: stock emits a two-`replace`
+    # corrector (begin and end), which is correctable in lint mode. Guards
+    # that the wrapper attaches the corrector block in lint mode like stock.
+    "Style/PercentLiteralDelimiters" => [
+      RuboCop::Cop::Style::PercentLiteralDelimiters,
+      Shirobai::Cop::Style::PercentLiteralDelimiters,
+      "%w(a b)\n"
     ]
   }
 

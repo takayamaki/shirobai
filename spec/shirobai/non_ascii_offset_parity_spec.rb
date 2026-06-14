@@ -241,7 +241,14 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # message embeds the multibyte argument source verbatim, so the wrapper's
     # `arg_start..arg_end` byte→char conversion is on the offense path.
     "Lint/ParenthesesAsGroupedExpression" =>
-      "あ.func (日本語)\n"
+      "あ.func (日本語)\n",
+    # Multibyte content inside the percent literal AND the offense sitting after
+    # the multibyte comment: exercises the offense range plus both autocorrect
+    # anchors (`begin_loc` for `%w(`→`%w[` and the single-byte closer at
+    # `end_loc`). The element bytes themselves include multibyte so the
+    # contains-delimiter check has to scan them correctly too.
+    "Style/PercentLiteralDelimiters" =>
+      "x = %w(日本 中)\n"
   }
 
   cases.each do |cop_name, body|

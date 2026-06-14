@@ -36,6 +36,7 @@ pub mod multiline_operation_indentation;
 pub mod nested_parenthesized_calls;
 pub mod parentheses_as_grouped_expression;
 pub mod parse_cache;
+pub mod percent_literal_delimiters;
 pub mod predicate_prefix;
 pub mod redundant_self;
 pub mod require_parentheses;

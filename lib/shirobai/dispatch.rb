@@ -70,7 +70,8 @@ module Shirobai
       require_parentheses: 49,
       self_assignment: 50,
       nested_parenthesized_calls: 51,
-      parentheses_as_grouped_expression: 52
+      parentheses_as_grouped_expression: 52,
+      percent_literal_delimiters: 53
     }.freeze
 
     class << self
@@ -148,6 +149,7 @@ module Shirobai
         npc = Cop::Style::NestedParenthesizedCalls.bundle_args(config)
         # Lint::ParenthesesAsGroupedExpression is config-less; its
         # `bundle_args` returns `[]` and contributes nothing to `nums` / `lists`.
+        pld = Cop::Style::PercentLiteralDelimiters.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -186,7 +188,7 @@ module Shirobai
           dea[0] # DefEndAlignment style
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
-                 uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0]]
+                 uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0]]
         [nums, lists]
       end
 
