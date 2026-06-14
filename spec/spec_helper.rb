@@ -15,6 +15,10 @@ require_relative "../vendor/rubocop/spec/core_ext/string"
 require_relative "../vendor/rubocop/spec/support/empty_lines_around_body_shared_examples"
 # Shared examples (`aligned` / `misaligned`) used by the EndAlignment spec.
 require_relative "../vendor/rubocop/spec/support/alignment_examples"
+# Shared examples used by the MultilineMethodCallBraceLayout spec.
+require_relative "../vendor/rubocop/spec/support/multiline_literal_brace_helper"
+require_relative "../vendor/rubocop/spec/support/multiline_literal_brace_layout_examples"
+require_relative "../vendor/rubocop/spec/support/multiline_literal_brace_layout_trailing_comma_examples"
 # Differential helpers for the per-cop edge-case regression specs
 # (`spec/shirobai/cop/<dept>/<name>_edge_cases_spec.rb`).
 require_relative "support/edge_case_parity"

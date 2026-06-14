@@ -301,6 +301,23 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Style::PercentLiteralDelimiters,
       Shirobai::Cop::Style::PercentLiteralDelimiters,
       "%w(a b)\n"
+    ],
+    # A close `)` on the wrong line: stock emits a `MultilineLiteralBraceCorrector`
+    # corrector (correctable). Guards that the wrapper attaches the corrector
+    # block in lint mode like stock.
+    "Layout/MultilineMethodCallBraceLayout (correctable)" => [
+      RuboCop::Cop::Layout::MultilineMethodCallBraceLayout,
+      Shirobai::Cop::Layout::MultilineMethodCallBraceLayout,
+      "foo(a,\n  b\n)\n"
+    ],
+    # Chained call + comment after last element: stock emits the offense but
+    # `new_line_needed_before_closing_brace?` skips the corrector. Both stock
+    # and shirobai must stay `:unsupported` (never correctable). Regression
+    # against the wrapper accidentally yielding a corrector block.
+    "Layout/MultilineMethodCallBraceLayout (uncorrectable chained+comment)" => [
+      RuboCop::Cop::Layout::MultilineMethodCallBraceLayout,
+      Shirobai::Cop::Layout::MultilineMethodCallBraceLayout,
+      "foo(a,\n  b # comment\n).any?\n"
     ]
   }
 

@@ -31,6 +31,7 @@ pub mod line_length;
 pub mod line_length_breakable;
 pub mod method_length;
 pub mod method_name;
+pub mod multiline_method_call_brace_layout;
 pub mod multiline_method_call_indentation;
 pub mod multiline_operation_indentation;
 pub mod nested_parenthesized_calls;

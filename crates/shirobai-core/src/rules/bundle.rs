@@ -17,7 +17,8 @@ use super::{
     first_argument_indentation, first_array_element_indentation, first_hash_element_indentation,
     hash_alignment, hash_each_methods, hash_syntax,
     indentation_consistency, indentation_width, line_end_concatenation, line_length,
-    line_length_breakable, method_length, method_name, nested_parenthesized_calls,
+    line_length_breakable, method_length, method_name,
+    multiline_method_call_brace_layout, nested_parenthesized_calls,
     parentheses_as_grouped_expression,
     percent_literal_delimiters,
     predicate_prefix, redundant_self,
@@ -109,6 +110,7 @@ pub fn check_multiline_bundle(
 /// | 78  | method_length_max (`Metrics/MethodLength` `Max`, default 10) |
 /// | 79  | method_length_count_comments (`CountComments`) |
 /// | 80  | def_end_alignment style (`Layout/DefEndAlignment` `EnforcedStyleAlignWith`: 0 = start_of_line, 1 = def) |
+/// | 81  | multiline_method_call_brace_layout style (`Layout/MultilineMethodCallBraceLayout` `EnforcedStyle`: 0 = symmetrical, 1 = new_line, 2 = same_line) |
 ///
 /// `lists` (`Vec<String>`), 20 entries:
 ///
@@ -210,6 +212,7 @@ pub struct BundleConfig {
     pub method_length_count_comments: bool,
     pub method_length_count_as_one: Vec<String>,
     pub def_end_alignment: def_end_alignment::Config,
+    pub multiline_method_call_brace_style: u8,
     pub nested_parenthesized_calls_allowed_methods: Vec<String>,
     pub percent_literal_delimiters: percent_literal_delimiters::Config,
 }
@@ -218,7 +221,7 @@ pub struct BundleConfig {
 // in the `nums` / `lists` packing; the bundle still computes its slot in the
 // shared walk (see `check_all_bundle` below).
 
-const NUMS_LEN: usize = 81;
+const NUMS_LEN: usize = 82;
 const LISTS_LEN: usize = 22;
 
 impl BundleConfig {
@@ -380,6 +383,7 @@ impl BundleConfig {
             def_end_alignment: def_end_alignment::Config {
                 style: nums[80] as u8,
             },
+            multiline_method_call_brace_style: nums[81] as u8,
             nested_parenthesized_calls_allowed_methods: next_list(),
             percent_literal_delimiters: parse_percent_pairs(&next_list()[..])?,
         })
@@ -489,6 +493,8 @@ pub struct BundleResult {
         Vec<parentheses_as_grouped_expression::ParenthesesAsGroupedExpressionOffense>,
     pub percent_literal_delimiters:
         Vec<percent_literal_delimiters::PercentLiteralDelimitersOffense>,
+    pub multiline_method_call_brace_layout:
+        Vec<multiline_method_call_brace_layout::MmcblOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -625,6 +631,10 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut pag_rule = parentheses_as_grouped_expression::build_rule();
     let mut pld_rule =
         percent_literal_delimiters::build_rule(source, cfg.percent_literal_delimiters.clone());
+    let mut mmcbl_rule = multiline_method_call_brace_layout::build_rule(
+        source,
+        cfg.multiline_method_call_brace_style,
+    );
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -670,6 +680,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut npc_rule,
         &mut pag_rule,
         &mut pld_rule,
+        &mut mmcbl_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -729,6 +740,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let nested_parenthesized_calls = npc_rule.offenses;
     let parentheses_as_grouped_expression = pag_rule.offenses;
     let percent_literal_delimiters = pld_rule.offenses;
+    let multiline_method_call_brace_layout = mmcbl_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -800,6 +812,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         nested_parenthesized_calls,
         parentheses_as_grouped_expression,
         percent_literal_delimiters,
+        multiline_method_call_brace_layout,
     }
 }
 
@@ -872,6 +885,7 @@ mod tests {
             0, 1, 1, // space_inside_block_braces: style(space) / empty(no_space) / sbbp(true)
             10, 0, // method_length: max(10) / count_comments
             0, // def_end_alignment: style (start_of_line)
+            0, // multiline_method_call_brace_layout: style (symmetrical)
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],

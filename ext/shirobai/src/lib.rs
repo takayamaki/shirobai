@@ -788,6 +788,33 @@ fn map_percent_literal_delimiters(
         .collect()
 }
 
+/// `Layout/MultilineMethodCallBraceLayout`:
+/// `[[offense_start, offense_end, message_code, send_node_start, send_node_end,
+/// correctable], ...]` — `[offense_start, offense_end)` is the closing `)`
+/// token; `message_code` is the 0-3 message selector; `(send_node_start,
+/// send_node_end)` pins the inner brace-bearing send (a chained `foo(...).bar`
+/// shares `begin_pos` with the outer call, so the end_pos disambiguates). The
+/// wrapper relocates the parser-gem node via `processed_source.ast.each_node`
+/// and hands it to stock's `MultilineLiteralBraceCorrector`. `correctable` is
+/// false when the `new_line_needed_before_closing_brace?` guard fires
+/// (comment + chained / arg).
+fn map_multiline_method_call_brace_layout(
+    v: Vec<shirobai_core::rules::multiline_method_call_brace_layout::MmcblOffense>,
+) -> Vec<(usize, usize, u8, usize, usize, bool)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.offense_start,
+                o.offense_end,
+                o.message_code,
+                o.send_node_start,
+                o.send_node_end,
+                o.correctable,
+            )
+        })
+        .collect()
+}
+
 /// `Layout/BlockAlignment`: `[[end_start, end_end, message, align_column], ...]`
 /// — `[end_start, end_end)` is the closing-token range (`end` / `}`);
 /// `message`/`align_column` carry the offense detail (only misaligned blocks
@@ -906,7 +933,8 @@ fn register_bundle_config(
 /// 45 space_around_keyword / 46 space_inside_block_braces /
 /// 47 method_length / 48 def_end_alignment / 49 require_parentheses /
 /// 50 self_assignment / 51 nested_parenthesized_calls /
-/// 52 parentheses_as_grouped_expression / 53 percent_literal_delimiters
+/// 52 parentheses_as_grouped_expression / 53 percent_literal_delimiters /
+/// 54 multiline_method_call_brace_layout
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -990,6 +1018,9 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ))?;
         ary.push(map_percent_literal_delimiters(
             r.percent_literal_delimiters,
+        ))?;
+        ary.push(map_multiline_method_call_brace_layout(
+            r.multiline_method_call_brace_layout,
         ))?;
         Ok(ary)
     })
@@ -1948,6 +1979,21 @@ fn check_percent_literal_delimiters(
     ))
 }
 
+/// Ruby entry point for `Layout/MultilineMethodCallBraceLayout`. `style` is
+/// the `EnforcedStyle` selector (0 = symmetrical, 1 = new_line, 2 = same_line).
+/// Returns the shape documented on `map_multiline_method_call_brace_layout`.
+fn check_multiline_method_call_brace_layout(
+    source: RString,
+    style: u8,
+) -> Vec<(usize, usize, u8, usize, usize, bool)> {
+    map_multiline_method_call_brace_layout(
+        shirobai_core::rules::multiline_method_call_brace_layout::check_multiline_method_call_brace_layout(
+            bytes(&source),
+            style,
+        ),
+    )
+}
+
 /// Ruby entry point for `Layout/BlockAlignment`. `style` is the
 /// `EnforcedStyleAlignWith` selector (0 = either, 1 = start_of_block,
 /// 2 = start_of_line). Returns the shape documented on `map_block_alignment`.
@@ -2161,6 +2207,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_percent_literal_delimiters",
         function!(check_percent_literal_delimiters, 2),
+    )?;
+    module.define_module_function(
+        "check_multiline_method_call_brace_layout",
+        function!(check_multiline_method_call_brace_layout, 2),
     )?;
     module.define_module_function(
         "check_block_alignment",

@@ -248,7 +248,15 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # `end_loc`). The element bytes themselves include multibyte so the
     # contains-delimiter check has to scan them correctly too.
     "Style/PercentLiteralDelimiters" =>
-      "x = %w(日本 中)\n"
+      "x = %w(日本 中)\n",
+    # The close `)` offense range sits AFTER the multibyte comment, and stock's
+    # `MultilineLiteralBraceCorrector` reads the parser-gem node's
+    # `loc.begin`/`loc.end`/`children.last` ranges (CHARACTER offsets). The
+    # wrapper feeds the send node located via byte→char-converted
+    # `(send_node_start, send_node_end)` so every range the corrector touches
+    # comes out byte-correct on a multibyte source.
+    "Layout/MultilineMethodCallBraceLayout" =>
+      "日本.foo(a,\n  b\n)\n"
   }
 
   cases.each do |cop_name, body|
