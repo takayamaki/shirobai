@@ -580,14 +580,17 @@ impl<'a> Visitor<'a> {
     }
 }
 
-/// `operator_method?`: the method name is an operator (no alphanumeric chars).
+/// `operator_method?`: the method name is in stock's `OPERATOR_METHODS`
+/// (rubocop-ast `method_identifier_predicates.rb`). That set includes `[]` and
+/// `[]=`, so braceless index reads (`x[:foo]`) are bare operators that
+/// `should_check?` filters out. Excluding `[]` here would cause shirobai to
+/// false-positive on multi-line `x[\n  :sym\n]` patterns that stock silently
+/// passes (Discourse `color_scheme.rb:436` modifier-if + index, etc.).
 fn is_operator_name(name: &[u8]) -> bool {
     !name.is_empty()
         && name
             .iter()
             .all(|&b| !b.is_ascii_alphanumeric() && b != b'_')
-        && name != b"[]="
-        && name != b"[]"
 }
 
 #[cfg(test)]
