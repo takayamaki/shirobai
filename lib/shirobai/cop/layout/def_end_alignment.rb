@@ -94,8 +94,19 @@ module Shirobai
           (using_tabs? ? "\t" : " ") * column
         end
 
+        # Mirror stock `AlignmentCorrector#using_tabs?` exactly: it reads
+        # `processed_source.config`, not the cop's own `config`. In a real
+        # rubocop run the two are the same object (`Runner` does
+        # `processed_source.config = config`), so the output is identical. The
+        # distinction only matters when `processed_source.config` is `nil`
+        # (e.g. a `ProcessedSource` built without a config, as the bare
+        # Commissioner harness does): stock then raises `NoMethodError` inside
+        # the `add_offense` corrector block and the Commissioner silently drops
+        # the offense. Reading the cop's `config` instead would make this
+        # drop-in *not* drop the offense there, diverging from stock by +1. A
+        # faithful drop-in must read the same source stock does.
         def using_tabs?
-          config.for_cop("Layout/IndentationStyle")["EnforcedStyle"] == "tabs"
+          processed_source.config.for_cop("Layout/IndentationStyle")["EnforcedStyle"] == "tabs"
         end
       end
     end
