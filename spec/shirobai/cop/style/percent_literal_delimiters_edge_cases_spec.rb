@@ -176,6 +176,55 @@ RSpec.describe Shirobai::Cop::Style::PercentLiteralDelimiters do
     end
   end
 
+  describe "interpolated element does not block contains check" do
+    # Discourse divergence regression (2026-06-15):
+    # `%W{ #{from}[0] }` parses (parser-gem) to
+    # `(array (dstr (begin (lvar :from)) (str "[0]")))`. Stock's
+    # `string_source` returns `nil` for the `dstr` child whose type is neither
+    # `:str` nor `:sym`, so the `[` inside the inner `(str "[0]")` is invisible
+    # to `contains_preferred_delimiter?` — the offense fires.
+    #
+    # The Rust implementation used to descend into the InterpolatedStringNode's
+    # parts and push the inner StringNode content into the contains scan, which
+    # made the dstr element falsely "contain" `[` and suppressed the offense
+    # on Discourse `app/models/optimized_image.rb` L269 / L300.
+
+    it "flags `%W{ \#{from}[0] }` (dstr element with inner str containing `[`)" do
+      src = +"x = "
+      src << "%W{ \#{from}[0] }\n"
+      expect_lint_parity(*klasses, src, config)
+      expect_autocorrect_parity(*klasses, src, config)
+    end
+
+    it "flags `%I{ \#{x}[0] }` (interpolated symbol array, same shape)" do
+      src = +"x = "
+      src << "%I{ \#{x}[0] }\n"
+      expect_lint_parity(*klasses, src, config)
+    end
+
+    it "flags multi-line `%W{ ... \#{from}[0] ... }` (Discourse shape)" do
+      src = +"%W{\n"
+      src << "  convert\n"
+      src << "  \#{from}[0]\n"
+      src << "  -auto-orient\n"
+      src << "  \#{to}\n"
+      src << "}\n"
+      expect_lint_parity(*klasses, src, config)
+    end
+
+    it "still skips when a PLAIN str element contains `[`" do
+      # Non-regression: a literal `str` child IS scanned by stock's
+      # `string_source` (returns the source). `%w{ a[b] c }` should remain
+      # accepted.
+      expect_lint_parity(
+        *klasses,
+        "x = %w{ a[b] c }\n",
+        config,
+        expect_offenses: false
+      )
+    end
+  end
+
   describe "`default` + per-type override resolution" do
     it "applies `default: '{}'` to types without explicit overrides" do
       forced = RuboCop::ConfigLoader.merge_with_default(

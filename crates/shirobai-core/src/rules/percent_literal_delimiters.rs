@@ -484,24 +484,20 @@ impl<'s> Visitor<'s> {
                         buf.push(&self.source[vloc.start_offset()..vloc.end_offset()]);
                     }
                 }
-                Node::InterpolatedStringNode { .. } => {
-                    let is = el.as_interpolated_string_node().unwrap();
-                    for part in is.parts().iter() {
-                        if let Some(sp) = part.as_string_node() {
-                            let cloc = sp.content_loc();
-                            buf.push(&self.source[cloc.start_offset()..cloc.end_offset()]);
-                        }
-                    }
-                }
-                Node::InterpolatedSymbolNode { .. } => {
-                    let is = el.as_interpolated_symbol_node().unwrap();
-                    for part in is.parts().iter() {
-                        if let Some(sp) = part.as_string_node() {
-                            let cloc = sp.content_loc();
-                            buf.push(&self.source[cloc.start_offset()..cloc.end_offset()]);
-                        }
-                    }
-                }
+                // Stock's `string_source` returns `nil` for a `(dstr ...)` /
+                // `(dsym ...)` child whose `type` is neither `:str` nor
+                // `:sym` — even when one of its parts is a literal string with
+                // a preferred-delimiter byte. So an array element that *as a
+                // whole* is interpolated (e.g. `%W{ #{from}[0] }`) is invisible
+                // to the contains check, and the offense must fire.
+                //
+                // We must NOT descend into the parts here. Walking the parts
+                // and pushing their `StringNode` content used to make
+                // `%W{ #{from}[0] }` look like it contained `[`, suppressing
+                // the offense (Discourse `app/models/optimized_image.rb`
+                // L269/L300 — fixed 2026-06-15).
+                Node::InterpolatedStringNode { .. }
+                | Node::InterpolatedSymbolNode { .. } => {}
                 _ => {}
             }
         }
@@ -777,6 +773,44 @@ mod tests {
         let off = run_one("%(#{[1].first})\n", &all_brackets());
         assert_eq!(off.len(), 1);
         assert_eq!(off[0].type_index, 0);
+    }
+
+    #[test]
+    fn dstr_element_in_w_array_does_not_skip_via_inner_string() {
+        // Regression: `%W{ #{x}[0] }` is `(array (dstr (begin ...) (str "[0]")))`
+        // in parser. Stock's `string_source` returns `nil` for the dstr child
+        // (type is :dstr, not :str/:sym), so `[` inside the dstr is invisible
+        // to `contains_preferred_delimiter?` — the offense fires.
+        // Discourse `app/models/optimized_image.rb` L269/L300.
+        let off = run_one("%W{ #{x}[0] }\n", &all_brackets());
+        assert_eq!(off.len(), 1);
+        assert_eq!(off[0].type_index, 8 /* %W */);
+    }
+
+    #[test]
+    fn dsym_element_in_i_capital_array_does_not_skip() {
+        // Same shape for %I (interpolated symbol array).
+        let off = run_one("%I{ #{x}[0] }\n", &all_brackets());
+        assert_eq!(off.len(), 1);
+        assert_eq!(off[0].type_index, 2 /* %I */);
+    }
+
+    #[test]
+    fn plain_string_element_in_w_array_still_skips_when_inside() {
+        // Non-regression: a plain `str` element with `[` IS scanned (stock's
+        // string_source returns the source for :str). The offense is skipped.
+        assert!(run_one("%w{ a[b] c }\n", &all_brackets()).is_empty());
+    }
+
+    #[test]
+    fn dstr_element_does_not_block_matchpairs_check_either() {
+        // include_same_character_as_used_for_delimiter? for %w / %i also runs
+        // through the same `string_source`-based scan, so a dstr element with
+        // `{` (the begin delimiter's pair) likewise stays invisible — offense
+        // still fires.
+        let off = run_one("%W{ #{x}{ }\n", &all_brackets());
+        assert_eq!(off.len(), 1);
+        assert_eq!(off[0].type_index, 8 /* %W */);
     }
 
     #[test]
