@@ -76,7 +76,7 @@ end
 puts
 printf("stock: %s\n", stock_run ? "measured" : "NOT run (compute hardcoded #{"%.1f" % stock_fixed}s; override via STOCK_FIXED)")
 parity = if !stock_run
-           "stock not run; shirobai offenses=#{offenses["shirobai"]} (expected 15857)"
+           "stock not run; shirobai offenses=#{offenses["shirobai"]} (expected 16846)"
          elsif offenses["stock"] == offenses["shirobai"]
            "OK (= stock)"
          else

@@ -70,8 +70,20 @@ replaced = mode == "shirobai" ? shirobai_cops.keys.size : 0
 files = Dir.glob(File.join(__dir__, "..", ".tmp", "mastodon", "**", "*.rb"))
 files = files.first(Integer(ENV["LIMIT"])) if ENV["LIMIT"]
 
+# Third harness defect (2026-06-14): the real Runner sets
+# processed_source.config (runner.rb ~:575) and .registry. Without these, stock
+# cops whose autocorrect block eagerly reads processed_source.config (the
+# AlignmentCorrector family — End/Else/Block/DefEnd/Multiline*Indentation etc.)
+# raise NoMethodError inside add_offense's corrector block; Commissioner swallows
+# it and drops the offense entirely. A shirobai wrapper that instead reads its
+# own (non-nil) cop_config still emits, producing a silent +N divergence —
+# masked here by both sides usually crash-dropping symmetrically, until they
+# don't (DefEndAlignment +1 on 2026-06-14, MMCI +5 hidden until real-CLI diff).
 sources = files.filter_map do |path|
-  RuboCop::ProcessedSource.new(File.read(path), ruby_version, path)
+  ps = RuboCop::ProcessedSource.new(File.read(path), ruby_version, path)
+  ps.config = config
+  ps.registry = registry
+  ps
 rescue StandardError
   nil
 end
