@@ -188,6 +188,29 @@ impl Visitor<'_> {
                 p.closing_loc().end_offset(),
                 &elements,
             );
+        } else if let Some(e) = node.as_embedded_statements_node() {
+            // `on_begin` also fires for parser's `:begin` node materialised
+            // around a string/regexp/symbol interpolation `#{...}` — same node
+            // type as a parenthesised expression, with `loc.begin == "#{"` and
+            // `loc.end == "}"`. Stock checks indentation of the closing `}`
+            // exactly like a hanging `)` (message hard-codes `)` even so), and
+            // its `AlignmentCorrector` realigns the `}` token. Prism keeps the
+            // interpolation as a separate `EmbeddedStatementsNode`, but the
+            // opening/closing locs map to parser's `loc.begin` / `loc.end`
+            // verbatim and the inner statements map to `node.children`. This
+            // is what Redmine `redcloth3.rb:775` trips on.
+            let elements: Vec<Element> = e
+                .statements()
+                .map(|st| st.body().iter().map(|n| element_of(&n)).collect())
+                .unwrap_or_default();
+            let node_start = e.as_node().location().start_offset();
+            self.check(
+                node_start,
+                e.opening_loc().start_offset(),
+                e.closing_loc().start_offset(),
+                e.closing_loc().end_offset(),
+                &elements,
+            );
         }
     }
 
@@ -369,6 +392,20 @@ mod tests {
         let got = run("foo = some_method(\n  )\n");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].3, "Indent `)` to column 0 (not 2)");
+    }
+
+    #[test]
+    fn string_interpolation_closing_brace() {
+        // Stock's `on_begin` also matches parser's `:begin` node around a
+        // string/regexp interpolation `#{...}`, treating the `}` as a hanging
+        // closing paren. Redmine `redcloth3.rb:775` form: a regexp with an
+        // interpolation whose statements line is indented 8 from BOL while the
+        // closing `}` is at column 4 — expected column = 8 - 2 = 6.
+        let got = run("    re = /^(#{\n        x.join('|')\n    })$/\n");
+        assert_eq!(got.len(), 1);
+        assert_eq!((got[0].2, got[0].3.as_str()), (2, "Indent `)` to column 6 (not 4)"));
+        // No offense when the closing `}` already sits at the outdented column.
+        assert!(run("    re = /^(#{\n        x.join('|')\n      })$/\n").is_empty());
     }
 
     #[test]
