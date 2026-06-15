@@ -751,6 +751,21 @@ fn map_stabby_lambda_parentheses(
         .collect()
 }
 
+/// `Style/HashTransformKeys`: `[[start, end, message, edits], ...]` where
+/// `edits` is `[[edit_start, edit_end, replacement], ...]`. Stock's mixin
+/// emits four `corrector.replace` calls per offense (strip the `Hash[..]`
+/// brackets or the trailing `.to_h`, swap the selector to `transform_keys`,
+/// rewrite the block argument list, replace the block body). We pack them
+/// flat so the wrapper just iterates and replays each one.
+#[allow(clippy::type_complexity)]
+fn map_hash_transform_keys(
+    v: Vec<shirobai_core::rules::hash_transform_keys::HashTransformKeysOffense>,
+) -> Vec<(usize, usize, String, Vec<(usize, usize, String)>)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.message, o.edits))
+        .collect()
+}
+
 /// `Lint/RequireParentheses`: `[[start_offset, end_offset], ...]`.
 fn map_require_parentheses(
     v: Vec<shirobai_core::rules::require_parentheses::RequireParenthesesOffense>,
@@ -1052,7 +1067,7 @@ fn register_bundle_config(
 /// 54 multiline_method_call_brace_layout / 55 access_modifier_indentation /
 /// 56 assignment_indentation / 57 redundant_self_assignment /
 /// 58 colon_method_call / 59 stabby_lambda_parentheses /
-/// 60 unreachable_code
+/// 60 unreachable_code / 61 hash_transform_keys
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1153,6 +1168,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             r.stabby_lambda_parentheses,
         ))?;
         ary.push(map_unreachable_code(r.unreachable_code))?;
+        ary.push(map_hash_transform_keys(r.hash_transform_keys))?;
         Ok(ary)
     })
 }
@@ -1759,6 +1775,18 @@ fn check_hash_each_methods(
             bytes(&source),
             &allowed_receivers,
         ),
+    )
+}
+
+/// Ruby entry point for `Style/HashTransformKeys`. Config-less.
+/// Returns one entry per offense: `[[start, end, message, edits], ...]`
+/// where `edits` is `[[edit_start, edit_end, replacement], ...]`.
+#[allow(clippy::type_complexity)]
+fn check_hash_transform_keys(
+    source: RString,
+) -> Vec<(usize, usize, String, Vec<(usize, usize, String)>)> {
+    map_hash_transform_keys(
+        shirobai_core::rules::hash_transform_keys::check_hash_transform_keys(bytes(&source)),
     )
 }
 
@@ -2491,6 +2519,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         function!(check_hash_each_methods, 2),
     )?;
     module.define_module_function("check_hash_syntax", function!(check_hash_syntax, 2))?;
+    module.define_module_function(
+        "check_hash_transform_keys",
+        function!(check_hash_transform_keys, 1),
+    )?;
     module.define_module_function(
         "check_string_literals",
         function!(check_string_literals, 2),

@@ -17,7 +17,7 @@ use super::{
     block_alignment, else_alignment, empty_lines_around_arguments, empty_lines_around_body,
     end_alignment,
     first_argument_indentation, first_array_element_indentation, first_hash_element_indentation,
-    hash_alignment, hash_each_methods, hash_syntax,
+    hash_alignment, hash_each_methods, hash_syntax, hash_transform_keys,
     indentation_consistency, indentation_width, line_end_concatenation, line_length,
     line_length_breakable, method_length, method_name,
     multiline_method_call_brace_layout, nested_parenthesized_calls,
@@ -524,6 +524,7 @@ pub struct BundleResult {
     pub stabby_lambda_parentheses:
         Vec<stabby_lambda_parentheses::StabbyLambdaParenthesesOffense>,
     pub unreachable_code: Vec<unreachable_code::UnreachableCodeOffense>,
+    pub hash_transform_keys: Vec<hash_transform_keys::HashTransformKeysOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -672,6 +673,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut slp_rule =
         stabby_lambda_parentheses::build_rule(source, cfg.stabby_lambda_parentheses);
     let mut uc_rule = unreachable_code::build_rule();
+    let mut htk_rule = hash_transform_keys::build_rule(source);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -724,6 +726,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut cmc_rule,
         &mut slp_rule,
         &mut uc_rule,
+        &mut htk_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -790,6 +793,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let colon_method_call = cmc_rule.offenses;
     let stabby_lambda_parentheses = slp_rule.offenses;
     let unreachable_code = uc_rule.offenses;
+    let hash_transform_keys = htk_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -868,6 +872,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         colon_method_call,
         stabby_lambda_parentheses,
         unreachable_code,
+        hash_transform_keys,
     }
 }
 

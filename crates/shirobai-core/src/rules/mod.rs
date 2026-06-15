@@ -26,6 +26,7 @@ pub mod first_hash_element_indentation;
 pub mod hash_alignment;
 pub mod hash_each_methods;
 pub mod hash_syntax;
+pub mod hash_transform_keys;
 pub mod indentation_consistency;
 pub mod indentation_width;
 pub mod line_end_concatenation;

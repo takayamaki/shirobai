@@ -78,7 +78,8 @@ module Shirobai
       redundant_self_assignment: 57,
       colon_method_call: 58,
       stabby_lambda_parentheses: 59,
-      unreachable_code: 60
+      unreachable_code: 60,
+      hash_transform_keys: 61
     }.freeze
 
     class << self
@@ -162,6 +163,9 @@ module Shirobai
         ami = Cop::Layout::AccessModifierIndentation.bundle_args(config)
         ai = Cop::Layout::AssignmentIndentation.bundle_args(config)
         slp = Cop::Style::StabbyLambdaParentheses.bundle_args(config)
+        # Style/HashTransformKeys is config-less; its `bundle_args` returns `[]`
+        # and contributes nothing to `nums` / `lists`.
+        _ = Cop::Style::HashTransformKeys.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
