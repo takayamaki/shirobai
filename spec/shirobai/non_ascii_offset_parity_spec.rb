@@ -242,6 +242,12 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # `arg_start..arg_end` byte→char conversion is on the offense path.
     "Lint/ParenthesesAsGroupedExpression" =>
       "あ.func (日本語)\n",
+    # Multi-statement body where the unreachable expression sits after a
+    # multibyte comment: the offense range is the `bar` token after `return`,
+    # whose byte offset comes through the bundle wire and must be converted
+    # to character offset via `SourceOffsets`.
+    "Lint/UnreachableCode" =>
+      "def f\n  # 日本語\n  return\n  bar\nend\n",
     # Multibyte content inside the percent literal AND the offense sitting after
     # the multibyte comment: exercises the offense range plus both autocorrect
     # anchors (`begin_loc` for `%w(`→`%w[` and the single-byte closer at

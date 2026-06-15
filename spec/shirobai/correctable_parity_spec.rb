@@ -286,6 +286,15 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Style::NestedParenthesizedCalls,
       "puts(compute something)\n"
     ],
+    # Unreachable code after `return` is a stock no-autocorrect cop, so both
+    # stock and shirobai offenses must stay `:unsupported` (never
+    # correctable). Guards against the wrapper accidentally attaching a
+    # corrector block.
+    "Lint/UnreachableCode" => [
+      RuboCop::Cop::Lint::UnreachableCode,
+      Shirobai::Cop::Lint::UnreachableCode,
+      "def f\n  return\n  bar\nend\n"
+    ],
     # A space-before-`(` call: the offense carries a `remove(range)` corrector
     # (correctable). Guards that the wrapper attaches the corrector block in
     # lint mode like stock.

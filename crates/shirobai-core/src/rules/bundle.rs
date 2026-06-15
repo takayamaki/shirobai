@@ -29,8 +29,8 @@ use super::{
     stabby_lambda_parentheses,
     string_literals,
     string_literals_in_interpolation,
-    trailing_comma_in_arguments, trailing_empty_lines, useless_access_modifier, variable_number,
-    void,
+    trailing_comma_in_arguments, trailing_empty_lines, unreachable_code, useless_access_modifier,
+    variable_number, void,
 };
 
 /// Run `Layout/MultilineOperationIndentation` and
@@ -523,6 +523,7 @@ pub struct BundleResult {
     pub colon_method_call: Vec<colon_method_call::ColonMethodCallOffense>,
     pub stabby_lambda_parentheses:
         Vec<stabby_lambda_parentheses::StabbyLambdaParenthesesOffense>,
+    pub unreachable_code: Vec<unreachable_code::UnreachableCodeOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -670,6 +671,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut cmc_rule = colon_method_call::build_rule();
     let mut slp_rule =
         stabby_lambda_parentheses::build_rule(source, cfg.stabby_lambda_parentheses);
+    let mut uc_rule = unreachable_code::build_rule();
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -721,6 +723,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut rsa_rule,
         &mut cmc_rule,
         &mut slp_rule,
+        &mut uc_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -786,6 +789,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let redundant_self_assignment = rsa_rule.offenses;
     let colon_method_call = cmc_rule.offenses;
     let stabby_lambda_parentheses = slp_rule.offenses;
+    let unreachable_code = uc_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -863,6 +867,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         redundant_self_assignment,
         colon_method_call,
         stabby_lambda_parentheses,
+        unreachable_code,
     }
 }
 

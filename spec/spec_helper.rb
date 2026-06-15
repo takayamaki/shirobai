@@ -61,6 +61,12 @@ module VendorSpecHelper
     end
 
     lineno = source[0...header_end].count("\n") + 1
-    example_group.instance_eval(body, full_path, lineno)
+    # `class_eval` so any `def helper(...)` in the vendor spec body becomes an
+    # instance method on the example group (callable from inside `it` blocks).
+    # `instance_eval` defines them on the example group's singleton class,
+    # which examples cannot reach (we hit this with
+    # `vendor/rubocop/spec/rubocop/cop/lint/unreachable_code_spec.rb`'s
+    # `def wrap(str)` helper).
+    example_group.class_eval(body, full_path, lineno)
   end
 end

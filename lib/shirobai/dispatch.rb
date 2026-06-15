@@ -77,7 +77,8 @@ module Shirobai
       assignment_indentation: 56,
       redundant_self_assignment: 57,
       colon_method_call: 58,
-      stabby_lambda_parentheses: 59
+      stabby_lambda_parentheses: 59,
+      unreachable_code: 60
     }.freeze
 
     class << self
@@ -153,8 +154,9 @@ module Shirobai
         ml = Cop::Metrics::MethodLength.bundle_args(config)
         dea = Cop::Layout::DefEndAlignment.bundle_args(config)
         npc = Cop::Style::NestedParenthesizedCalls.bundle_args(config)
-        # Lint::ParenthesesAsGroupedExpression is config-less; its
-        # `bundle_args` returns `[]` and contributes nothing to `nums` / `lists`.
+        # Lint::ParenthesesAsGroupedExpression and Lint::UnreachableCode are
+        # config-less; their `bundle_args` returns `[]` and contributes nothing
+        # to `nums` / `lists`.
         pld = Cop::Style::PercentLiteralDelimiters.bundle_args(config)
         mmcbl = Cop::Layout::MultilineMethodCallBraceLayout.bundle_args(config)
         ami = Cop::Layout::AccessModifierIndentation.bundle_args(config)

@@ -55,6 +55,7 @@ pub mod string_literals;
 pub mod string_literals_in_interpolation;
 pub mod trailing_comma_in_arguments;
 pub mod trailing_empty_lines;
+pub mod unreachable_code;
 pub mod useless_access_modifier;
 pub mod variable_number;
 pub mod void;

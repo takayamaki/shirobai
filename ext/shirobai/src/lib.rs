@@ -794,6 +794,16 @@ fn map_nested_parenthesized_calls(
         .collect()
 }
 
+/// `Lint/UnreachableCode`: `[[start, end], ...]`. `[start, end)` is the
+/// byte range of the unreachable expression — exactly stock's
+/// `add_offense(expression2)` range. The message is fixed (`MSG` constant)
+/// and no autocorrect is attached, matching stock.
+fn map_unreachable_code(
+    v: Vec<shirobai_core::rules::unreachable_code::UnreachableCodeOffense>,
+) -> Vec<(usize, usize)> {
+    v.into_iter().map(|o| (o.start_offset, o.end_offset)).collect()
+}
+
 /// `Lint/ParenthesesAsGroupedExpression`: `[[space_start, space_end, arg_start,
 /// arg_end], ...]`. `[space_start, space_end)` is the whitespace run between
 /// the selector and the `(` — this is both the offense highlight and the
@@ -1041,7 +1051,8 @@ fn register_bundle_config(
 /// 52 parentheses_as_grouped_expression / 53 percent_literal_delimiters /
 /// 54 multiline_method_call_brace_layout / 55 access_modifier_indentation /
 /// 56 assignment_indentation / 57 redundant_self_assignment /
-/// 58 colon_method_call / 59 stabby_lambda_parentheses
+/// 58 colon_method_call / 59 stabby_lambda_parentheses /
+/// 60 unreachable_code
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1141,6 +1152,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_stabby_lambda_parentheses(
             r.stabby_lambda_parentheses,
         ))?;
+        ary.push(map_unreachable_code(r.unreachable_code))?;
         Ok(ary)
     })
 }
@@ -2105,6 +2117,14 @@ fn check_colon_method_call(source: RString) -> Vec<(usize, usize)> {
     )
 }
 
+/// Ruby entry point for `Lint/UnreachableCode`. Config-less. Returns
+/// `[[start, end], ...]` — the byte range of each unreachable expression.
+fn check_unreachable_code(source: RString) -> Vec<(usize, usize)> {
+    map_unreachable_code(shirobai_core::rules::unreachable_code::check_unreachable_code(
+        bytes(&source),
+    ))
+}
+
 /// Unpacks the `Style/PercentLiteralDelimiters` config: `pairs` is a 10-entry
 /// list of 2-byte strings in `[%, %i, %I, %q, %Q, %r, %s, %w, %W, %x]` order.
 /// The Ruby side resolves `PreferredDelimiters` (default + per-type overrides)
@@ -2401,6 +2421,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_parentheses_as_grouped_expression",
         function!(check_parentheses_as_grouped_expression, 1),
+    )?;
+    module.define_module_function(
+        "check_unreachable_code",
+        function!(check_unreachable_code, 1),
     )?;
     module.define_module_function(
         "check_percent_literal_delimiters",
