@@ -371,6 +371,16 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Style::StabbyLambdaParentheses,
       Shirobai::Cop::Style::StabbyLambdaParentheses,
       "->a,b,c { a + b + c }\n"
+    ],
+    # `each_with_object({}) {|(k,v),h| h[transform(k)] = v}`: stock builds a
+    # multi-step corrector block (selector / args / body rewrites + the
+    # `Hash[..]` strip in the brackets shape). In lint mode the offense must
+    # come out `:uncorrected` / `correctable?` regardless — the wrapper must
+    # always attach its corrector even when not running autocorrect.
+    "Style/HashTransformKeys" => [
+      RuboCop::Cop::Style::HashTransformKeys,
+      Shirobai::Cop::Style::HashTransformKeys,
+      "{a: 1, b: 2}.each_with_object({}) {|(k, v), h| h[foo(k)] = v}\n"
     ]
   }
 

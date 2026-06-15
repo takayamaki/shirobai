@@ -294,7 +294,16 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # args range Rust hands the wrapper is in BYTES; the offense highlight
     # and the wrap `(`/`)` insertion anchors all need byte→char conversion.
     "Style/StabbyLambdaParentheses" =>
-      "->あ,い,う { あ + い + う }\n"
+      "->あ,い,う { あ + い + う }\n",
+    # `_.each_with_object({}) {|(k,v),h| h[transform(k)] = v}` ⇒
+    # `_.transform_keys {|k| transform(k)}`. The offense range, the four
+    # corrector edits (selector + args + body, plus the leading `Hash[` /
+    # trailing `]` strip in the brackets shape) are all returned as byte
+    # offsets from Rust; the wrapper must SourceOffsets-translate every one
+    # before handing them to `Parser::Source::Range`. A multibyte prefix
+    # shifts each offset and exposes any spot we forgot.
+    "Style/HashTransformKeys" =>
+      "{a: 1, b: 2}.each_with_object({}) {|(k, v), h| h[foo(k)] = v}\n"
   }
 
   cases.each do |cop_name, body|
