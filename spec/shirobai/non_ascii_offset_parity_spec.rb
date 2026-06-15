@@ -256,7 +256,14 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # `(send_node_start, send_node_end)` so every range the corrector touches
     # comes out byte-correct on a multibyte source.
     "Layout/MultilineMethodCallBraceLayout" =>
-      "日本.foo(a,\n  b\n)\n"
+      "日本.foo(a,\n  b\n)\n",
+    # A misaligned `private` in a multi-statement class body sits after the
+    # multibyte prefix; the send range Rust hands the wrapper is in BYTES and
+    # the autocorrect line-shift's leading-whitespace range also has to be
+    # computed in character space. Exercises both the offense highlight and
+    # `AlignmentCorrector.correct`'s insert/remove arm in non-ASCII source.
+    "Layout/AccessModifierIndentation" =>
+      "class A\n  X = 1\nprivate\nend\n"
   }
 
   cases.each do |cop_name, body|

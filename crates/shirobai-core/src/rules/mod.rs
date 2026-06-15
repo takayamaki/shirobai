@@ -1,4 +1,5 @@
 pub mod abc_size;
+pub mod access_modifier_indentation;
 pub mod argument_alignment;
 pub mod block_alignment;
 pub mod block_delimiters;

@@ -703,6 +703,27 @@ fn map_def_end_alignment(
         .collect()
 }
 
+/// `Layout/AccessModifierIndentation`: `[[start, end, message, column_delta],
+/// ...]`. `[start, end)` is the bare `private` / `protected` / `public` /
+/// `module_function` modifier's source range (offense highlight). `message`
+/// is the formatted stock `MSG` (empty when the modifier matches the
+/// configured style — the wrapper then calls `correct_style_detected`).
+/// `column_delta` is the signed `expected - actual` shift the wrapper feeds
+/// to `AlignmentCorrector.correct`.
+fn map_access_modifier_indentation(
+    v: Vec<shirobai_core::rules::access_modifier_indentation::AccessModifierIndentationRecord>,
+) -> Vec<(usize, usize, String, i64)> {
+    v.into_iter()
+        .map(|r| {
+            let (message, delta) = r
+                .offense
+                .map(|o| (o.message, o.column_delta))
+                .unwrap_or_default();
+            (r.start, r.end, message, delta)
+        })
+        .collect()
+}
+
 /// `Lint/RequireParentheses`: `[[start_offset, end_offset], ...]`.
 fn map_require_parentheses(
     v: Vec<shirobai_core::rules::require_parentheses::RequireParenthesesOffense>,
@@ -934,7 +955,7 @@ fn register_bundle_config(
 /// 47 method_length / 48 def_end_alignment / 49 require_parentheses /
 /// 50 self_assignment / 51 nested_parenthesized_calls /
 /// 52 parentheses_as_grouped_expression / 53 percent_literal_delimiters /
-/// 54 multiline_method_call_brace_layout
+/// 54 multiline_method_call_brace_layout / 55 access_modifier_indentation
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1021,6 +1042,9 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ))?;
         ary.push(map_multiline_method_call_brace_layout(
             r.multiline_method_call_brace_layout,
+        ))?;
+        ary.push(map_access_modifier_indentation(
+            r.access_modifier_indentation,
         ))?;
         Ok(ary)
     })
@@ -1880,6 +1904,28 @@ fn check_def_end_alignment(
     ))
 }
 
+/// Ruby entry point for `Layout/AccessModifierIndentation`. `style` is the
+/// `EnforcedStyle` selector (0 = indent, 1 = outdent); `indentation_width` is
+/// the cop's own `IndentationWidth` override (or `Layout/IndentationWidth`'s
+/// `Width` when not overridden). Returns the shape documented on
+/// `map_access_modifier_indentation`.
+fn check_access_modifier_indentation(
+    source: RString,
+    style: u8,
+    indentation_width: usize,
+) -> Vec<(usize, usize, String, i64)> {
+    let cfg = shirobai_core::rules::access_modifier_indentation::Config {
+        style,
+        indentation_width,
+    };
+    map_access_modifier_indentation(
+        shirobai_core::rules::access_modifier_indentation::check_access_modifier_indentation(
+            bytes(&source),
+            cfg,
+        ),
+    )
+}
+
 /// Ruby entry point for `Lint/RequireParentheses`. Config-less. Returns
 /// `[[start_offset, end_offset], ...]`.
 fn check_require_parentheses(source: RString) -> Vec<(usize, usize)> {
@@ -2211,6 +2257,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_multiline_method_call_brace_layout",
         function!(check_multiline_method_call_brace_layout, 2),
+    )?;
+    module.define_module_function(
+        "check_access_modifier_indentation",
+        function!(check_access_modifier_indentation, 3),
     )?;
     module.define_module_function(
         "check_block_alignment",

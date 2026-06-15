@@ -318,6 +318,16 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Layout::MultilineMethodCallBraceLayout,
       Shirobai::Cop::Layout::MultilineMethodCallBraceLayout,
       "foo(a,\n  b # comment\n).any?\n"
+    ],
+    # A `private` in a multi-statement class body at column 0 under `indent`
+    # style: stock yields a corrector that delegates to
+    # `AlignmentCorrector.correct`, so the offense is `:uncorrected` /
+    # `correctable?` in lint mode. Guards that the wrapper attaches its
+    # corrector block (and that it doesn't accidentally drop it).
+    "Layout/AccessModifierIndentation" => [
+      RuboCop::Cop::Layout::AccessModifierIndentation,
+      Shirobai::Cop::Layout::AccessModifierIndentation,
+      "class A\n  X = 1\nprivate\nend\n"
     ]
   }
 
