@@ -283,7 +283,12 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # the autocorrect `replace` range are the same `[dot_start, dot_end)` two
     # bytes; both must come out byte-correct on a multibyte source.
     "Style/ColonMethodCall" =>
-      "あ::method_name(arg)\n"
+      "あ::method_name(arg)\n",
+    # A stabby lambda missing parentheses, with multibyte argument names. The
+    # args range Rust hands the wrapper is in BYTES; the offense highlight
+    # and the wrap `(`/`)` insertion anchors all need byte→char conversion.
+    "Style/StabbyLambdaParentheses" =>
+      "->あ,い,う { あ + い + う }\n"
   }
 
   cases.each do |cop_name, body|

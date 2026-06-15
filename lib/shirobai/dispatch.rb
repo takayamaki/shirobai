@@ -76,7 +76,8 @@ module Shirobai
       access_modifier_indentation: 55,
       assignment_indentation: 56,
       redundant_self_assignment: 57,
-      colon_method_call: 58
+      colon_method_call: 58,
+      stabby_lambda_parentheses: 59
     }.freeze
 
     class << self
@@ -158,6 +159,7 @@ module Shirobai
         mmcbl = Cop::Layout::MultilineMethodCallBraceLayout.bundle_args(config)
         ami = Cop::Layout::AccessModifierIndentation.bundle_args(config)
         ai = Cop::Layout::AssignmentIndentation.bundle_args(config)
+        slp = Cop::Style::StabbyLambdaParentheses.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -196,7 +198,8 @@ module Shirobai
           dea[0], # DefEndAlignment style
           mmcbl[0][0], # MultilineMethodCallBraceLayout EnforcedStyle
           ami[0], ami[1], # AccessModifierIndentation style / indentation_width
-          ai[0] # AssignmentIndentation IndentationWidth
+          ai[0], # AssignmentIndentation IndentationWidth
+          slp[0] # StabbyLambdaParentheses style
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0]]

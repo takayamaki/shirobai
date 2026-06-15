@@ -353,6 +353,15 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Style::ColonMethodCall,
       Shirobai::Cop::Style::ColonMethodCall,
       "Class::method_name(arg)\n"
+    ],
+    # A stabby lambda missing parentheses under the default
+    # `require_parentheses` style: stock yields a corrector that wraps the
+    # `args` source range with `(` `)`. Guards that the wrapper attaches its
+    # corrector block in lint mode like stock.
+    "Style/StabbyLambdaParentheses" => [
+      RuboCop::Cop::Style::StabbyLambdaParentheses,
+      Shirobai::Cop::Style::StabbyLambdaParentheses,
+      "->a,b,c { a + b + c }\n"
     ]
   }
 

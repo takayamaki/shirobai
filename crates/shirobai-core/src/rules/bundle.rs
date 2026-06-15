@@ -26,6 +26,7 @@ use super::{
     predicate_prefix, redundant_self, redundant_self_assignment,
     require_parentheses, safe_navigation_chain, self_assignment,
     space_around_keyword, space_around_method_call_operator, space_inside_block_braces,
+    stabby_lambda_parentheses,
     string_literals,
     string_literals_in_interpolation,
     trailing_comma_in_arguments, trailing_empty_lines, useless_access_modifier, variable_number,
@@ -116,6 +117,7 @@ pub fn check_multiline_bundle(
 /// | 82  | access_modifier_indentation style (`Layout/AccessModifierIndentation` `EnforcedStyle`: 0 = indent, 1 = outdent) |
 /// | 83  | access_modifier_indentation indentation_width (`Layout/AccessModifierIndentation` `IndentationWidth` override, falling back to `Layout/IndentationWidth` `Width`) |
 /// | 84  | assignment_indentation indentation_width (`Layout/AssignmentIndentation` `IndentationWidth` falling back to `Layout/IndentationWidth.Width` falling back to 2) |
+/// | 85  | stabby_lambda_parentheses style (`Style/StabbyLambdaParentheses` `EnforcedStyle`: 0 = require_parentheses, 1 = require_no_parentheses) |
 ///
 /// `lists` (`Vec<String>`), 20 entries:
 ///
@@ -222,13 +224,14 @@ pub struct BundleConfig {
     pub percent_literal_delimiters: percent_literal_delimiters::Config,
     pub access_modifier_indentation: access_modifier_indentation::Config,
     pub assignment_indentation: assignment_indentation::Config,
+    pub stabby_lambda_parentheses: stabby_lambda_parentheses::Config,
 }
 
 // `Lint/ParenthesesAsGroupedExpression` carries no config so it doesn't appear
 // in the `nums` / `lists` packing; the bundle still computes its slot in the
 // shared walk (see `check_all_bundle` below).
 
-const NUMS_LEN: usize = 85;
+const NUMS_LEN: usize = 86;
 const LISTS_LEN: usize = 22;
 
 impl BundleConfig {
@@ -400,6 +403,9 @@ impl BundleConfig {
             assignment_indentation: assignment_indentation::Config {
                 indentation_width: nums[84] as usize,
             },
+            stabby_lambda_parentheses: stabby_lambda_parentheses::Config {
+                style: nums[85] as u8,
+            },
         })
     }
 }
@@ -515,6 +521,8 @@ pub struct BundleResult {
     pub redundant_self_assignment:
         Vec<redundant_self_assignment::RedundantSelfAssignmentOffense>,
     pub colon_method_call: Vec<colon_method_call::ColonMethodCallOffense>,
+    pub stabby_lambda_parentheses:
+        Vec<stabby_lambda_parentheses::StabbyLambdaParenthesesOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -660,6 +668,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut ai_rule = assignment_indentation::build_rule(source, cfg.assignment_indentation);
     let mut rsa_rule = redundant_self_assignment::build_rule(source);
     let mut cmc_rule = colon_method_call::build_rule();
+    let mut slp_rule =
+        stabby_lambda_parentheses::build_rule(source, cfg.stabby_lambda_parentheses);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -710,6 +720,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut ai_rule,
         &mut rsa_rule,
         &mut cmc_rule,
+        &mut slp_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -774,6 +785,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let assignment_indentation = ai_rule.offenses;
     let redundant_self_assignment = rsa_rule.offenses;
     let colon_method_call = cmc_rule.offenses;
+    let stabby_lambda_parentheses = slp_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -850,6 +862,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         assignment_indentation,
         redundant_self_assignment,
         colon_method_call,
+        stabby_lambda_parentheses,
     }
 }
 
@@ -925,6 +938,7 @@ mod tests {
             0, // multiline_method_call_brace_layout: style (symmetrical)
             0, 2, // access_modifier_indentation: style (indent) / indentation_width (2)
             2, // assignment_indentation: indentation_width (default 2)
+            0, // stabby_lambda_parentheses: style (require_parentheses)
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],

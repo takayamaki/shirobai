@@ -50,6 +50,7 @@ pub mod self_assignment;
 pub mod space_around_keyword;
 pub mod space_around_method_call_operator;
 pub mod space_inside_block_braces;
+pub mod stabby_lambda_parentheses;
 pub mod string_literals;
 pub mod string_literals_in_interpolation;
 pub mod trailing_comma_in_arguments;

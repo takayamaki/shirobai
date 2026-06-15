@@ -724,6 +724,33 @@ fn map_access_modifier_indentation(
         .collect()
 }
 
+/// `Style/StabbyLambdaParentheses`: `[[start, end, paren_open_start,
+/// paren_open_end, paren_close_start, paren_close_end, message], ...]`.
+/// `[start, end)` is the `args.loc.expression` source range (offense highlight
+/// = stock's `add_offense(arguments)`). Under `require_parentheses`
+/// `paren_*` fields are zero and the wrapper calls
+/// `corrector.wrap(args_range, '(', ')')`. Under `require_no_parentheses`
+/// `[paren_open_start, paren_open_end)` is the `(` 1-byte range (replaced
+/// with `''`) and `[paren_close_start, paren_close_end)` is the `)` 1-byte
+/// range (removed). `message` is the formatted stock `MSG_*`.
+fn map_stabby_lambda_parentheses(
+    v: Vec<shirobai_core::rules::stabby_lambda_parentheses::StabbyLambdaParenthesesOffense>,
+) -> Vec<(usize, usize, usize, usize, usize, usize, String)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.start,
+                o.end,
+                o.paren_open_start,
+                o.paren_open_end,
+                o.paren_close_start,
+                o.paren_close_end,
+                o.message.to_string(),
+            )
+        })
+        .collect()
+}
+
 /// `Lint/RequireParentheses`: `[[start_offset, end_offset], ...]`.
 fn map_require_parentheses(
     v: Vec<shirobai_core::rules::require_parentheses::RequireParenthesesOffense>,
@@ -1014,7 +1041,7 @@ fn register_bundle_config(
 /// 52 parentheses_as_grouped_expression / 53 percent_literal_delimiters /
 /// 54 multiline_method_call_brace_layout / 55 access_modifier_indentation /
 /// 56 assignment_indentation / 57 redundant_self_assignment /
-/// 58 colon_method_call
+/// 58 colon_method_call / 59 stabby_lambda_parentheses
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1111,6 +1138,9 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             bytes(&source),
         ))?;
         ary.push(map_colon_method_call(r.colon_method_call))?;
+        ary.push(map_stabby_lambda_parentheses(
+            r.stabby_lambda_parentheses,
+        ))?;
         Ok(ary)
     })
 }
@@ -1991,6 +2021,22 @@ fn check_access_modifier_indentation(
     )
 }
 
+/// Ruby entry point for `Style/StabbyLambdaParentheses`. `style` is the
+/// `EnforcedStyle` selector (0 = require_parentheses, 1 = require_no_parentheses).
+/// Returns the shape documented on `map_stabby_lambda_parentheses`.
+fn check_stabby_lambda_parentheses(
+    source: RString,
+    style: u8,
+) -> Vec<(usize, usize, usize, usize, usize, usize, String)> {
+    let cfg = shirobai_core::rules::stabby_lambda_parentheses::Config { style };
+    map_stabby_lambda_parentheses(
+        shirobai_core::rules::stabby_lambda_parentheses::check_stabby_lambda_parentheses(
+            bytes(&source),
+            cfg,
+        ),
+    )
+}
+
 /// Ruby entry point for `Lint/RequireParentheses`. Config-less. Returns
 /// `[[start_offset, end_offset], ...]`.
 fn check_require_parentheses(source: RString) -> Vec<(usize, usize)> {
@@ -2375,6 +2421,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_colon_method_call",
         function!(check_colon_method_call, 1),
+    )?;
+    module.define_module_function(
+        "check_stabby_lambda_parentheses",
+        function!(check_stabby_lambda_parentheses, 2),
     )?;
     module.define_module_function(
         "check_block_alignment",
