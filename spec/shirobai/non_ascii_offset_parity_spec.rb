@@ -303,7 +303,14 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # before handing them to `Parser::Source::Range`. A multibyte prefix
     # shifts each offset and exposes any spot we forgot.
     "Style/HashTransformKeys" =>
-      "{a: 1, b: 2}.each_with_object({}) {|(k, v), h| h[foo(k)] = v}\n"
+      "{a: 1, b: 2}.each_with_object({}) {|(k, v), h| h[foo(k)] = v}\n",
+    # `some_method a { … }` with a multibyte block body: the whole-call offense
+    # range, the autocorrect `remove` + `insert_before` whitespace anchor, the
+    # `insert_after` zero-width range, and the `%<param>s` / `%<method>s` MSG
+    # substitutions all run through `SourceOffsets`. The multibyte content
+    # exercises the byte->char shift on every offset.
+    "Lint/AmbiguousBlockAssociation" =>
+      "some_method あ { |el| puts 日本語 }\n"
   }
 
   cases.each do |cop_name, body|

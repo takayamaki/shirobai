@@ -9,7 +9,8 @@ use std::collections::HashSet;
 use super::multiline_method_call_indentation::{self as mc, MethodCallIndentOffense};
 use super::multiline_operation_indentation::{self as op, OperationIndentOffense};
 use super::{
-    abc_size, access_modifier_indentation, argument_alignment, assignment_indentation,
+    abc_size, access_modifier_indentation, ambiguous_block_association, argument_alignment,
+    assignment_indentation,
     block_delimiters, block_length, block_nesting,
     closing_parenthesis_indentation, colon_method_call, complexity, debugger, def_end_alignment,
     dot_position,
@@ -145,6 +146,7 @@ pub fn check_multiline_bundle(
 /// | 19  | method_length_count_as_one (`Metrics/MethodLength` `CountAsOne`) |
 /// | 20  | nested_parenthesized_calls_allowed_methods (`Style/NestedParenthesizedCalls` `AllowedMethods`) |
 /// | 21  | percent_literal_delimiters_pairs (`Style/PercentLiteralDelimiters` `PreferredDelimiters`, resolved to 10 two-byte strings in `[%, %i, %I, %q, %Q, %r, %s, %w, %W, %x]` order) |
+/// | 22  | ambiguous_block_association_allowed_methods (`Lint/AmbiguousBlockAssociation` `AllowedMethods`, regexp entries dropped by the Ruby wrapper which falls back to standalone when any regexp is present) |
 ///
 /// `Layout/IndentationWidth`'s `allowed_lines` and `prior_ranges` are fixed to
 /// empty in the bundle: the non-empty cases (configured `AllowedPatterns`,
@@ -225,6 +227,7 @@ pub struct BundleConfig {
     pub access_modifier_indentation: access_modifier_indentation::Config,
     pub assignment_indentation: assignment_indentation::Config,
     pub stabby_lambda_parentheses: stabby_lambda_parentheses::Config,
+    pub ambiguous_block_association: ambiguous_block_association::Config,
 }
 
 // `Lint/ParenthesesAsGroupedExpression` carries no config so it doesn't appear
@@ -232,7 +235,7 @@ pub struct BundleConfig {
 // shared walk (see `check_all_bundle` below).
 
 const NUMS_LEN: usize = 86;
-const LISTS_LEN: usize = 22;
+const LISTS_LEN: usize = 23;
 
 impl BundleConfig {
     /// Build a config from the flat wire format (see the struct docs for the
@@ -406,6 +409,9 @@ impl BundleConfig {
             stabby_lambda_parentheses: stabby_lambda_parentheses::Config {
                 style: nums[85] as u8,
             },
+            ambiguous_block_association: ambiguous_block_association::Config {
+                allowed_methods: next_list(),
+            },
         })
     }
 }
@@ -525,6 +531,8 @@ pub struct BundleResult {
         Vec<stabby_lambda_parentheses::StabbyLambdaParenthesesOffense>,
     pub unreachable_code: Vec<unreachable_code::UnreachableCodeOffense>,
     pub hash_transform_keys: Vec<hash_transform_keys::HashTransformKeysOffense>,
+    pub ambiguous_block_association:
+        Vec<ambiguous_block_association::AmbiguousBlockAssociationOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -674,6 +682,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         stabby_lambda_parentheses::build_rule(source, cfg.stabby_lambda_parentheses);
     let mut uc_rule = unreachable_code::build_rule();
     let mut htk_rule = hash_transform_keys::build_rule(source);
+    let mut aba_rule =
+        ambiguous_block_association::build_rule(source, cfg.ambiguous_block_association.clone());
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -727,6 +737,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut slp_rule,
         &mut uc_rule,
         &mut htk_rule,
+        &mut aba_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -794,6 +805,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let stabby_lambda_parentheses = slp_rule.offenses;
     let unreachable_code = uc_rule.offenses;
     let hash_transform_keys = htk_rule.offenses;
+    let ambiguous_block_association = aba_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -873,6 +885,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         stabby_lambda_parentheses,
         unreachable_code,
         hash_transform_keys,
+        ambiguous_block_association,
     }
 }
 
@@ -993,6 +1006,8 @@ mod tests {
                 "[]".to_string(),
                 "()".to_string(),
             ],
+            // ambiguous_block_association: AllowedMethods (default empty).
+            vec![],
         ];
         (nums, lists)
     }

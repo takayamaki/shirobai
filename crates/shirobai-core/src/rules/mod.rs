@@ -1,5 +1,6 @@
 pub mod abc_size;
 pub mod access_modifier_indentation;
+pub mod ambiguous_block_association;
 pub mod argument_alignment;
 pub mod assignment_indentation;
 pub mod block_alignment;

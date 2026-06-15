@@ -751,6 +751,43 @@ fn map_stabby_lambda_parentheses(
         .collect()
 }
 
+/// `Lint/AmbiguousBlockAssociation` wire tuple: see
+/// `map_ambiguous_block_association` for field semantics. A `type` alias keeps
+/// clippy's `type_complexity` lint quiet without an `#[allow]`.
+type AmbiguousBlockAssociationTuple = (
+    usize, usize, usize, usize, usize, usize, usize, usize, usize,
+);
+
+/// `Lint/AmbiguousBlockAssociation`: `[[start, end, param_start, param_end,
+/// inner_send_start, inner_send_end, ac_open_start, ac_open_end, ac_close_pos],
+/// ...]`. `[start, end)` is the outer call's full source range (offense
+/// highlight). `[param_start, param_end)` is the last argument's source range
+/// (the block-bearing inner call — substituted into MSG as `%<param>s`).
+/// `[inner_send_start, inner_send_end)` is the inner block sender's source
+/// range (substituted into MSG as `%<method>s`). Autocorrect: replace
+/// `[ac_open_start, ac_open_end)` with `(` (`corrector.remove(range)` +
+/// `corrector.insert_before(range, '(')` in stock) and insert `)` at
+/// `ac_close_pos` (the last argument's end).
+fn map_ambiguous_block_association(
+    v: Vec<shirobai_core::rules::ambiguous_block_association::AmbiguousBlockAssociationOffense>,
+) -> Vec<AmbiguousBlockAssociationTuple> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.start_offset,
+                o.end_offset,
+                o.param_start,
+                o.param_end,
+                o.inner_send_start,
+                o.inner_send_end,
+                o.ac_open_start,
+                o.ac_open_end,
+                o.ac_close_pos,
+            )
+        })
+        .collect()
+}
+
 /// `Style/HashTransformKeys`: `[[start, end, message, edits], ...]` where
 /// `edits` is `[[edit_start, edit_end, replacement], ...]`. Stock's mixin
 /// emits four `corrector.replace` calls per offense (strip the `Hash[..]`
@@ -1067,7 +1104,8 @@ fn register_bundle_config(
 /// 54 multiline_method_call_brace_layout / 55 access_modifier_indentation /
 /// 56 assignment_indentation / 57 redundant_self_assignment /
 /// 58 colon_method_call / 59 stabby_lambda_parentheses /
-/// 60 unreachable_code / 61 hash_transform_keys
+/// 60 unreachable_code / 61 hash_transform_keys /
+/// 62 ambiguous_block_association
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1169,6 +1207,9 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ))?;
         ary.push(map_unreachable_code(r.unreachable_code))?;
         ary.push(map_hash_transform_keys(r.hash_transform_keys))?;
+        ary.push(map_ambiguous_block_association(
+            r.ambiguous_block_association,
+        ))?;
         Ok(ary)
     })
 }
@@ -2077,6 +2118,26 @@ fn check_stabby_lambda_parentheses(
     )
 }
 
+/// Ruby entry point for `Lint/AmbiguousBlockAssociation`. Takes the source,
+/// `AllowedMethods` (matched verbatim against the INNER block sender's name),
+/// and `AllowedInnerSources` (a pre-applied list of inner-sender source bytes
+/// the wrapper already matched against `AllowedPatterns` regexps — fed in
+/// directly so the Rust crate never has to embed a regexp engine). Returns
+/// the shape documented on `map_ambiguous_block_association`.
+fn check_ambiguous_block_association(
+    source: RString,
+    allowed_methods: Vec<String>,
+    allowed_inner_sources: Vec<String>,
+) -> Vec<AmbiguousBlockAssociationTuple> {
+    map_ambiguous_block_association(
+        shirobai_core::rules::ambiguous_block_association::check_ambiguous_block_association(
+            bytes(&source),
+            &allowed_methods,
+            &allowed_inner_sources,
+        ),
+    )
+}
+
 /// Ruby entry point for `Lint/RequireParentheses`. Config-less. Returns
 /// `[[start_offset, end_offset], ...]`.
 fn check_require_parentheses(source: RString) -> Vec<(usize, usize)> {
@@ -2477,6 +2538,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_stabby_lambda_parentheses",
         function!(check_stabby_lambda_parentheses, 2),
+    )?;
+    module.define_module_function(
+        "check_ambiguous_block_association",
+        function!(check_ambiguous_block_association, 3),
     )?;
     module.define_module_function(
         "check_block_alignment",

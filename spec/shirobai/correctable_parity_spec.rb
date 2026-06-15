@@ -381,6 +381,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Style::HashTransformKeys,
       Shirobai::Cop::Style::HashTransformKeys,
       "{a: 1, b: 2}.each_with_object({}) {|(k, v), h| h[foo(k)] = v}\n"
+    ],
+    # `wrap_in_parentheses` corrector (`remove` + `insert_before` + `insert_after`)
+    # is correctable in lint mode. Guards that the wrapper attaches the corrector
+    # block in lint mode like stock.
+    "Lint/AmbiguousBlockAssociation" => [
+      RuboCop::Cop::Lint::AmbiguousBlockAssociation,
+      Shirobai::Cop::Lint::AmbiguousBlockAssociation,
+      "some_method a { |el| puts el }\n"
     ]
   }
 
