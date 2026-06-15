@@ -881,6 +881,18 @@ fn map_redundant_self_assignment(
         .collect()
 }
 
+/// `Style/ColonMethodCall`: `[[dot_start, dot_end], ...]` — the `::` token
+/// range. Both the offense highlight and the autocorrect replace range are the
+/// same `[dot_start, dot_end)` (matches stock's
+/// `add_offense(node.loc.dot) { |c| c.replace(node.loc.dot, '.') }`). Always
+/// two bytes wide for a well-formed `::`; the wrapper takes both ends so the
+/// `Parser::Source::Range` and the autocorrect target are byte-identical.
+fn map_colon_method_call(
+    v: Vec<shirobai_core::rules::colon_method_call::ColonMethodCallOffense>,
+) -> Vec<(usize, usize)> {
+    v.into_iter().map(|o| (o.dot_start, o.dot_end)).collect()
+}
+
 /// `Layout/BlockAlignment`: `[[end_start, end_end, message, align_column], ...]`
 /// — `[end_start, end_end)` is the closing-token range (`end` / `}`);
 /// `message`/`align_column` carry the offense detail (only misaligned blocks
@@ -1001,7 +1013,8 @@ fn register_bundle_config(
 /// 50 self_assignment / 51 nested_parenthesized_calls /
 /// 52 parentheses_as_grouped_expression / 53 percent_literal_delimiters /
 /// 54 multiline_method_call_brace_layout / 55 access_modifier_indentation /
-/// 56 assignment_indentation / 57 redundant_self_assignment
+/// 56 assignment_indentation / 57 redundant_self_assignment /
+/// 58 colon_method_call
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1097,6 +1110,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             r.redundant_self_assignment,
             bytes(&source),
         ))?;
+        ary.push(map_colon_method_call(r.colon_method_call))?;
         Ok(ary)
     })
 }
@@ -2036,6 +2050,15 @@ fn check_parentheses_as_grouped_expression(
     )
 }
 
+/// Ruby entry point for `Style/ColonMethodCall`. Config-less. Returns
+/// `[[dot_start, dot_end], ...]` — the `::` token range used for both the
+/// offense highlight and the autocorrect replacement.
+fn check_colon_method_call(source: RString) -> Vec<(usize, usize)> {
+    map_colon_method_call(
+        shirobai_core::rules::colon_method_call::check_colon_method_call(bytes(&source)),
+    )
+}
+
 /// Unpacks the `Style/PercentLiteralDelimiters` config: `pairs` is a 10-entry
 /// list of 2-byte strings in `[%, %i, %I, %q, %Q, %r, %s, %w, %W, %x]` order.
 /// The Ruby side resolves `PreferredDelimiters` (default + per-type overrides)
@@ -2348,6 +2371,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_assignment_indentation",
         function!(check_assignment_indentation, 2),
+    )?;
+    module.define_module_function(
+        "check_colon_method_call",
+        function!(check_colon_method_call, 1),
     )?;
     module.define_module_function(
         "check_block_alignment",

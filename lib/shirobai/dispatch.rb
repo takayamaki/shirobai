@@ -75,7 +75,8 @@ module Shirobai
       multiline_method_call_brace_layout: 54,
       access_modifier_indentation: 55,
       assignment_indentation: 56,
-      redundant_self_assignment: 57
+      redundant_self_assignment: 57,
+      colon_method_call: 58
     }.freeze
 
     class << self

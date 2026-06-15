@@ -278,7 +278,12 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # offset (Rust hands us byte indices) so the multibyte rhs source survives
     # round-trip.
     "Style/RedundantSelfAssignment" =>
-      "foo = foo.concat(日本)\nother.bar = other.bar.concat(日本)\n"
+      "foo = foo.concat(日本)\nother.bar = other.bar.concat(日本)\n",
+    # The `::` token sits AFTER the multibyte comment. The offense range and
+    # the autocorrect `replace` range are the same `[dot_start, dot_end)` two
+    # bytes; both must come out byte-correct on a multibyte source.
+    "Style/ColonMethodCall" =>
+      "あ::method_name(arg)\n"
   }
 
   cases.each do |cop_name, body|

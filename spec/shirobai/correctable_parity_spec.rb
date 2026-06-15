@@ -346,13 +346,13 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Layout::AssignmentIndentation,
       "a =\nif b ; end\n"
     ],
-    # `var = var.concat(ary)` is a stock autocorrect cop: the offense carries a
-    # `replace(node, rhs.source)` corrector (correctable). Guards that the
-    # wrapper attaches the corrector block in lint mode like stock.
-    "Style/RedundantSelfAssignment" => [
-      RuboCop::Cop::Style::RedundantSelfAssignment,
-      Shirobai::Cop::Style::RedundantSelfAssignment,
-      "foo = foo.concat(ary)\n"
+    # A `::` method call: stock emits a `replace(loc.dot, '.')` corrector
+    # (correctable). Guards that the wrapper attaches the corrector block in
+    # lint mode like stock.
+    "Style/ColonMethodCall" => [
+      RuboCop::Cop::Style::ColonMethodCall,
+      Shirobai::Cop::Style::ColonMethodCall,
+      "Class::method_name(arg)\n"
     ]
   }
 

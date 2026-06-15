@@ -11,7 +11,8 @@ use super::multiline_operation_indentation::{self as op, OperationIndentOffense}
 use super::{
     abc_size, access_modifier_indentation, argument_alignment, assignment_indentation,
     block_delimiters, block_length, block_nesting,
-    closing_parenthesis_indentation, complexity, debugger, def_end_alignment, dot_position,
+    closing_parenthesis_indentation, colon_method_call, complexity, debugger, def_end_alignment,
+    dot_position,
     empty_line_between_defs,
     block_alignment, else_alignment, empty_lines_around_arguments, empty_lines_around_body,
     end_alignment,
@@ -513,6 +514,7 @@ pub struct BundleResult {
     pub assignment_indentation: Vec<assignment_indentation::AssignmentIndentationOffense>,
     pub redundant_self_assignment:
         Vec<redundant_self_assignment::RedundantSelfAssignmentOffense>,
+    pub colon_method_call: Vec<colon_method_call::ColonMethodCallOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -657,6 +659,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         access_modifier_indentation::build_rule(source, cfg.access_modifier_indentation);
     let mut ai_rule = assignment_indentation::build_rule(source, cfg.assignment_indentation);
     let mut rsa_rule = redundant_self_assignment::build_rule(source);
+    let mut cmc_rule = colon_method_call::build_rule();
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -706,6 +709,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut ami_rule,
         &mut ai_rule,
         &mut rsa_rule,
+        &mut cmc_rule,
     ];
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
@@ -769,6 +773,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let access_modifier_indentation = ami_rule.records;
     let assignment_indentation = ai_rule.offenses;
     let redundant_self_assignment = rsa_rule.offenses;
+    let colon_method_call = cmc_rule.offenses;
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -844,6 +849,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         access_modifier_indentation,
         assignment_indentation,
         redundant_self_assignment,
+        colon_method_call,
     }
 }
 

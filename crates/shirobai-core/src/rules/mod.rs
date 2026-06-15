@@ -9,6 +9,7 @@ pub mod block_nesting;
 pub mod bundle;
 pub mod closing_parenthesis_indentation;
 pub mod code_length;
+pub mod colon_method_call;
 pub mod complexity;
 pub mod debugger;
 pub mod def_end_alignment;
