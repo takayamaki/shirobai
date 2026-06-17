@@ -77,22 +77,30 @@ pub(crate) fn build_rule(source: &[u8], config: Config) -> Visitor<'_> {
     }
 }
 
+/// Classification of an ancestor node for `leftmost_multiple_assignment`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FrameKind {
+    /// `node.assignment? == true`: write/op_asgn/multi_write nodes, and
+    /// setter-call `send` nodes (via `MethodDispatchNode#setter_method?`
+    /// which is aliased to `assignment?`).
+    Assignment,
+    /// Structural wrapper that does not exist in parser-gem's AST
+    /// (`ArgumentsNode`, `StatementsNode`, etc.). The climb passes through
+    /// these without stopping.
+    Transparent,
+    /// Any other node — the climb stops here.
+    Other,
+}
+
 /// One open ancestor's facts used by `leftmost_multiple_assignment`:
-/// whether the ancestor is itself an assignment (in stock's
-/// `node.assignment?` sense), its expression start offset, and its first
-/// line. The expression start gives the leftmost LHS column when same-line
-/// assignment parents are climbed.
+/// its expression start offset, first line, and classification.
 #[derive(Clone, Copy)]
 struct Frame {
     /// `loc.expression.begin_pos` of the parent node.
     expr_start: usize,
     /// First (1-based) line of the parent node's expression.
     first_line: usize,
-    /// `node.assignment?`: write/op_asgn/multi_write nodes. `send`/index_*
-    /// nodes are NOT assignment? in parser-gem unless they are setter calls,
-    /// which `leftmost_multiple_assignment` does not climb through. We are
-    /// strict here too.
-    is_assignment: bool,
+    kind: FrameKind,
 }
 
 pub(crate) struct Visitor<'a> {
@@ -124,13 +132,19 @@ impl<'a> Visitor<'a> {
     /// `leftmost_multiple_assignment(node)`: climb same-line assignment
     /// parents and return the outermost expression start offset. Stock walks
     /// upward while `same_line?(node, node.parent) && node.parent.assignment?`.
+    ///
+    /// Transparent frames (structural wrappers like `ArgumentsNode` that have
+    /// no parser-gem counterpart) are skipped without stopping the climb.
     fn leftmost_assignment_start(&self, self_start: usize, self_line: usize) -> usize {
         let mut start = self_start;
         let mut line = self_line;
         // Walk ancestors top-down (deepest first). Each ancestor is the
         // immediate parent of the previous level.
         for frame in self.ancestors.iter().rev() {
-            if !frame.is_assignment {
+            if frame.kind == FrameKind::Transparent {
+                continue;
+            }
+            if frame.kind != FrameKind::Assignment {
                 break;
             }
             if frame.first_line != line {
@@ -249,12 +263,21 @@ fn assignment_rhs_and_operator<'pr>(node: &Node<'pr>) -> Option<(Node<'pr>, Loca
     None
 }
 
-/// Whether this node would respond `assignment? == true` in parser-gem
-/// (`lvasgn`, `ivasgn`, ..., `op_asgn`, `or_asgn`, `and_asgn`, `masgn`,
-/// `casgn`). `send`/`csend` are NOT assignment? unless they are setter calls
-/// (`x.foo = y`, `x[i] = y`), which `leftmost_multiple_assignment` does not
-/// climb through.
+/// Whether this node would respond `assignment? == true` in parser-gem.
+///
+/// For plain writes (`lvasgn`, `ivasgn`, ..., `op_asgn`, `or_asgn`,
+/// `and_asgn`, `masgn`, `casgn`) this is always true. For `send`/`csend`,
+/// `MethodDispatchNode#assignment?` is aliased to `setter_method?` which
+/// returns `loc?(:operator)` — i.e. true when the call is an attribute
+/// writer (`x.foo = y`) or an index writer (`x[i] = y`). In prism this is
+/// represented as a `CallNode` with `equal_loc` present.
+///
+/// `leftmost_multiple_assignment` climbs through same-line assignment
+/// parents — including setter-call parents — so we must include them here.
 fn is_assignment_node(node: &Node<'_>) -> bool {
+    if let Some(call) = node.as_call_node() {
+        return call.equal_loc().is_some();
+    }
     assignment_rhs_and_operator(node).is_some()
 }
 
@@ -323,6 +346,22 @@ fn call_last_argument<'pr>(call: &ruby_prism::CallNode<'pr>) -> Option<Node<'pr>
     args.arguments().iter().last()
 }
 
+/// Classify a node for the ancestor-climb. Structural wrappers that do not
+/// exist in parser-gem's AST (and therefore never participate in
+/// `node.parent` / `node.parent.assignment?` checks) are transparent.
+fn frame_kind(node: &Node<'_>) -> FrameKind {
+    // Prism structural wrappers with no parser-gem counterpart: the climb
+    // should pass through these as if they didn't exist.
+    if node.as_arguments_node().is_some() || node.as_statements_node().is_some() {
+        return FrameKind::Transparent;
+    }
+    if is_assignment_node(node) {
+        FrameKind::Assignment
+    } else {
+        FrameKind::Other
+    }
+}
+
 impl super::dispatch::Rule for Visitor<'_> {
     fn enter(&mut self, node: &Node<'_>) {
         self.check(node);
@@ -330,7 +369,7 @@ impl super::dispatch::Rule for Visitor<'_> {
         self.ancestors.push(Frame {
             expr_start: loc.start_offset(),
             first_line: self.line_of(loc.start_offset()),
-            is_assignment: is_assignment_node(node),
+            kind: frame_kind(node),
         });
     }
 
@@ -437,5 +476,27 @@ mod tests {
         let r = run("a =\n  if b ; end\n", 7);
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].column_delta, 5);
+    }
+
+    #[test]
+    fn setter_call_chains_with_lvasgn() {
+        // `foo[x] = bar =\n  value` — the setter call (`[]=`) has
+        // `assignment? == true` in parser-gem (via `setter_method?`).
+        // `leftmost_multiple_assignment` climbs through the setter call,
+        // so the base column is `foo`'s column (0). Expected = 0 + 2 = 2.
+        // The inner `bar = value` lvasgn must NOT produce a separate offense
+        // because `bar` is on the same line as the `=` in `bar =`, so the
+        // operator and rhs line check short-circuits. This test verifies
+        // that the setter-call parent is treated as an assignment.
+        let r = run("foo[x] = bar =\n  value\n", 2);
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn setter_call_chain_misindented() {
+        // `foo[x] = bar =\nvalue` — base is `foo` at col 0, expected 2.
+        let r = run("foo[x] = bar =\nvalue\n", 2);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].column_delta, 2);
     }
 }
