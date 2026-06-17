@@ -1,5 +1,6 @@
 /target/
-/.tmp/
+/.tmp/*
+!/.tmp/rubocop_source
 /tmp/
 /papers/
 /pkg/
@@ -8,4 +9,4 @@
 /lib/shirobai/*.dll
 *.o
 *.a
-Gemfile.lock
+Gemfile*.lock

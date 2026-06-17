@@ -1,18 +1,10 @@
 #!/usr/bin/env bash
-# Real-CLI dual-Gemfile parity diff — the true drop-in oracle.
+# Real-CLI dual-Gemfile parity diff — the truth oracle for drop-in compatibility.
 #
-# Runs stock rubocop (Gemfile.stock, no shirobai) and shirobai-enabled rubocop
+# Runs stock rubocop (Gemfile.stock) and shirobai-enabled rubocop
 # (Gemfile.with_shirobai + --require shirobai) over the same corpus, both with
 # --force-default-config --cache false --no-server -f json, then diffs the two
 # offense sets exactly: per-cop counts, per-offense path/line/column/message.
-#
-# This is the canonical parity gate. The in-process e2e_bench harness has three
-# known defects (see handoff §3): stock pollution, instance reuse, and configless
-# ProcessedSource. The first two are fixed; the third was fixed 2026-06-14 but
-# the harness remains a *simulation* of the real Runner. Real-CLI dual-Gemfile
-# diff avoids the simulation entirely — only it caught the pre-existing MMCI +5
-# overdetection and the FirstArrayElementIndentation -94 underdetection that
-# the in-process harness silently dropped via symmetric crash-drop.
 #
 # Usage:
 #   benches/parity_diff.sh <corpus-path> [out-prefix]
@@ -21,10 +13,8 @@
 #   benches/parity_diff.sh .tmp/mastodon
 #   benches/parity_diff.sh .tmp/discourse /tmp/dc
 #   benches/parity_diff.sh .tmp/rubocop_source /tmp/rc
-#   benches/parity_diff.sh vendor/rubocop      # exclude'd by AllCops vendor/**;
-#                                              # use .tmp/rubocop_source symlink instead
 #
-# Requires Gemfile.stock and Gemfile.with_shirobai at repo root (committed).
+# Requires Gemfile.stock and Gemfile.with_shirobai at repo root.
 # Build shirobai first: `bundle exec rake compile`.
 set -euo pipefail
 
