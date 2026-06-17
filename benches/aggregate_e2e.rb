@@ -6,9 +6,8 @@
 #
 # Usage:
 #   cat results.txt | ruby benches/aggregate_e2e.rb
-#   STOCK_FIXED=40.0 ruby benches/aggregate_e2e.rb results.txt
+#   ruby benches/aggregate_e2e.rb results.txt
 
-stock_fixed = Float(ENV.fetch("STOCK_FIXED", "40.0"))
 input = ARGF
 
 cpu     = Hash.new { |h, k| h[k] = [] }
@@ -25,12 +24,6 @@ input.each_line do |line|
   compute[Regexp.last_match(1)] << Regexp.last_match(4).to_f
   gc[Regexp.last_match(1)]      << Regexp.last_match(5).to_f
   wall[Regexp.last_match(1)]    << Regexp.last_match(6).to_f
-end
-
-stock_run = !compute["stock"].empty?
-unless stock_run
-  compute["stock"] = [stock_fixed]
-  cpu["stock"]     = [stock_fixed]
 end
 
 median = lambda do |a|
@@ -60,18 +53,10 @@ printf("           compute med  (min .. max)      gc med    cpu med   wall med  
 end
 
 puts
-if stock_run
-  printf("stock: measured\n")
-else
-  printf("stock: NOT run (compute hardcoded %.1fs; override via STOCK_FIXED)\n", stock_fixed)
-end
-
-parity = if !stock_run
-           "stock not run; shirobai offenses=#{offenses["shirobai"]} (expected 16846)"
-         elsif offenses["stock"] == offenses["shirobai"]
-           "OK (= stock)"
+parity = if offenses["stock"] == offenses["shirobai"]
+           "OK (stock = shirobai)"
          else
-           "MISMATCH vs stock=#{offenses["stock"]}"
+           "MISMATCH stock=#{offenses["stock"]} shirobai=#{offenses["shirobai"]}"
          end
 printf("offense parity:               %s\n", parity)
 printf("replaced cops Ruby compute:   %+.2fs  (stock - removed)\n", sc - rc)

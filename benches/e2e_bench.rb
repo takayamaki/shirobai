@@ -1,40 +1,31 @@
 # frozen_string_literal: true
 
-# End-to-end benchmark: run the FULL default cop set over every Mastodon file,
-# comparing stock RuboCop against shirobai (with the implemented cops swapped
-# in). This is the metric that matters — in a real run the AST walk is shared
-# across all cops, so the per-cop isolated benchmark cannot show shirobai's
-# benefit.
+# End-to-end benchmark: run cops over every .rb file in a corpus,
+# using the corpus's own .rubocop.yml config.
 #
-# Sources are parsed once up front and shared; only the investigate loop is
-# timed. Cop instances and the Commissioner are built FRESH PER FILE, exactly
-# like RuboCop's Runner#inspect_file -> mobilize_team does in a real run. Do
-# not "optimize" this by reusing instances: stock cops are stateful across
-# investigations (e.g. Layout/LineLength leaks @heredocs line ranges between
-# files, silently suppressing offenses), so a reused-instance run measures a
-# corrupted workload that no real rubocop invocation ever executes.
+# Cop instances and the Commissioner are built FRESH PER FILE,
+# matching RuboCop's Runner#inspect_file -> mobilize_team behavior.
+# Do not reuse instances: stock cops leak state across files.
 #
 # Usage:
-#   ruby benches/e2e_bench.rb <stock|shirobai|removed>
+#   ruby benches/e2e_bench.rb <stock|shirobai|removed> [corpus-path]
 #
+# corpus-path defaults to .tmp/mastodon.
 # Run each mode in a separate process (see run_e2e.sh).
 
 require "rubocop"
 
-mode = ARGV[0] or abort "usage: e2e_bench.rb <stock|shirobai|removed>"
+mode = ARGV[0] or abort "usage: e2e_bench.rb <stock|shirobai|removed> [corpus-path]"
+corpus = ARGV[1] || File.join(__dir__, "..", ".tmp", "mastodon")
+corpus = File.expand_path(corpus)
 
-# In stock mode shirobai must NOT be loaded at all: requiring it enlists the
-# wrapper classes into the global registry under the same badges, replacing the
-# stock cops — exactly the drop-in behavior the gem ships, but fatal for a
-# baseline (stock would silently run the wrappers and stock-vs-shirobai becomes
-# a self-comparison). removed/shirobai modes still need the require to know the
-# implemented cop set.
+abort "error: corpus not found: #{corpus}" unless Dir.exist?(corpus)
+
 shirobai_cops = {}
 if mode != "stock"
   $LOAD_PATH.unshift File.join(__dir__, "..", "lib")
   require "shirobai"
 
-  # Map of cop_name => shirobai class, for the cops implemented so far.
   Shirobai::Cop.constants(false).each do |dept|
     mod = Shirobai::Cop.const_get(dept)
     next unless mod.is_a?(Module)
@@ -48,14 +39,15 @@ if mode != "stock"
   end
 end
 
-config = RuboCop::ConfigLoader.default_configuration
-ruby_version = RuboCop::TargetRuby::DEFAULT_VERSION
+config_file = RuboCop::ConfigLoader.configuration_file_for(corpus)
+config = if File.exist?(config_file)
+           RuboCop::ConfigLoader.configuration_from_file(config_file)
+         else
+           RuboCop::ConfigLoader.default_configuration
+         end
+ruby_version = config.target_ruby_version || RuboCop::TargetRuby::DEFAULT_VERSION
 registry = RuboCop::Cop::Registry.global
 
-# Modes:
-#   stock    - all default cops, unchanged
-#   shirobai - implemented cops swapped for the Rust drop-ins
-#   removed  - implemented cops dropped entirely (measures their stock eval cost)
 cop_classes = registry.enabled(config).filter_map do |klass|
   implemented = shirobai_cops.key?(klass.cop_name)
   case mode
@@ -67,18 +59,9 @@ end
 
 replaced = mode == "shirobai" ? shirobai_cops.keys.size : 0
 
-files = Dir.glob(File.join(__dir__, "..", ".tmp", "mastodon", "**", "*.rb"))
+files = Dir.glob(File.join(corpus, "**", "*.rb"))
 files = files.first(Integer(ENV["LIMIT"])) if ENV["LIMIT"]
 
-# Third harness defect (2026-06-14): the real Runner sets
-# processed_source.config (runner.rb ~:575) and .registry. Without these, stock
-# cops whose autocorrect block eagerly reads processed_source.config (the
-# AlignmentCorrector family — End/Else/Block/DefEnd/Multiline*Indentation etc.)
-# raise NoMethodError inside add_offense's corrector block; Commissioner swallows
-# it and drops the offense entirely. A shirobai wrapper that instead reads its
-# own (non-nil) cop_config still emits, producing a silent +N divergence —
-# masked here by both sides usually crash-dropping symmetrically, until they
-# don't (DefEndAlignment +1 on 2026-06-14, MMCI +5 hidden until real-CLI diff).
 sources = files.filter_map do |path|
   ps = RuboCop::ProcessedSource.new(File.read(path), ruby_version, path)
   ps.config = config
@@ -88,37 +71,15 @@ rescue StandardError
   nil
 end
 
-# Mirror Runner#inspect_file: fresh cop instances + fresh Commissioner per
-# file (see header comment for why reuse corrupts stock behavior).
 investigate = lambda do |ps|
   cops = cop_classes.map { |klass| klass.new(config) }
   RuboCop::Cop::Commissioner.new(cops).investigate(ps)
 end
 
 sources.first(50).each { |ps| investigate.call(ps) }
-
-# Sweep warmup-era garbage before starting the clock so it is not collected
-# (and charged) inside the timed region. Do NOT GC.disable: shirobai's value is
-# reduced Ruby allocation/eval, and that shows up as reduced GC cost, so GC must
-# be inside the measured region.
 GC.start
 
 offenses = 0
-# Measure process CPU time (utime+stime), not wall time. The investigate loop is
-# effectively single-threaded (manual Commissioner loop + synchronous magnus
-# calls), so process CPU time ~= the pure computational cost and drops the
-# scheduling/contention jitter that inflates wall time. Ruby eval, Rust walk and
-# reparse are all on-CPU user time in the same process, so stock-vs-shirobai
-# stays a fair compute comparison. Wall is kept as a sanity check: cpu << wall
-# means external load contaminated the run.
-#
-# We also split CPU into GC vs compute. GC time (GC.stat(:time), cumulative ms)
-# is the dominant run-to-run noise source: stock allocates far more Ruby objects
-# than shirobai (whose cops do the work in Rust and return compact tuples), so
-# stock's GC time both is larger and swings more. `compute = cpu - gc` is the
-# low-variance signal for "is the actual analysis faster"; `gc` is reported on
-# its own because shirobai's reduced allocation is a real (if noisy) part of its
-# win, so we must not hide it (no GC.disable).
 gc0 = GC.stat(:time)
 c0 = Process.clock_gettime(Process::CLOCK_PROCESS_CPUTIME_ID)
 w0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
