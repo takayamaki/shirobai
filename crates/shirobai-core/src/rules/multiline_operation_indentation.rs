@@ -470,6 +470,16 @@ impl<'a> Visitor<'a> {
                 body: n.body().map(|b| loc(&b.location())),
             };
         }
+        // Parser-gem uses `:block` for both `do...end`/`{...}` blocks and
+        // lambda literals (`-> { ... }`), but prism splits them into
+        // `BlockNode` and `LambdaNode`. Lambda bodies must act as the same
+        // barrier as block bodies for `part_of_assignment_rhs` and
+        // `argument_in_method_call`.
+        if let Some(n) = node.as_lambda_node() {
+            return FrameKind::Block {
+                body: n.body().map(|b| loc(&b.location())),
+            };
+        }
         if let Some(rhs) = assignment_value(node) {
             return FrameKind::Assignment { rhs };
         }
@@ -653,5 +663,17 @@ mod tests {
             got[0].3,
             "Align the operands of an expression in an assignment spanning multiple lines."
         );
+    }
+
+    #[test]
+    fn lambda_body_acts_as_barrier() {
+        // `a = ->() { x &&\n y &&\n z }` — the lambda body should act as a
+        // barrier, preventing the outer assignment from changing the expected
+        // indentation of `&&` continuations inside the lambda. Without
+        // the lambda barrier, `part_of_assignment_rhs` walks through and finds
+        // the outer assignment, incorrectly switching to alignment mode.
+        let src = "dequeued_chunks = ->(){\n  @instance.dequeued_chunks_mutex &&\n  @instance.dequeued_chunks &&\n  @instance.dequeued_chunks_mutex.synchronize{ @instance.dequeued_chunks.size > 0 }\n}\n";
+        let got = run(src, Style::Aligned);
+        assert_eq!(got.len(), 2, "expected two offenses for misindented && operands, got {:?}", got);
     }
 }
