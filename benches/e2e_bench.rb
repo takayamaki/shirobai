@@ -39,9 +39,17 @@ if mode != "stock"
   end
 end
 
+# Load the corpus's .rubocop.yml but skip require/inherit_gem/plugins
+# so we don't need to install every plugin gem the corpus uses.
+# Only default cops (shirobai's replacement targets) matter for this bench.
 config_file = RuboCop::ConfigLoader.configuration_file_for(corpus)
 config = if File.exist?(config_file)
-           RuboCop::ConfigLoader.configuration_from_file(config_file)
+           hash = RuboCop::ConfigLoader.load_yaml_configuration(config_file)
+           %w[require inherit_gem inherit_from plugins].each { |k| hash.delete(k) }
+           RuboCop::ConfigLoader.merge_with_default(
+             RuboCop::Config.create(hash, config_file, check: false),
+             config_file
+           )
          else
            RuboCop::ConfigLoader.default_configuration
          end
