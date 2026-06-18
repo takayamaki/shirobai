@@ -1,0 +1,1 @@
+../../crates/shirobai-core/README.md

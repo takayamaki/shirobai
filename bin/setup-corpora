@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Clone test corpora into .tmp/ for parity verification.
+# Each corpus is pinned to a specific commit and cloned at depth 1.
+# rubocop_source is a symlink to vendor/rubocop (tracked in git).
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+TMP="$ROOT/.tmp"
+
+mkdir -p "$TMP"
+
+declare -A REPOS
+declare -A COMMITS
+
+REPOS[mastodon]=https://github.com/mastodon/mastodon.git
+COMMITS[mastodon]=b873d2e9eb0bc212e7f166df570f95d8844e93db
+
+REPOS[discourse]=https://github.com/discourse/discourse.git
+COMMITS[discourse]=a1734d7f8efffd9877d04772184ca5f1478b106e
+
+REPOS[redmine]=https://github.com/redmine/redmine.git
+COMMITS[redmine]=74dc20d73692b3e96a133bbd11c395c323f18c44
+
+REPOS[fluentd]=https://github.com/fluent/fluentd.git
+COMMITS[fluentd]=3b34a7b9a066a347d19e976b238be1ce9ea877fa
+
+for name in mastodon discourse redmine fluentd; do
+  dest="$TMP/$name"
+  repo="${REPOS[$name]}"
+  commit="${COMMITS[$name]}"
+
+  if [ -d "$dest/.git" ]; then
+    current=$(git -C "$dest" rev-parse HEAD 2>/dev/null || echo "")
+    if [ "$current" = "$commit" ]; then
+      echo "$name: already at $commit"
+      continue
+    fi
+    echo "$name: exists but at wrong commit ($current), re-cloning..."
+    rm -rf "$dest"
+  fi
+
+  echo "$name: cloning $repo at $commit ..."
+  git clone --depth 1 "$repo" "$dest"
+  git -C "$dest" fetch --depth 1 origin "$commit"
+  git -C "$dest" checkout FETCH_HEAD
+  echo "$name: ready at $commit"
+  echo
+done
+
+# rubocop_source is a symlink tracked in git — just verify it
+if [ -L "$TMP/rubocop_source" ]; then
+  echo "rubocop_source: symlink OK -> $(readlink "$TMP/rubocop_source")"
+else
+  echo "rubocop_source: symlink missing, creating..."
+  ln -s ../vendor/rubocop "$TMP/rubocop_source"
+  echo "rubocop_source: created -> ../vendor/rubocop"
+fi

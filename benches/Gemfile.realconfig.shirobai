@@ -1,0 +1,14 @@
+# frozen_string_literal: true
+
+source "https://rubygems.org"
+
+gemspec path: ".."
+
+# Plugins required by test corpora
+gem "rubocop-capybara"        # Mastodon
+gem "rubocop-discourse"       # Discourse
+gem "rubocop-i18n"            # Mastodon
+gem "rubocop-performance"     # Mastodon, Redmine, fluentd
+gem "rubocop-rails"           # Mastodon, Redmine
+gem "rubocop-rspec"           # Mastodon
+gem "rubocop-rspec_rails"     # Mastodon
