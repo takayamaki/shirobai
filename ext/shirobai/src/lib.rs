@@ -3,6 +3,14 @@ use std::cell::RefCell;
 use magnus::{Error, RArray, RString, Ruby, function};
 use shirobai_core::rules::bundle::BundleConfig;
 
+/// Wire type for `Style/RedundantSelfAssignment` result tuples:
+/// `(op_start, op_end, method_name, kind, range_start, range_end, rhs_start, rhs_end)`.
+type RedundantSelfAssignmentTuple = (usize, usize, String, u8, usize, usize, usize, usize);
+
+/// Wire type for `Style/PercentLiteralDelimiters` result tuples:
+/// `(start, end, begin_start, begin_end, end_start, end_end, type_index)`.
+type PercentLiteralDelimitersTuple = (usize, usize, usize, usize, usize, usize, u8);
+
 /// Bytes of `source`, borrowed straight from the Ruby heap without copying.
 ///
 /// SAFETY: the slice is only read inside the same extension call while the GVL
@@ -882,7 +890,7 @@ fn map_parentheses_as_grouped_expression(
 /// Ruby side uses for the `MSG` token and the preferred-pair lookup.
 fn map_percent_literal_delimiters(
     v: Vec<shirobai_core::rules::percent_literal_delimiters::PercentLiteralDelimitersOffense>,
-) -> Vec<(usize, usize, usize, usize, usize, usize, u8)> {
+) -> Vec<PercentLiteralDelimitersTuple> {
     v.into_iter()
         .map(|o| {
             (
@@ -950,7 +958,7 @@ fn map_assignment_indentation(
 fn map_redundant_self_assignment(
     v: Vec<shirobai_core::rules::redundant_self_assignment::RedundantSelfAssignmentOffense>,
     source: &[u8],
-) -> Vec<(usize, usize, String, u8, usize, usize, usize, usize)> {
+) -> Vec<RedundantSelfAssignmentTuple> {
     v.into_iter()
         .map(|o| {
             let method_name = std::str::from_utf8(&source[o.method_name_start..o.method_name_end])
@@ -2160,7 +2168,7 @@ fn check_self_assignment(source: RString) -> Vec<(usize, usize, usize)> {
 /// the shape documented on `map_redundant_self_assignment`.
 fn check_redundant_self_assignment(
     source: RString,
-) -> Vec<(usize, usize, String, u8, usize, usize, usize, usize)> {
+) -> Vec<RedundantSelfAssignmentTuple> {
     let src_bytes = bytes(&source);
     map_redundant_self_assignment(
         shirobai_core::rules::redundant_self_assignment::check_redundant_self_assignment(
@@ -2258,7 +2266,7 @@ fn check_percent_literal_delimiters(
     ruby: &Ruby,
     source: RString,
     pairs: Vec<String>,
-) -> Result<Vec<(usize, usize, usize, usize, usize, usize, u8)>, Error> {
+) -> Result<Vec<PercentLiteralDelimitersTuple>, Error> {
     let cfg = percent_literal_delimiters_config(ruby, pairs)?;
     Ok(map_percent_literal_delimiters(
         shirobai_core::rules::percent_literal_delimiters::check_percent_literal_delimiters(
