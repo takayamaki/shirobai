@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v7.0.0
+        with:
+          submodules: true
+
+      - uses: ruby/setup-ruby@89f90524b88a01fe6e0b732220432cc6142926af # v1.313.0
+        with:
+          ruby-version: "4.0"
+          bundler-cache: true
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+          components: clippy
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2.9.1
+
+      - name: Build native extension
+        run: bundle exec rake compile
+
+      - name: RSpec
+        run: bundle exec rspec
+
+      - name: Cargo test
+        run: cargo test
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+  parity:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        corpus:
+          - name: mastodon
+            repo: mastodon/mastodon
+            ref: b873d2e9eb0bc212e7f166df570f95d8844e93db
+          - name: discourse
+            repo: discourse/discourse
+            ref: a1734d7f8efffd9877d04772184ca5f1478b106e
+          - name: redmine
+            repo: redmine/redmine
+            ref: 74dc20d73692b3e96a133bbd11c395c323f18c44
+          - name: fluentd
+            repo: fluent/fluentd
+            ref: 3b34a7b9a066a347d19e976b238be1ce9ea877fa
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v7.0.0
+        with:
+          submodules: true
+
+      - uses: ruby/setup-ruby@89f90524b88a01fe6e0b732220432cc6142926af # v1.313.0
+        with:
+          ruby-version: "4.0"
+          bundler-cache: true
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2.9.1
+
+      - name: Build native extension
+        run: bundle exec rake compile
+
+      - name: Checkout corpus
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v7.0.0
+        with:
+          repository: ${{ matrix.corpus.repo }}
+          ref: ${{ matrix.corpus.ref }}
+          path: .tmp/${{ matrix.corpus.name }}
+
+      - name: Install stock Gemfile
+        run: BUNDLE_GEMFILE=Gemfile.stock bundle install
+
+      - name: Parity check (${{ matrix.corpus.name }})
+        run: benches/parity_diff.sh .tmp/${{ matrix.corpus.name }}
+
+  parity-rubocop-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v7.0.0
+        with:
+          submodules: true
+
+      - uses: ruby/setup-ruby@89f90524b88a01fe6e0b732220432cc6142926af # v1.313.0
+        with:
+          ruby-version: "4.0"
+          bundler-cache: true
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2.9.1
+
+      - name: Build native extension
+        run: bundle exec rake compile
+
+      - name: Create rubocop_source symlink
+        run: ln -s ../vendor/rubocop .tmp/rubocop_source
+
+      - name: Install stock Gemfile
+        run: BUNDLE_GEMFILE=Gemfile.stock bundle install
+
+      - name: Parity check (rubocop_source)
+        run: benches/parity_diff.sh .tmp/rubocop_source
