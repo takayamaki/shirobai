@@ -7,7 +7,7 @@ RSpec.describe Shirobai do
     expect(defined?(Shirobai)).to eq("constant")
   end
 
-  it "has a version number" do
-    expect(Shirobai::VERSION).to eq("0.1.0")
+  it "has a version number in calendar format" do
+    expect(Shirobai::VERSION).to match(/\A\d{4}\.\d{3,4}\.\d{3,4}\z/)
   end
 end
