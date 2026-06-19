@@ -11,3 +11,10 @@ task :compile do
 end
 
 task default: :compile
+
+desc "Build and push gem to RubyGems.org (used by release-gem action)"
+task :release do
+  gemspec = Gem::Specification.load("shirobai.gemspec")
+  gem_file = Gem::Package.build(gemspec)
+  sh "gem", "push", gem_file
+end
