@@ -196,8 +196,18 @@ impl UnreachableCodeVisitor {
 
         // `:begin` / `:kwbegin` -> recurse on every expression.
         if let Some(begin) = node.as_begin_node() {
-            // parser :kwbegin — only the top statements section participates
-            // in `expressions = *node`.
+            // In parser-gem, `begin...rescue...end` is a `:kwbegin` whose
+            // children (via `*node`) are `[(rescue ...)]`. `flow_expression?`
+            // on a `:rescue` node falls to `else => false`, so the whole
+            // `begin/rescue/end` is NOT considered flow — rescue/ensure can
+            // alter control flow (e.g. `retry` loops back, a rescue handler
+            // may not exit). We match that: if the `BeginNode` has rescue or
+            // ensure clauses, return false unconditionally.
+            if begin.rescue_clause().is_some() || begin.ensure_clause().is_some() {
+                return false;
+            }
+            // Plain `begin...end` (no rescue/ensure): the top statements
+            // section participates in `expressions = *node`.
             if let Some(stmts) = begin.statements() {
                 return stmts.body().iter().any(|e| self.flow_expression(&e));
             }
@@ -675,6 +685,34 @@ mod tests {
     #[test]
     fn flags_break_in_block() {
         let src = "list.each do |x|\n  break\n  bar\nend\n";
+        let off = detect(src);
+        assert_eq!(off.len(), 1);
+    }
+
+    #[test]
+    fn accepts_begin_rescue_with_retry() {
+        // `begin; return x; rescue; retry; end; return true` — the rescue
+        // clause may loop back via `retry`, so the `begin/rescue/end` does
+        // NOT unconditionally exit. `return true` is reachable. Stock treats
+        // the `:kwbegin`'s child `:rescue` as non-flow (`else => false` in
+        // `flow_expression?`).
+        let src = "def f\n  begin\n    return regexp.match(string)\n  rescue ArgumentError => e\n    retry\n  end\n  return true\nend\n";
+        assert!(detect(src).is_empty());
+    }
+
+    #[test]
+    fn accepts_begin_ensure() {
+        // `begin; return x; ensure; cleanup; end; bar` — ensure runs after
+        // the body regardless; the whole `begin/ensure/end` is not flow.
+        let src = "def f\n  begin\n    return x\n  ensure\n    cleanup\n  end\n  bar\nend\n";
+        assert!(detect(src).is_empty());
+    }
+
+    #[test]
+    fn flags_plain_begin_with_return() {
+        // `begin; return x; end; bar` — plain begin without rescue/ensure
+        // is flow if any statement is flow.
+        let src = "def f\n  begin\n    return x\n  end\n  bar\nend\n";
         let off = detect(src);
         assert_eq!(off.len(), 1);
     }

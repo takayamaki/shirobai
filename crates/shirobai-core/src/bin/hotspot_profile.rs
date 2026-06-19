@@ -6,15 +6,15 @@
 //! specific helpers/structures rather than treating it as opaque.
 //!
 //! Phases measured per relevant cop:
-//!   * `parse`        — parse-only baseline (P)
-//!   * `walk_noop`    — dispatch::run with an empty rule (shared traversal cost:
-//!                      parse-cache hit + tree walk + per-node virtual dispatch).
-//!                      This is the *shared* walk cost 16 cops duplicate.
-//!   * `frame_<cop>`  — walk + replicate that cop's per-node frame extraction
-//!                      (prism accessors + the same Vec allocations) but NO
-//!                      offense analysis. (full − frame) ≈ analysis body;
-//!                      (frame − walk_noop) ≈ frame-construction overhead.
-//!   * `full_<cop>`   — the real check_* (delegates to rules; unchanged logic).
+//! * `parse` — parse-only baseline (P)
+//! * `walk_noop` — dispatch::run with an empty rule (shared traversal cost:
+//!   parse-cache hit + tree walk + per-node virtual dispatch).
+//!   This is the *shared* walk cost 16 cops duplicate.
+//! * `frame_<cop>` — walk + replicate that cop's per-node frame extraction
+//!   (prism accessors + the same Vec allocations) but NO
+//!   offense analysis. (full − frame) ≈ analysis body;
+//!   (frame − walk_noop) ≈ frame-construction overhead.
+//! * `full_<cop>` — the real check_* (delegates to rules; unchanged logic).
 //!
 //! Microbenchmarks (`micro_*`) isolate the cost of the O(n)-prefix line/column
 //! helpers as currently written vs. an O(1) precomputed line-index, by calling
@@ -89,10 +89,6 @@ impl LineIndex {
         // partition_point: index of first start > off  == line number (1-based).
         self.starts.partition_point(|&s| s <= off)
     }
-    fn line_start(&self, off: usize) -> usize {
-        let idx = self.starts.partition_point(|&s| s <= off);
-        self.starts[idx - 1]
-    }
 }
 
 // ----------------- current O(n)-prefix helpers (copied verbatim) -----------------
@@ -100,13 +96,6 @@ impl LineIndex {
 fn cur_line_of(src: &[u8], off: usize) -> usize {
     src[..off].iter().filter(|&&b| b == b'\n').count() + 1
 }
-fn cur_line_start(src: &[u8], off: usize) -> usize {
-    match src[..off].iter().rposition(|&b| b == b'\n') {
-        Some(i) => i + 1,
-        None => 0,
-    }
-}
-
 // ----------------- no-op rule (shared walk cost) -----------------
 
 struct NoopRule;

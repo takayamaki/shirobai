@@ -492,7 +492,11 @@ impl Visitor<'_> {
         } else if let Some(w) = node.as_multi_write_node() {
             let targets = multi_targets(node);
             self.add_masgn_lhs_variables(&w.value(), &targets);
-            self.mlhs_locs.insert(Self::loc_of(node));
+            // Do NOT insert MultiWriteNode into mlhs_locs: in parser-gem
+            // `masgn.mlhs_type?` is false. Only `mlhs` (prism's
+            // `MultiTargetNode`) returns true for `mlhs_type?`. Adding
+            // MultiWriteNode here would make `parent_is_mlhs` skip
+            // legitimate offenses on the RHS of multi-assignments.
         } else if node.as_multi_target_node().is_some() {
             self.mlhs_locs.insert(Self::loc_of(node));
         } else if let Some(i) = node.as_if_node() {
@@ -672,5 +676,16 @@ mod tests {
     fn accepts_block_argument_clash() {
         let src = "%w[a].each do |state|\n  self.state == state\nend";
         assert!(offenses(src).is_empty());
+    }
+
+    #[test]
+    fn flags_self_in_multi_assign_rhs() {
+        // `key, data = self.last_emit_via_buffer` — in parser-gem the parent
+        // of the send is `masgn`, and `masgn.mlhs_type?` is false. Only
+        // `mlhs` (prism's `MultiTargetNode`) returns true for `mlhs_type?`.
+        // So `self.last_emit_via_buffer` on the RHS is flagged.
+        let src = "def f\n  key, data = self.last_emit_via_buffer\nend";
+        let got = offenses(src);
+        assert_eq!(got.len(), 1);
     }
 }

@@ -216,12 +216,12 @@ mod tests {
     #[test]
     fn with_line_index_reuses_cached_index_for_identical_source() {
         let src = b"a\nb\nc\n";
-        let first = with_line_index(src, |idx| Rc::as_ptr(idx));
-        let second = with_line_index(src, |idx| Rc::as_ptr(idx));
+        let first = with_line_index(src, Rc::as_ptr);
+        let second = with_line_index(src, Rc::as_ptr);
         assert_eq!(first, second, "identical source should reuse the index");
 
         let other = b"d\ne\n";
-        let third = with_line_index(other, |idx| Rc::as_ptr(idx));
+        let third = with_line_index(other, Rc::as_ptr);
         assert_ne!(first, third, "different source should rebuild the index");
     }
 }

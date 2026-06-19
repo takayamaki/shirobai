@@ -2,13 +2,13 @@
 //!
 //! Measures, over the whole Mastodon `.rb` corpus, the cost of three modes:
 //!
-//!   * `parse`  — parse each file with ruby-prism, discard the result. → P
-//!   * `walk1`  — parse + one full recursive traversal that pushes a generic
-//!                ancestor frame `(node_kind, start, end)` on enter and pops on
-//!                leave (no analysis). → time(walk1); W = walk1 − P
-//!   * `walk17` — parse + the same full traversal repeated 17× per file
-//!                (models 17 cops each walking independently). → time(walk17);
-//!                Z = walk17 − P
+//! * `parse` — parse each file with ruby-prism, discard the result. → P
+//! * `walk1` — parse + one full recursive traversal that pushes a generic
+//!   ancestor frame `(node_kind, start, end)` on enter and pops on
+//!   leave (no analysis). → time(walk1); W = walk1 − P
+//! * `walk17` — parse + the same full traversal repeated 17× per file
+//!   (models 17 cops each walking independently). → time(walk17);
+//!   Z = walk17 − P
 //!
 //! The traversal uses the same `Visit` / `visit_branch_node_enter` /
 //! `visit_branch_node_leave` push/pop pattern the real cops use (see
@@ -90,10 +90,10 @@ fn collect_rb_files(dir: &str) -> Vec<Vec<u8>> {
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "rb") {
-                if let Ok(bytes) = std::fs::read(&path) {
-                    out.push(bytes);
-                }
+            } else if path.extension().is_some_and(|e| e == "rb")
+                && let Ok(bytes) = std::fs::read(&path)
+            {
+                out.push(bytes);
             }
         }
     }
