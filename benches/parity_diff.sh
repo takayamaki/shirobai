@@ -76,5 +76,6 @@ else
   end
   puts
   puts "Use the JSON files at $stock_json / $sh_json for per-offense inspection."
+  exit 1
 end
 RUBY
