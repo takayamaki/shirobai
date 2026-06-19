@@ -16,5 +16,7 @@ desc "Build and push gem to RubyGems.org (used by release-gem action)"
 task :release do
   gemspec = Gem::Specification.load("shirobai.gemspec")
   gem_file = Gem::Package.build(gemspec)
-  sh "gem", "push", gem_file
+  mkdir_p "pkg"
+  mv gem_file, "pkg/#{gem_file}"
+  sh "gem", "push", "pkg/#{gem_file}"
 end
