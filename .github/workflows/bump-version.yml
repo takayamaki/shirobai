@@ -1,0 +1,44 @@
+name: Bump version
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Generate calendar version
+        id: version
+        run: |
+          ver=$(TZ=Asia/Tokyo date +'%Y.%m%d.%H%M')
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Update version.rb
+        run: |
+          ver="${{ steps.version.outputs.version }}"
+          sed -i "s/VERSION = .*/VERSION = \"$ver\"/" lib/shirobai/version.rb
+
+      - name: Create PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ver="${{ steps.version.outputs.version }}"
+          branch="release/$ver"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add lib/shirobai/version.rb
+          git commit -m "Bump version to $ver"
+          git push origin "$branch"
+          gh pr create \
+            --title "Release $ver" \
+            --body "Bumps version to \`$ver\`. Merging this will trigger the release workflow." \
+            --base main \
+            --head "$branch"

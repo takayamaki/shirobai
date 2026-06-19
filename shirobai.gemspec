@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
+require_relative "lib/shirobai/version"
+
 Gem::Specification.new do |spec|
   spec.name = "shirobai"
-  spec.version = "0.1.0"
+  spec.version = Shirobai::VERSION
   spec.authors = ["fusagiko / takayamaki"]
   spec.summary = "Drop-in Rust replacement for heavy RuboCop cops"
   spec.homepage = "https://github.com/takayamaki/shirobai"
