@@ -174,12 +174,14 @@ impl<'a> Visitor<'a> {
         String::from_utf8_lossy(&slice[..e]).into_owned()
     }
 
-    /// `match = /\S.*/.match(do_loc.source_line)`: the do/`{` line's content
-    /// from its first non-space char, and that column. Returns `(source, line,
-    /// column)`.
-    fn do_source_line(&self, do_start: usize) -> (String, usize, usize) {
-        let line = self.line_of(do_start);
-        let ls = self.line_index.line_start(do_start);
+    /// `match = /\S.*/.match(anchor_loc.source_line)`: returns `(source, line,
+    /// column)` from the anchor line's first non-space char. The anchor is
+    /// normally the `do`/`{` line, but shifts to the method dispatch line
+    /// when the `do` line is a continuation of multiline arguments.
+    fn do_source_line(&self, do_start: usize, anchor_start: Option<usize>) -> (String, usize, usize) {
+        let ref_offset = anchor_start.unwrap_or(do_start);
+        let line = self.line_of(ref_offset);
+        let ls = self.line_index.line_start(ref_offset);
         let starts = self.line_index.line_starts();
         let le = if line < starts.len() {
             let mut e = starts[line] - 1;
@@ -193,11 +195,25 @@ impl<'a> Visitor<'a> {
         let first_non_space = (ls..le)
             .find(|&i| !is_space_byte(self.source[i]))
             .unwrap_or(ls);
-        // column == number of chars from line start to first non-space.
         let column = self.column(first_non_space);
-        // `match[0]` is `\S.*` — from the first non-space to end of line.
         let text = String::from_utf8_lossy(&self.source[first_non_space..le]).into_owned();
         (text, line, column)
+    }
+
+    /// The indentation of the original `do`/`{` line (not the anchor).
+    fn do_line_indentation(&self, do_start: usize) -> usize {
+        let ls = self.line_index.line_start(do_start);
+        let starts = self.line_index.line_starts();
+        let line = self.line_of(do_start);
+        let le = if line < starts.len() {
+            starts[line] - 1
+        } else {
+            self.source.len()
+        };
+        let first_non_space = (ls..le)
+            .find(|&i| !is_space_byte(self.source[i]))
+            .unwrap_or(ls);
+        self.column(first_non_space)
     }
 }
 
@@ -226,6 +242,9 @@ struct BlockLoc {
     open_start: usize,
     close_start: usize,
     close_end: usize,
+    /// When the `do`/`{` line starts inside a multiline method argument,
+    /// anchor on the method dispatch line instead of the do line.
+    anchor_start: Option<usize>,
 }
 
 impl<'a> Visitor<'a> {
@@ -233,20 +252,37 @@ impl<'a> Visitor<'a> {
         // call / super / forwarding-super with a literal BlockNode.
         if let Some(call) = node.as_call_node() {
             if let Some(bn) = call.block().and_then(|b| b.as_block_node()) {
-                return self.block_node_loc(&bn);
+                let mut arg_ranges: Vec<(usize, usize)> = Vec::new();
+                if let Some(args) = call.arguments() {
+                    for arg in args.arguments().iter() {
+                        arg_ranges.push(loc(&arg.location()));
+                    }
+                }
+                let selector = call
+                    .message_loc()
+                    .map(|l| l.start_offset())
+                    .unwrap_or(call.location().start_offset());
+                return self.block_node_loc_with_anchor(&bn, &arg_ranges, selector);
             }
             return None;
         }
         if let Some(sup) = node.as_super_node() {
             if let Some(bn) = sup.block().and_then(|b| b.as_block_node()) {
-                return self.block_node_loc(&bn);
+                let mut arg_ranges: Vec<(usize, usize)> = Vec::new();
+                if let Some(args) = sup.arguments() {
+                    for arg in args.arguments().iter() {
+                        arg_ranges.push(loc(&arg.location()));
+                    }
+                }
+                let selector = sup.keyword_loc().start_offset();
+                return self.block_node_loc_with_anchor(&bn, &arg_ranges, selector);
             }
             return None;
         }
         if let Some(fsup) = node.as_forwarding_super_node() {
-            // `ForwardingSuperNode::block()` returns the `BlockNode` directly.
             if let Some(bn) = fsup.block() {
-                return self.block_node_loc(&bn);
+                let selector = node.location().start_offset();
+                return self.block_node_loc_with_anchor(&bn, &[], selector);
             }
             return None;
         }
@@ -254,23 +290,71 @@ impl<'a> Visitor<'a> {
         if let Some(lam) = node.as_lambda_node() {
             let (open_start, _) = loc(&lam.opening_loc());
             let (close_start, close_end) = loc(&lam.closing_loc());
+            // Lambda parameters are the "arguments" for the anchor check.
+            let mut arg_ranges: Vec<(usize, usize)> = Vec::new();
+            if let Some(params) = lam.parameters() {
+                let ploc = params.location();
+                arg_ranges.push(loc(&ploc));
+            }
+            let selector = lam.operator_loc().start_offset();
+            let anchor_start = self.do_line_anchor(open_start, &arg_ranges, &[], selector);
             return Some(BlockLoc {
                 open_start,
                 close_start,
                 close_end,
+                anchor_start,
             });
         }
         None
     }
 
-    fn block_node_loc(&self, bn: &ruby_prism::BlockNode<'_>) -> Option<BlockLoc> {
+    fn block_node_loc_with_anchor(
+        &self,
+        bn: &ruby_prism::BlockNode<'_>,
+        send_arg_ranges: &[(usize, usize)],
+        selector_start: usize,
+    ) -> Option<BlockLoc> {
         let (open_start, _) = loc(&bn.opening_loc());
         let (close_start, close_end) = loc(&bn.closing_loc());
+        let mut block_param_ranges: Vec<(usize, usize)> = Vec::new();
+        if let Some(params) = bn.parameters() {
+            let ploc = params.location();
+            block_param_ranges.push(loc(&ploc));
+        }
+        let anchor_start = self.do_line_anchor(open_start, send_arg_ranges, &block_param_ranges, selector_start);
         Some(BlockLoc {
             open_start,
             close_start,
             close_end,
+            anchor_start,
         })
+    }
+
+    /// When the `do`/`{` line begins inside one of the call's arguments or the
+    /// block's parameters, return the method selector start offset as the
+    /// alignment anchor.
+    fn do_line_anchor(
+        &self,
+        open_start: usize,
+        send_arg_ranges: &[(usize, usize)],
+        block_param_ranges: &[(usize, usize)],
+        selector_start: usize,
+    ) -> Option<usize> {
+        let ls = self.line_index.line_start(open_start);
+        let first_char_pos = (ls..open_start)
+            .find(|&i| !is_space_byte(self.source[i]))
+            .unwrap_or(open_start);
+
+        let inside = send_arg_ranges
+            .iter()
+            .chain(block_param_ranges.iter())
+            .any(|&(s, e)| s <= first_char_pos && first_char_pos < e);
+
+        if inside {
+            Some(selector_start)
+        } else {
+            None
+        }
     }
 }
 
@@ -429,6 +513,11 @@ impl<'a> Visitor<'a> {
     fn on_block(&mut self, block_range: (usize, usize), bl: &BlockLoc) {
         let block_first_line = self.first_line_of(block_range.0);
         let start = self.start_for_block_node(block_range, block_first_line);
+        let start = if self.style == STYLE_START_OF_LINE {
+            self.start_for_line_node(start)
+        } else {
+            start
+        };
         self.check_block_alignment(start, block_range, bl);
     }
 
@@ -447,9 +536,15 @@ impl<'a> Visitor<'a> {
         if start_col == end_col && self.style != STYLE_START_OF_BLOCK {
             return;
         }
-        // compute_do_source_line_column.
-        let (do_text, do_line, do_col) = self.do_source_line(bl.open_start);
-        if end_col == do_col && self.style != STYLE_START_OF_LINE {
+        // compute_do_source_line_column (using anchor if available).
+        let (do_text, do_line, do_col) = self.do_source_line(bl.open_start, bl.anchor_start);
+        // permitted_do_line_columns: under `either`, both the anchor line's
+        // indentation and the original do line's indentation are accepted.
+        let mut permitted = vec![do_col];
+        if self.style == STYLE_EITHER && bl.anchor_start.is_some() {
+            permitted.push(self.do_line_indentation(bl.open_start));
+        }
+        if permitted.contains(&end_col) && self.style != STYLE_START_OF_LINE {
             return;
         }
         self.register_offense(start, block_range, bl, (do_text, do_line, do_col));

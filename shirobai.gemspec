@@ -15,5 +15,5 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
   spec.extensions = ["ext/shirobai/Cargo.toml"]
 
-  spec.add_dependency "rubocop", "= 1.87.0"
+  spec.add_dependency "rubocop", "= 1.88.0"
 end

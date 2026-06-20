@@ -11,14 +11,11 @@
 //!   That's the `Tip::Top(arg)` constructor-style call which looks like a
 //!   constant reference at the call site (`Top(...)` would be `Integer(x)` /
 //!   `String(x)`).
-//! - Skip when `java_type_node?(node)` — stock pattern
-//!   `(send (const nil? :Java) _)`: the receiver is a top-level
-//!   `ConstantReadNode` named `Java`. The pattern's `nil?` matches a nil
-//!   receiver on the `const`, NOT a `cbase` receiver (`::Java::int` is FLAGGED
-//!   by stock; verified by probe). So in prism the gate is
-//!   `receiver.as_constant_read_node()` whose `name() == "Java"`. A
-//!   `ConstantPathNode` (`::Java`) is a different prism node and structurally
-//!   excluded.
+//! - Skip when `java_interop?(node)` — walks the receiver chain to its root
+//!   and checks `java_root?` (= `(const nil? :Java)`). This excludes not just
+//!   `Java::int` but the entire chain `Java::com::something_method`.
+//!   The `cbase` form `::Java::int` is still FLAGGED because the root is a
+//!   `ConstantPathNode`, not a bare `ConstantReadNode`.
 //!
 //! Offense range = `node.loc.dot` = the prism `call_operator_loc()` range
 //! (`::`, two bytes). Autocorrect replaces those two bytes with `.`.
@@ -103,15 +100,11 @@ impl ColonMethodCallVisitor {
             return;
         }
 
-        // `java_type_node?(node)` — stock pattern `(send (const nil? :Java) _)`.
-        // The receiver is a top-level `ConstantReadNode` whose name is `Java`.
-        // `ConstantPathNode` (the `cbase` form `::Java`) is a different node
-        // kind and is correctly NOT excluded — `::Java::int` is flagged by
-        // stock.
-        let receiver = call.receiver().expect("receiver presence checked above");
-        if let Some(const_read) = receiver.as_constant_read_node()
-            && const_read.name().as_slice() == b"Java"
-        {
+        // `java_interop?(node)` — walk the receiver chain to its root and
+        // check `java_root?` (= `(const nil? :Java)`). This excludes the
+        // entire `Java::com::something_method` chain, not just the first
+        // `Java::com` call.
+        if Self::java_interop(call) {
             return;
         }
 
@@ -119,6 +112,23 @@ impl ColonMethodCallVisitor {
             dot_start: op_start,
             dot_end: op_end,
         });
+    }
+
+    fn java_interop(call: &ruby_prism::CallNode<'_>) -> bool {
+        let mut node = call.receiver().expect("receiver presence checked by caller");
+        loop {
+            if let Some(const_read) = node.as_constant_read_node() {
+                return const_read.name().as_slice() == b"Java";
+            }
+            if let Some(inner_call) = node.as_call_node() {
+                match inner_call.receiver() {
+                    Some(r) => node = r,
+                    None => return false,
+                }
+            } else {
+                return false;
+            }
+        }
     }
 }
 
@@ -235,12 +245,9 @@ mod tests {
     }
 
     #[test]
-    fn flags_after_java_then_user_call() {
-        // `Java::foo::bar` — inner `Java::foo` is java-typed (excluded), but
-        // outer `bar` (receiver = `Java::foo` CallNode) is flagged. `::` at
-        // 9..11.
-        let off = detect("Java::foo::bar\n");
-        assert_eq!(off, vec![(9, 11)]);
+    fn accepts_java_interop_chain() {
+        // `Java::foo::bar` — root receiver is `Java`, entire chain excluded.
+        assert!(detect("Java::foo::bar\n").is_empty());
     }
 
     #[test]
