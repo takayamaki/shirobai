@@ -24,7 +24,7 @@
 //! `move_comment_before_block` and the `begin`/`end` wrapping of multiline
 //! rescue/ensure bodies.
 
-use ruby_prism::{CallNode, Node, StatementsNode, Visit};
+use ruby_prism::{CallNode, Node, StatementsNode};
 
 type Range = (usize, usize);
 
@@ -328,7 +328,7 @@ impl<'a> Visitor<'a> {
         opening: Range,
         closing: Range,
         method_name: &str,
-        node: &Node<'_>,
+        _node: &Node<'_>,
         body: Option<&Node<'_>>,
         send_arguments: bool,
         send_parenthesized: bool,
@@ -336,7 +336,7 @@ impl<'a> Visitor<'a> {
         let braces = self.source[opening.0] == b'{';
         // `BlockNode#multiline?` compares the delimiter lines.
         let multiline = self.source[opening.0..closing.0].contains(&b'\n');
-        if self.proper_block_style(braces, multiline, block_range, method_name, node) {
+        if self.proper_block_style(braces, multiline, block_range, method_name, body) {
             return;
         }
         let message = self.message(braces, multiline, block_range, method_name);
@@ -366,9 +366,9 @@ impl<'a> Visitor<'a> {
         multiline: bool,
         block_range: Range,
         method_name: &str,
-        node: &Node<'_>,
+        body: Option<&Node<'_>>,
     ) -> bool {
-        if self.require_do_end(braces, multiline, node) {
+        if self.require_do_end(braces, multiline, body) {
             return true;
         }
         if self.list_in(method_name, &self.cfg.allowed_methods) {
@@ -391,15 +391,42 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    /// `require_do_end?`: a single-line `do`..`end` whose first descendant
-    /// `resbody` carries an exception class list cannot use braces.
-    fn require_do_end(&self, braces: bool, multiline: bool, node: &Node<'_>) -> bool {
+    /// `require_do_end?`: a single-line `do`..`end` block cannot use braces
+    /// when it contains `ensure` or a block-level `rescue` (as opposed to a
+    /// bare modifier rescue `expr rescue expr`).
+    fn require_do_end(&self, braces: bool, multiline: bool, body: Option<&Node<'_>>) -> bool {
         if braces || multiline {
             return false;
         }
-        let mut finder = ResbodyFinder { found: None };
-        finder.visit_children_of(node);
-        finder.found.unwrap_or(false)
+        let Some(body) = body else { return false };
+        // Prism wraps block-level rescue/ensure in a BeginNode (implicit
+        // begin). Modifier rescue stays as a RescueModifierNode inside a
+        // StatementsNode.
+        if let Some(begin) = body.as_begin_node() {
+            if begin.ensure_clause().is_some() {
+                return true;
+            }
+            if let Some(rescue) = begin.rescue_clause() {
+                let has_protected_body = begin.statements().is_some();
+                return !is_modifier_rescue(&rescue, has_protected_body);
+            }
+        }
+        // Walk into StatementsNode: the body of a block is often a
+        // StatementsNode wrapping the actual content.
+        if let Some(stmts) = body.as_statements_node() {
+            for stmt in stmts.body().iter() {
+                if let Some(begin) = stmt.as_begin_node() {
+                    if begin.ensure_clause().is_some() {
+                        return true;
+                    }
+                    if let Some(rescue) = begin.rescue_clause() {
+                        let has_protected_body = begin.statements().is_some();
+                        return !is_modifier_rescue(&rescue, has_protected_body);
+                    }
+                }
+            }
+        }
+        false
     }
 
     fn semantic_block_style(
@@ -1178,44 +1205,39 @@ fn parser_body_range(begin: &ruby_prism::BeginNode<'_>) -> Range {
     (start, end)
 }
 
-/// `each_descendant(:resbody).first`, then `children.first&.array_type?`:
-/// finds the first rescue clause (or rescue modifier) in parser preorder and
-/// reports whether it carries an exception class list.
-struct ResbodyFinder {
-    found: Option<bool>,
-}
-
-impl ResbodyFinder {
-    /// Visit the children of the block wrapper without treating the wrapper
-    /// itself as a result.
-    fn visit_children_of(&mut self, node: &Node<'_>) {
-        if let Some(call) = node.as_call_node() {
-            ruby_prism::visit_call_node(self, &call);
-        } else if let Some(sup) = node.as_super_node() {
-            ruby_prism::visit_super_node(self, &sup);
-        } else if let Some(fsup) = node.as_forwarding_super_node() {
-            ruby_prism::visit_forwarding_super_node(self, &fsup);
-        } else if let Some(lambda) = node.as_lambda_node() {
-            ruby_prism::visit_lambda_node(self, &lambda);
-        }
+/// A bare modifier rescue: `expr rescue expr` — single branch, no
+/// exceptions list, no exception variable, no else. This form CAN be
+/// written with braces, unlike a block-level rescue.
+///
+/// In Prism, block-level rescue creates a `BeginNode` containing a
+/// `RescueNode` chain. The `RescueNode` here is the first (and possibly
+/// only) rescue clause. Stock checks on the parser-gem `:rescue` wrapper:
+///   - `body.nil?` → no protected expression before the rescue keyword
+///   - `else_branch` → has an else
+///   - `resbody_branches.one?` → exactly one rescue clause
+///   - `resbody.exceptions.empty?` → no exception class list
+///   - `resbody.exception_variable.nil?` → no `=> e`
+///
+/// A block-level `rescue` (even bare) always has the protected body at the
+/// `BeginNode` level (in `begin.statements()`), and the `RescueNode` itself
+/// has no `statements()` (only `exceptions`, `exception`, and `subsequent`).
+/// So a modifier rescue in this context is one with no exceptions, no
+/// exception variable, and no subsequent clause.
+fn is_modifier_rescue(rescue: &ruby_prism::RescueNode<'_>, has_protected_body: bool) -> bool {
+    if !has_protected_body {
+        return false;
     }
-}
-
-impl<'pr> Visit<'pr> for ResbodyFinder {
-    fn visit_rescue_node(&mut self, node: &ruby_prism::RescueNode<'pr>) {
-        if self.found.is_none() {
-            self.found = Some(node.exceptions().iter().next().is_some());
-        }
+    if rescue.subsequent().is_some() {
+        return false;
     }
-
-    fn visit_rescue_modifier_node(&mut self, node: &ruby_prism::RescueModifierNode<'pr>) {
-        // Parser order: the rescued expression subtree precedes the
-        // modifier's own (class-less) resbody.
-        self.visit(&node.expression());
-        if self.found.is_none() {
-            self.found = Some(false);
-        }
+    let exceptions: Vec<_> = rescue.exceptions().iter().collect();
+    if !exceptions.is_empty() {
+        return false;
     }
+    if rescue.reference().is_some() {
+        return false;
+    }
+    true
 }
 
 impl super::dispatch::Rule for Visitor<'_> {

@@ -85,6 +85,22 @@ impl<'a> Visitor<'a> {
         node.as_call_node().is_some_and(|c| c.is_safe_navigation())
     }
 
+    fn is_csend_or_parenthesized_csend(node: &Node<'_>) -> bool {
+        if Self::is_csend(node) {
+            return true;
+        }
+        if let Some(paren) = node.as_parentheses_node()
+            && let Some(body) = paren.body()
+            && let Some(stmts) = body.as_statements_node()
+        {
+            let children: Vec<_> = stmts.body().iter().collect();
+            if children.len() == 1 {
+                return Self::is_csend(&children[0]);
+            }
+        }
+        false
+    }
+
     fn is_comparison(call: &CallNode<'_>) -> bool {
         COMPARISON_OPERATORS.contains(&call.name().as_slice())
     }
@@ -220,7 +236,7 @@ impl<'a> Visitor<'a> {
         let Some(receiver) = call.receiver() else {
             return;
         };
-        if !Self::is_csend(&receiver) {
+        if !Self::is_csend_or_parenthesized_csend(&receiver) {
             return;
         }
         let method = call.name().as_slice();

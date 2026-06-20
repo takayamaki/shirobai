@@ -14,8 +14,12 @@
 //! path zero-cost on the Ruby side. See `lib/shirobai/cop/lint/self_assignment.rb`.
 
 use ruby_prism::{
-    CallNode, ClassVariableWriteNode, ConstantPathNode, ConstantPathWriteNode, ConstantWriteNode,
-    GlobalVariableWriteNode, InstanceVariableWriteNode, LocalVariableAndWriteNode,
+    CallAndWriteNode, CallNode, CallOrWriteNode, ClassVariableAndWriteNode,
+    ClassVariableOrWriteNode, ClassVariableWriteNode, ConstantAndWriteNode,
+    ConstantOrWriteNode, ConstantPathNode, ConstantPathWriteNode, ConstantWriteNode,
+    GlobalVariableAndWriteNode, GlobalVariableOrWriteNode, GlobalVariableWriteNode,
+    IndexAndWriteNode, IndexOrWriteNode, InstanceVariableAndWriteNode,
+    InstanceVariableOrWriteNode, InstanceVariableWriteNode, LocalVariableAndWriteNode,
     LocalVariableOrWriteNode, LocalVariableWriteNode, MultiWriteNode, Node, Visit,
 };
 
@@ -212,6 +216,177 @@ impl<'s> SelfAssignmentVisitor<'s> {
         let loc = node.location();
         let anchor = node.name_loc().end_offset();
         self.push(loc.start_offset(), loc.end_offset(), anchor);
+    }
+
+    fn check_ivar_or_asgn(&mut self, node: &InstanceVariableOrWriteNode<'_>) {
+        let value = node.value();
+        let Some(rhs) = value.as_instance_variable_read_node() else { return };
+        if rhs.name().as_slice() != node.name().as_slice() {
+            return;
+        }
+        let loc = node.location();
+        let anchor = node.name_loc().end_offset();
+        self.push(loc.start_offset(), loc.end_offset(), anchor);
+    }
+
+    fn check_ivar_and_asgn(&mut self, node: &InstanceVariableAndWriteNode<'_>) {
+        let value = node.value();
+        let Some(rhs) = value.as_instance_variable_read_node() else { return };
+        if rhs.name().as_slice() != node.name().as_slice() {
+            return;
+        }
+        let loc = node.location();
+        let anchor = node.name_loc().end_offset();
+        self.push(loc.start_offset(), loc.end_offset(), anchor);
+    }
+
+    fn check_cvar_or_asgn(&mut self, node: &ClassVariableOrWriteNode<'_>) {
+        let value = node.value();
+        let Some(rhs) = value.as_class_variable_read_node() else { return };
+        if rhs.name().as_slice() != node.name().as_slice() {
+            return;
+        }
+        let loc = node.location();
+        let anchor = node.name_loc().end_offset();
+        self.push(loc.start_offset(), loc.end_offset(), anchor);
+    }
+
+    fn check_cvar_and_asgn(&mut self, node: &ClassVariableAndWriteNode<'_>) {
+        let value = node.value();
+        let Some(rhs) = value.as_class_variable_read_node() else { return };
+        if rhs.name().as_slice() != node.name().as_slice() {
+            return;
+        }
+        let loc = node.location();
+        let anchor = node.name_loc().end_offset();
+        self.push(loc.start_offset(), loc.end_offset(), anchor);
+    }
+
+    fn check_gvar_or_asgn(&mut self, node: &GlobalVariableOrWriteNode<'_>) {
+        let value = node.value();
+        let Some(rhs) = value.as_global_variable_read_node() else { return };
+        if rhs.name().as_slice() != node.name().as_slice() {
+            return;
+        }
+        let loc = node.location();
+        let anchor = node.name_loc().end_offset();
+        self.push(loc.start_offset(), loc.end_offset(), anchor);
+    }
+
+    fn check_gvar_and_asgn(&mut self, node: &GlobalVariableAndWriteNode<'_>) {
+        let value = node.value();
+        let Some(rhs) = value.as_global_variable_read_node() else { return };
+        if rhs.name().as_slice() != node.name().as_slice() {
+            return;
+        }
+        let loc = node.location();
+        let anchor = node.name_loc().end_offset();
+        self.push(loc.start_offset(), loc.end_offset(), anchor);
+    }
+
+    fn check_const_or_and_asgn(&mut self, name: &[u8], value: &Node<'_>, loc_start: usize, loc_end: usize, anchor: usize) {
+        let (rhs_ns, rhs_short) = match resolve_const_rhs(value) {
+            Some(p) => p,
+            None => return,
+        };
+        if name != rhs_short {
+            return;
+        }
+        if !namespaces_equal(None, rhs_ns.as_ref()) {
+            return;
+        }
+        self.push(loc_start, loc_end, anchor);
+    }
+
+    fn check_const_or_asgn(&mut self, node: &ConstantOrWriteNode<'_>) {
+        let value = node.value();
+        let loc = node.location();
+        let anchor = node.name_loc().end_offset();
+        self.check_const_or_and_asgn(node.name().as_slice(), &value, loc.start_offset(), loc.end_offset(), anchor);
+    }
+
+    fn check_const_and_asgn(&mut self, node: &ConstantAndWriteNode<'_>) {
+        let value = node.value();
+        let loc = node.location();
+        let anchor = node.name_loc().end_offset();
+        self.check_const_or_and_asgn(node.name().as_slice(), &value, loc.start_offset(), loc.end_offset(), anchor);
+    }
+
+    fn check_call_or_and_asgn_common(&mut self, receiver: Option<Node<'_>>, read_name: &[u8], value: &Node<'_>, loc_start: usize, loc_end: usize) {
+        let Some(rhs_call) = value.as_call_node() else { return };
+        let rhs_args: Vec<Node<'_>> = rhs_call
+            .arguments()
+            .map(|a| a.arguments().iter().collect())
+            .unwrap_or_default();
+        if !rhs_args.is_empty() {
+            return;
+        }
+        if rhs_call.name().as_slice() != read_name {
+            return;
+        }
+        let anchor = receiver
+            .as_ref()
+            .map(|r| r.location().end_offset())
+            .unwrap_or(loc_start);
+        if !ast_equal(receiver, rhs_call.receiver(), self.source) {
+            return;
+        }
+        self.push(loc_start, loc_end, anchor);
+    }
+
+    fn check_call_or_asgn(&mut self, node: &CallOrWriteNode<'_>) {
+        let loc = node.location();
+        self.check_call_or_and_asgn_common(node.receiver(), node.read_name().as_slice(), &node.value(), loc.start_offset(), loc.end_offset());
+    }
+
+    fn check_call_and_asgn(&mut self, node: &CallAndWriteNode<'_>) {
+        let loc = node.location();
+        self.check_call_or_and_asgn_common(node.receiver(), node.read_name().as_slice(), &node.value(), loc.start_offset(), loc.end_offset());
+    }
+
+    fn check_index_or_and_asgn_common(&mut self, receiver: Option<Node<'_>>, arguments: Option<ruby_prism::ArgumentsNode<'_>>, value: &Node<'_>, loc_start: usize, loc_end: usize) {
+        let Some(rhs_call) = value.as_call_node() else { return };
+        if rhs_call.name().as_slice() != b"[]" {
+            return;
+        }
+        let anchor = receiver
+            .as_ref()
+            .map(|r| r.location().end_offset())
+            .unwrap_or(loc_start);
+        if !ast_equal(receiver, rhs_call.receiver(), self.source) {
+            return;
+        }
+        let lhs_args: Vec<Node<'_>> = arguments
+            .map(|a| a.arguments().iter().collect())
+            .unwrap_or_default();
+        if lhs_args.iter().any(|n| is_call_node(n)) {
+            return;
+        }
+        let rhs_args: Vec<Node<'_>> = rhs_call
+            .arguments()
+            .map(|a| a.arguments().iter().collect())
+            .unwrap_or_default();
+        if lhs_args.len() != rhs_args.len() {
+            return;
+        }
+        if !lhs_args
+            .iter()
+            .zip(&rhs_args)
+            .all(|(a, b)| ast_equal_node(a, b, self.source))
+        {
+            return;
+        }
+        self.push(loc_start, loc_end, anchor);
+    }
+
+    fn check_index_or_asgn(&mut self, node: &IndexOrWriteNode<'_>) {
+        let loc = node.location();
+        self.check_index_or_and_asgn_common(node.receiver(), node.arguments(), &node.value(), loc.start_offset(), loc.end_offset());
+    }
+
+    fn check_index_and_asgn(&mut self, node: &IndexAndWriteNode<'_>) {
+        let loc = node.location();
+        self.check_index_or_and_asgn_common(node.receiver(), node.arguments(), &node.value(), loc.start_offset(), loc.end_offset());
     }
 
     fn check_send(&mut self, call: &CallNode<'_>) {
@@ -484,6 +659,54 @@ impl<'pr, 's> Visit<'pr> for SelfAssignmentVisitor<'s> {
         self.check_and_asgn(node);
         ruby_prism::visit_local_variable_and_write_node(self, node);
     }
+    fn visit_instance_variable_or_write_node(&mut self, node: &InstanceVariableOrWriteNode<'pr>) {
+        self.check_ivar_or_asgn(node);
+        ruby_prism::visit_instance_variable_or_write_node(self, node);
+    }
+    fn visit_instance_variable_and_write_node(&mut self, node: &InstanceVariableAndWriteNode<'pr>) {
+        self.check_ivar_and_asgn(node);
+        ruby_prism::visit_instance_variable_and_write_node(self, node);
+    }
+    fn visit_class_variable_or_write_node(&mut self, node: &ClassVariableOrWriteNode<'pr>) {
+        self.check_cvar_or_asgn(node);
+        ruby_prism::visit_class_variable_or_write_node(self, node);
+    }
+    fn visit_class_variable_and_write_node(&mut self, node: &ClassVariableAndWriteNode<'pr>) {
+        self.check_cvar_and_asgn(node);
+        ruby_prism::visit_class_variable_and_write_node(self, node);
+    }
+    fn visit_global_variable_or_write_node(&mut self, node: &GlobalVariableOrWriteNode<'pr>) {
+        self.check_gvar_or_asgn(node);
+        ruby_prism::visit_global_variable_or_write_node(self, node);
+    }
+    fn visit_global_variable_and_write_node(&mut self, node: &GlobalVariableAndWriteNode<'pr>) {
+        self.check_gvar_and_asgn(node);
+        ruby_prism::visit_global_variable_and_write_node(self, node);
+    }
+    fn visit_constant_or_write_node(&mut self, node: &ConstantOrWriteNode<'pr>) {
+        self.check_const_or_asgn(node);
+        ruby_prism::visit_constant_or_write_node(self, node);
+    }
+    fn visit_constant_and_write_node(&mut self, node: &ConstantAndWriteNode<'pr>) {
+        self.check_const_and_asgn(node);
+        ruby_prism::visit_constant_and_write_node(self, node);
+    }
+    fn visit_call_or_write_node(&mut self, node: &CallOrWriteNode<'pr>) {
+        self.check_call_or_asgn(node);
+        ruby_prism::visit_call_or_write_node(self, node);
+    }
+    fn visit_call_and_write_node(&mut self, node: &CallAndWriteNode<'pr>) {
+        self.check_call_and_asgn(node);
+        ruby_prism::visit_call_and_write_node(self, node);
+    }
+    fn visit_index_or_write_node(&mut self, node: &IndexOrWriteNode<'pr>) {
+        self.check_index_or_asgn(node);
+        ruby_prism::visit_index_or_write_node(self, node);
+    }
+    fn visit_index_and_write_node(&mut self, node: &IndexAndWriteNode<'pr>) {
+        self.check_index_and_asgn(node);
+        ruby_prism::visit_index_and_write_node(self, node);
+    }
     fn visit_call_node(&mut self, node: &CallNode<'pr>) {
         self.check_send(node);
         ruby_prism::visit_call_node(self, node);
@@ -510,6 +733,30 @@ impl<'s> super::dispatch::Rule for SelfAssignmentVisitor<'s> {
             self.check_or_asgn(&n);
         } else if let Some(n) = node.as_local_variable_and_write_node() {
             self.check_and_asgn(&n);
+        } else if let Some(n) = node.as_instance_variable_or_write_node() {
+            self.check_ivar_or_asgn(&n);
+        } else if let Some(n) = node.as_instance_variable_and_write_node() {
+            self.check_ivar_and_asgn(&n);
+        } else if let Some(n) = node.as_class_variable_or_write_node() {
+            self.check_cvar_or_asgn(&n);
+        } else if let Some(n) = node.as_class_variable_and_write_node() {
+            self.check_cvar_and_asgn(&n);
+        } else if let Some(n) = node.as_global_variable_or_write_node() {
+            self.check_gvar_or_asgn(&n);
+        } else if let Some(n) = node.as_global_variable_and_write_node() {
+            self.check_gvar_and_asgn(&n);
+        } else if let Some(n) = node.as_constant_or_write_node() {
+            self.check_const_or_asgn(&n);
+        } else if let Some(n) = node.as_constant_and_write_node() {
+            self.check_const_and_asgn(&n);
+        } else if let Some(n) = node.as_call_or_write_node() {
+            self.check_call_or_asgn(&n);
+        } else if let Some(n) = node.as_call_and_write_node() {
+            self.check_call_and_asgn(&n);
+        } else if let Some(n) = node.as_index_or_write_node() {
+            self.check_index_or_asgn(&n);
+        } else if let Some(n) = node.as_index_and_write_node() {
+            self.check_index_and_asgn(&n);
         } else if let Some(call) = node.as_call_node() {
             self.check_send(&call);
         }

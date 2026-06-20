@@ -25,13 +25,13 @@ require "spec_helper"
 #   exclusion. Vendor spec has no example for the `cbase` variant, but the
 #   distinction is load-bearing (a refactor of the guard could silently
 #   regress).
-# - **Java package followed by user call (`Java::foo::bar`)**: the inner
-#   `Java::foo` is excluded by the java-type guard, but the outer `bar`
-#   (whose receiver is `Java::foo` — a `CallNode`, not a constant) is NOT
-#   excluded. Stock flags only the outer `::`. Vendor spec has neither a
-#   chained-java fixture nor a fixture with a non-constant receiver, so the
-#   recurse-into-children behaviour and the guard's per-call scope are
-#   pinned here.
+# - **Java interop chains (`Java::foo::bar`)**: stock's `java_interop?`
+#   guard (1.88.0+) walks the receiver chain to its root and checks
+#   `java_root?` (`(const nil? :Java)`). The entire chain rooted at a bare
+#   `Java` constant is excluded. The `cbase` form (`::Java::foo::bar`) is
+#   NOT excluded because the root is a `ConstantPathNode`, not a bare
+#   `ConstantReadNode`. Pinned because a future refactor could silently
+#   regress the chain-walking or cbase distinction.
 # - **Non-constant receiver shapes**: vendor spec only exercises `Class`
 #   (`ConstantReadNode`) and `test` (`CallNode`) as receivers. In stock the
 #   only structural guards depend on the message name (camel case) and the
@@ -83,12 +83,11 @@ RSpec.describe Shirobai::Cop::Style::ColonMethodCall do
       expect_lint_parity(*klasses, "::Java::int\n", config)
     end
 
-    it "DOES flag `Java::foo::bar` (outer call on non-constant receiver)" do
-      # Inner `Java::foo` is java-typed (excluded). Outer `bar` receiver is
-      # a `CallNode` (`Java::foo`), not a `ConstantReadNode`, so the java
-      # guard does not apply to the outer `::` and stock flags it.
-      stock = expect_lint_parity(*klasses, "Java::foo::bar\n", config)
-      expect(stock.size).to eq(1)
+    it "does NOT flag `Java::foo::bar` (entire chain rooted at Java is excluded)" do
+      # The `java_interop?` guard walks the receiver chain to its root;
+      # since the root is `Java`, the entire chain is excluded.
+      expect_lint_parity(*klasses, "Java::foo::bar\n", config, expect_offenses: false)
+      expect(lint_offenses(klasses.first, "Java::foo::bar\n", config)).to be_empty
     end
 
     it "does NOT flag `Java::com.foo` (java type then `.foo`)" do
