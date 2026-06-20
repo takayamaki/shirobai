@@ -60,3 +60,4 @@ Read this before starting a new cop.
 | **Prism uses `InterpolatedStringNode` for empty `%()`** | Override both typed visitors |
 | **ruby-prism `Visit` generated code calls typed visitors directly** (StatementsNode skips branch hooks) | In `Rule::enter`, catch `program_node` and explicitly process `statements()` |
 | **Prism `IndexOrWriteNode` family** | Also override `IndexOperatorWriteNode` / `IndexOrWriteNode` / `IndexAndWriteNode` |
+| **`ProcessedSource#lines.size` counts a phantom trailing empty entry** when source ends with `\n` (e.g. `"private\n".lines == ["private", ""]`); stock's `next_line_empty_and_exists?` compares against this size | Use `line_starts().len()` as-is — it matches stock's `lines.size`. Do NOT subtract 1 |
