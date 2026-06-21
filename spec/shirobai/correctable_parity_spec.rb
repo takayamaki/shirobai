@@ -396,6 +396,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Lint::AmbiguousBlockAssociation,
       Shirobai::Cop::Lint::AmbiguousBlockAssociation,
       "some_method a { |el| puts el }\n"
+    ],
+    # A lonely empty `#` line: stock emits a `corrector.remove(range_by_whole_lines)`
+    # corrector (correctable). Guards that the wrapper attaches the corrector block
+    # in lint mode like stock.
+    "Layout/EmptyComment" => [
+      RuboCop::Cop::Layout::EmptyComment,
+      Shirobai::Cop::Layout::EmptyComment,
+      "#\n"
     ]
   }
 

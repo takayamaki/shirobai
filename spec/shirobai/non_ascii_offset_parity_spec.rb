@@ -315,7 +315,14 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # substitutions all run through `SourceOffsets`. The multibyte content
     # exercises the byte->char shift on every offset.
     "Lint/AmbiguousBlockAssociation" =>
-      "some_method あ { |el| puts 日本語 }\n"
+      "some_method あ { |el| puts 日本語 }\n",
+    # Two empty `#` lines (in default `AllowMarginComment: true` mode they
+    # chunk together — joined `#\n#\n` matches `/\A(#\n)+\z/` and both get
+    # flagged). The offense range and the whole-line removal range both sit
+    # after the multibyte comment, so the byte→char conversion runs on every
+    # offset Rust returns.
+    "Layout/EmptyComment" =>
+      "x = 0\n#\n#\n"
   }
 
   cases.each do |cop_name, body|

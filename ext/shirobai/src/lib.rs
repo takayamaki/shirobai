@@ -1114,7 +1114,8 @@ fn register_bundle_config(
 /// 58 colon_method_call / 59 stabby_lambda_parentheses /
 /// 60 unreachable_code / 61 hash_transform_keys /
 /// 62 ambiguous_block_association /
-/// 63 empty_line_after_guard_clause
+/// 63 empty_line_after_guard_clause /
+/// 64 empty_comment
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1222,6 +1223,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_empty_line_after_guard_clause(
             r.empty_line_after_guard_clause,
         ))?;
+        ary.push(map_empty_comment(r.empty_comment))?;
         Ok(ary)
     })
 }
@@ -1240,6 +1242,21 @@ fn map_empty_line_after_guard_clause(
                 c.ac_anchor_last_line,
             )
         })
+        .collect()
+}
+
+/// `Layout/EmptyComment`: `[[offense_start, offense_end, ac_start, ac_end],
+/// ...]`. `[offense_start, offense_end)` is the comment range stock reports
+/// (matches `comment.source_range`; CRLF trailing `\r` already snapped off);
+/// `[ac_start, ac_end)` is the range the wrapper passes to
+/// `corrector.remove` (whole-line including the final newline, OR the
+/// comment with its leading horizontal whitespace when the comment shares a
+/// line with earlier code).
+fn map_empty_comment(
+    v: Vec<shirobai_core::rules::empty_comment::EmptyCommentOffense>,
+) -> Vec<(usize, usize, usize, usize)> {
+    v.into_iter()
+        .map(|o| (o.offense_start, o.offense_end, o.ac_start, o.ac_end))
         .collect()
 }
 
@@ -2054,6 +2071,23 @@ fn check_empty_line_after_guard_clause(
     .collect()
 }
 
+/// Ruby entry point for `Layout/EmptyComment` (standalone fallback). Takes
+/// the source and the two config flags (`AllowBorderComment` /
+/// `AllowMarginComment`). Returns the shape documented on `map_empty_comment`.
+fn check_empty_comment(
+    source: RString,
+    allow_border_comment: bool,
+    allow_margin_comment: bool,
+) -> Vec<(usize, usize, usize, usize)> {
+    let cfg = shirobai_core::rules::empty_comment::Config {
+        allow_border_comment,
+        allow_margin_comment,
+    };
+    map_empty_comment(shirobai_core::rules::empty_comment::check_empty_comment(
+        bytes(&source),
+        cfg,
+    ))
+}
 
 /// Ruby entry point for `Layout/EmptyLinesAroundArguments` (no config). Returns
 /// the shape documented on `map_empty_lines_around_arguments`.
@@ -2531,6 +2565,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_empty_line_after_guard_clause",
         function!(check_empty_line_after_guard_clause, 1),
+    )?;
+    module.define_module_function(
+        "check_empty_comment",
+        function!(check_empty_comment, 3),
     )?;
     module.define_module_function(
         "check_space_around_method_call_operator",

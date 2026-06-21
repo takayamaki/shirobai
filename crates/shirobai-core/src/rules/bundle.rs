@@ -14,6 +14,7 @@ use super::{
     block_delimiters, block_length, block_nesting,
     closing_parenthesis_indentation, colon_method_call, complexity, debugger, def_end_alignment,
     dot_position,
+    empty_comment,
     empty_line_after_guard_clause,
     empty_line_between_defs,
     block_alignment, else_alignment, empty_lines_around_arguments, empty_lines_around_body,
@@ -120,6 +121,8 @@ pub fn check_multiline_bundle(
 /// | 83  | access_modifier_indentation indentation_width (`Layout/AccessModifierIndentation` `IndentationWidth` override, falling back to `Layout/IndentationWidth` `Width`) |
 /// | 84  | assignment_indentation indentation_width (`Layout/AssignmentIndentation` `IndentationWidth` falling back to `Layout/IndentationWidth.Width` falling back to 2) |
 /// | 85  | stabby_lambda_parentheses style (`Style/StabbyLambdaParentheses` `EnforcedStyle`: 0 = require_parentheses, 1 = require_no_parentheses) |
+/// | 86  | empty_comment_allow_border (`Layout/EmptyComment` `AllowBorderComment`) |
+/// | 87  | empty_comment_allow_margin (`Layout/EmptyComment` `AllowMarginComment`) |
 ///
 /// `lists` (`Vec<String>`), 20 entries:
 ///
@@ -229,13 +232,14 @@ pub struct BundleConfig {
     pub assignment_indentation: assignment_indentation::Config,
     pub stabby_lambda_parentheses: stabby_lambda_parentheses::Config,
     pub ambiguous_block_association: ambiguous_block_association::Config,
+    pub empty_comment: empty_comment::Config,
 }
 
 // `Lint/ParenthesesAsGroupedExpression` carries no config so it doesn't appear
 // in the `nums` / `lists` packing; the bundle still computes its slot in the
 // shared walk (see `check_all_bundle` below).
 
-const NUMS_LEN: usize = 86;
+const NUMS_LEN: usize = 88;
 const LISTS_LEN: usize = 23;
 
 impl BundleConfig {
@@ -413,6 +417,10 @@ impl BundleConfig {
             ambiguous_block_association: ambiguous_block_association::Config {
                 allowed_methods: next_list(),
             },
+            empty_comment: empty_comment::Config {
+                allow_border_comment: nums[86] != 0,
+                allow_margin_comment: nums[87] != 0,
+            },
         })
     }
 }
@@ -536,6 +544,7 @@ pub struct BundleResult {
         Vec<ambiguous_block_association::AmbiguousBlockAssociationOffense>,
     pub empty_line_after_guard_clause:
         Vec<empty_line_after_guard_clause::GuardClauseCandidate>,
+    pub empty_comment: Vec<empty_comment::EmptyCommentOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -813,6 +822,9 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // `dispatch::run`); joining the shared walk is future work.
     let empty_line_after_guard_clause =
         empty_line_after_guard_clause::check_empty_line_after_guard_clause(source);
+    // `Layout/EmptyComment` is a comment-only check (no AST walk); it pulls
+    // comment ranges from the shared parse cache.
+    let empty_comment = empty_comment::check_empty_comment(source, cfg.empty_comment);
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -894,6 +906,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         hash_transform_keys,
         ambiguous_block_association,
         empty_line_after_guard_clause,
+        empty_comment,
     }
 }
 
@@ -970,6 +983,7 @@ mod tests {
             0, 2, // access_modifier_indentation: style (indent) / indentation_width (2)
             2, // assignment_indentation: indentation_width (default 2)
             0, // stabby_lambda_parentheses: style (require_parentheses)
+            1, 1, // empty_comment: allow_border / allow_margin (defaults)
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
