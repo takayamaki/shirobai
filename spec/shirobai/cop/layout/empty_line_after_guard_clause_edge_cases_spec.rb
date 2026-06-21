@@ -125,6 +125,51 @@ RSpec.describe Shirobai::Cop::Layout::EmptyLineAfterGuardClause do
     expect_lint_parity(*klasses, src, cfg)
   end
 
+  it "accepts `return <<~HEREDOC if cond` whose heredoc body fills the next lines" do
+    # Mirrors discourse's `topic_tracking_state.rb` and `lib/discourse.rb`:
+    # the heredoc body sits on the lines immediately after the `return`, so
+    # stock's `last_heredoc_argument` routes the check to the heredoc closer
+    # and finds the following blank line — no offense.  A port that fails to
+    # descend into the `return` node's argument misses the heredoc and fires
+    # on the if's `node.last_line` (the `return` line) instead.
+    src = <<~RUBY
+      def foo
+        return <<~SQL if cond
+            body line
+          SQL
+
+        bar
+      end
+    RUBY
+    expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
+  end
+
+  it "accepts `next <<~HEREDOC if cond` whose heredoc body fills the next lines" do
+    src = <<~RUBY
+      items.each do |i|
+        next <<~MSG if i.skip?
+          body line
+        MSG
+
+        bar(i)
+      end
+    RUBY
+    expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
+  end
+
+  it "accepts `break <<~HEREDOC if cond` whose heredoc body fills the next lines" do
+    src = <<~RUBY
+      result = loop do
+        break <<~MSG if done?
+          body line
+        MSG
+
+        step
+      end
+    RUBY
+    expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
+  end
+
   it "skips a guard whose right sibling is itself a multi-line guard `if`" do
     src = <<~RUBY
       def foo

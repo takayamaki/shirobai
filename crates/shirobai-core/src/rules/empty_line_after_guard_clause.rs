@@ -920,6 +920,38 @@ fn find_heredoc_descendant(node: &Node<'_>) -> Option<HeredocInfo> {
             return find_heredoc_descendant(&recv);
         }
     }
+    // Stock's `last_heredoc_argument_node` returns `node.if_branch.children.last`
+    // when the if_branch is `return`/`break`/`next` (since `respond_to?(:arguments)`
+    // is true on the return/break/next parser node), so the recursion sees the
+    // value expression directly.  In prism we have to descend into the
+    // ArgumentsNode of return/break/next here.
+    if let Some(ret) = cur.as_return_node()
+        && let Some(args) = ret.arguments()
+    {
+        for a in args.arguments().iter() {
+            if let Some(h) = find_heredoc_descendant(&a) {
+                return Some(h);
+            }
+        }
+    }
+    if let Some(br) = cur.as_break_node()
+        && let Some(args) = br.arguments()
+    {
+        for a in args.arguments().iter() {
+            if let Some(h) = find_heredoc_descendant(&a) {
+                return Some(h);
+            }
+        }
+    }
+    if let Some(nx) = cur.as_next_node()
+        && let Some(args) = nx.arguments()
+    {
+        for a in args.arguments().iter() {
+            if let Some(h) = find_heredoc_descendant(&a) {
+                return Some(h);
+            }
+        }
+    }
     None
 }
 
@@ -1085,6 +1117,23 @@ mod tests {
         let c = &got[0];
         let off = &src[c.offense_start..c.offense_end];
         assert_eq!(off, "  MSG");
+    }
+
+    // `return <<~HEREDOC if cond` followed by a blank line: heredoc is
+    // routed via the return's argument and the offense is suppressed.
+    #[test]
+    fn return_heredoc_blank_after_closer() {
+        let src = "def foo\n  return <<~SQL if cond\n    body\n  SQL\n\n  bar\nend\n";
+        let got = run(src);
+        // Stock suppresses because the line after the heredoc closer is
+        // blank.  Our wrapper does the blank check; the Rust side just
+        // needs to find the heredoc so we route the offense to the closer
+        // line.  Verify the heredoc was found by looking at the offense
+        // range: it must be the `  SQL` closer, not the if node.
+        if let Some(c) = got.first() {
+            let off = &src.as_bytes()[c.offense_start..c.offense_end];
+            assert_eq!(off, b"  SQL");
+        }
     }
 
     // `and return` after a heredoc-bearing call: also flagged via heredoc.
