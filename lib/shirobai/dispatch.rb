@@ -80,7 +80,8 @@ module Shirobai
       stabby_lambda_parentheses: 59,
       unreachable_code: 60,
       hash_transform_keys: 61,
-      ambiguous_block_association: 62
+      ambiguous_block_association: 62,
+      empty_line_after_guard_clause: 63
     }.freeze
 
     class << self
@@ -168,6 +169,9 @@ module Shirobai
         # and contributes nothing to `nums` / `lists`.
         _ = Cop::Style::HashTransformKeys.bundle_args(config)
         aba = Cop::Lint::AmbiguousBlockAssociation.bundle_args(config)
+        # Layout/EmptyLineAfterGuardClause is config-less; its `bundle_args` returns `[]`
+        # and contributes nothing to `nums` / `lists`.
+        _ = Cop::Layout::EmptyLineAfterGuardClause.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)

@@ -14,6 +14,7 @@ use super::{
     block_delimiters, block_length, block_nesting,
     closing_parenthesis_indentation, colon_method_call, complexity, debugger, def_end_alignment,
     dot_position,
+    empty_line_after_guard_clause,
     empty_line_between_defs,
     block_alignment, else_alignment, empty_lines_around_arguments, empty_lines_around_body,
     end_alignment,
@@ -533,6 +534,8 @@ pub struct BundleResult {
     pub hash_transform_keys: Vec<hash_transform_keys::HashTransformKeysOffense>,
     pub ambiguous_block_association:
         Vec<ambiguous_block_association::AmbiguousBlockAssociationOffense>,
+    pub empty_line_after_guard_clause:
+        Vec<empty_line_after_guard_clause::GuardClauseCandidate>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -806,6 +809,10 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let unreachable_code = uc_rule.offenses;
     let hash_transform_keys = htk_rule.offenses;
     let ambiguous_block_association = aba_rule.offenses;
+    // `Layout/EmptyLineAfterGuardClause` walks the AST on its own (separate
+    // `dispatch::run`); joining the shared walk is future work.
+    let empty_line_after_guard_clause =
+        empty_line_after_guard_clause::check_empty_line_after_guard_clause(source);
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -886,6 +893,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         unreachable_code,
         hash_transform_keys,
         ambiguous_block_association,
+        empty_line_after_guard_clause,
     }
 }
 

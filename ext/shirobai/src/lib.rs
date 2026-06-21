@@ -1113,7 +1113,8 @@ fn register_bundle_config(
 /// 56 assignment_indentation / 57 redundant_self_assignment /
 /// 58 colon_method_call / 59 stabby_lambda_parentheses /
 /// 60 unreachable_code / 61 hash_transform_keys /
-/// 62 ambiguous_block_association
+/// 62 ambiguous_block_association /
+/// 63 empty_line_after_guard_clause
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1218,8 +1219,28 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_ambiguous_block_association(
             r.ambiguous_block_association,
         ))?;
+        ary.push(map_empty_line_after_guard_clause(
+            r.empty_line_after_guard_clause,
+        ))?;
         Ok(ary)
     })
+}
+
+/// `Layout/EmptyLineAfterGuardClause`: `[[offense_start, offense_end,
+/// ac_anchor_first_line_start, ac_anchor_last_line], ...]`.
+fn map_empty_line_after_guard_clause(
+    v: Vec<shirobai_core::rules::empty_line_after_guard_clause::GuardClauseCandidate>,
+) -> Vec<(usize, usize, usize, usize)> {
+    v.into_iter()
+        .map(|c| {
+            (
+                c.offense_start,
+                c.offense_end,
+                c.ac_anchor_first_line_start,
+                c.ac_anchor_last_line,
+            )
+        })
+        .collect()
 }
 
 /// Ruby entry point for `Lint/Debugger`. Takes the source, the flattened
@@ -2009,6 +2030,31 @@ fn check_empty_line_between_defs(
     )
 }
 
+/// Ruby entry point for `Layout/EmptyLineAfterGuardClause`. Returns one entry
+/// per candidate offense: `[[offense_start, offense_end,
+/// ac_anchor_first_line_start, ac_anchor_last_line], ...]`. The Ruby wrapper
+/// finishes the directive-comment check (`# rubocop:enable` / `# :nocov:` /
+/// `# simplecov:disable`|`enable`) using `processed_source.comment_at_line`
+/// and `DirectiveComment#enabled?`.
+fn check_empty_line_after_guard_clause(
+    source: RString,
+) -> Vec<(usize, usize, usize, usize)> {
+    shirobai_core::rules::empty_line_after_guard_clause::check_empty_line_after_guard_clause(
+        bytes(&source),
+    )
+    .into_iter()
+    .map(|c| {
+        (
+            c.offense_start,
+            c.offense_end,
+            c.ac_anchor_first_line_start,
+            c.ac_anchor_last_line,
+        )
+    })
+    .collect()
+}
+
+
 /// Ruby entry point for `Layout/EmptyLinesAroundArguments` (no config). Returns
 /// the shape documented on `map_empty_lines_around_arguments`.
 fn check_empty_lines_around_arguments(source: RString) -> Vec<(usize, usize)> {
@@ -2481,6 +2527,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_empty_lines_around_arguments",
         function!(check_empty_lines_around_arguments, 1),
+    )?;
+    module.define_module_function(
+        "check_empty_line_after_guard_clause",
+        function!(check_empty_line_after_guard_clause, 1),
     )?;
     module.define_module_function(
         "check_space_around_method_call_operator",

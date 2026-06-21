@@ -170,6 +170,13 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Layout::EmptyLineBetweenDefs,
       "def a\nend\ndef b\nend\n"
     ],
+    # A guard clause (`return if ...`) followed by a non-blank line: the
+    # offense carries an `insert_after(range, "\n")` corrector (correctable).
+    "Layout/EmptyLineAfterGuardClause" => [
+      RuboCop::Cop::Layout::EmptyLineAfterGuardClause,
+      Shirobai::Cop::Layout::EmptyLineAfterGuardClause,
+      "def foo\n  return if x\n  bar\nend\n"
+    ],
     "Layout/EmptyLinesAroundArguments" => [
       RuboCop::Cop::Layout::EmptyLinesAroundArguments,
       Shirobai::Cop::Layout::EmptyLinesAroundArguments,
