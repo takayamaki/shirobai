@@ -412,6 +412,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Layout::EmptyLineAfterMagicComment,
       Shirobai::Cop::Layout::EmptyLineAfterMagicComment,
       "# frozen_string_literal: true\nclass Foo; end\n"
+    ],
+    # Two consecutive blank lines: stock yields a `corrector.remove(range)`
+    # corrector (correctable). Guards that the wrapper attaches the corrector
+    # block in lint mode like stock.
+    "Layout/EmptyLines" => [
+      RuboCop::Cop::Layout::EmptyLines,
+      Shirobai::Cop::Layout::EmptyLines,
+      "a = 1\n\n\nb = 2\n"
     ]
   }
 

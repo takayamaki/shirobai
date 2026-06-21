@@ -1115,7 +1115,8 @@ fn register_bundle_config(
 /// 60 unreachable_code / 61 hash_transform_keys /
 /// 62 ambiguous_block_association /
 /// 63 empty_line_after_guard_clause /
-/// 64 empty_comment / 65 empty_line_after_magic_comment
+/// 64 empty_comment / 65 empty_line_after_magic_comment /
+/// 66 empty_lines
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1227,6 +1228,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_empty_line_after_magic_comment(
             r.empty_line_after_magic_comment,
         ))?;
+        ary.push(map_empty_lines_offenses(r.empty_lines))?;
         Ok(ary)
     })
 }
@@ -1276,6 +1278,18 @@ fn map_empty_line_after_magic_comment(
         .map(|c| (c.start, c.end, c.line))
         .collect()
 }
+
+/// `Layout/EmptyLines`: `[[start, end], ...]`. `[start, end)` is the 1-byte
+/// `source_range(buffer, line, 0)` the wrapper passes to both `add_offense`
+/// and `corrector.remove`. Named with the `_offenses` suffix because the
+/// other `map_empty_lines` in this file maps the `empty_lines_around_body`
+/// family's offense shape.
+fn map_empty_lines_offenses(
+    v: Vec<shirobai_core::rules::empty_lines::EmptyLinesOffense>,
+) -> Vec<(usize, usize)> {
+    v.into_iter().map(|o| (o.start, o.end)).collect()
+}
+
 
 /// Ruby entry point for `Lint/Debugger`. Takes the source, the flattened
 /// `DebuggerMethods` list and the flattened `DebuggerRequires` list, and
@@ -2120,6 +2134,14 @@ fn check_empty_line_after_magic_comment(
 }
 
 
+/// Ruby entry point for `Layout/EmptyLines` (standalone fallback,
+/// config-less). Returns the shape documented on `map_empty_lines`.
+fn check_empty_lines(source: RString) -> Vec<(usize, usize)> {
+    map_empty_lines_offenses(shirobai_core::rules::empty_lines::check_empty_lines(
+        bytes(&source),
+    ))
+}
+
 /// Ruby entry point for `Layout/EmptyLinesAroundArguments` (no config). Returns
 /// the shape documented on `map_empty_lines_around_arguments`.
 fn check_empty_lines_around_arguments(source: RString) -> Vec<(usize, usize)> {
@@ -2604,6 +2626,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_empty_line_after_magic_comment",
         function!(check_empty_line_after_magic_comment, 1),
+    )?;
+    module.define_module_function(
+        "check_empty_lines",
+        function!(check_empty_lines, 1),
     )?;
     module.define_module_function(
         "check_space_around_method_call_operator",

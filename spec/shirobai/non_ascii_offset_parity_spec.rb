@@ -329,7 +329,13 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # offsets fall after the multibyte prefix, so the byte→char conversion
     # runs on every offset.
     "Layout/EmptyLineAfterMagicComment" =>
-      "# frozen_string_literal: true\nclass Foo; end\n"
+      "# frozen_string_literal: true\nclass Foo; end\n",
+    # Two blank lines between statements after the multibyte comment: the
+    # 1-byte offense range and the same range used as the removal corrector
+    # both sit after the multibyte prefix, so the byte->char conversion runs
+    # on every offset Rust returns.
+    "Layout/EmptyLines" =>
+      "a = 1\n\n\nb = 2\n"
   }
 
   cases.each do |cop_name, body|

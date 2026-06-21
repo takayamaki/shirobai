@@ -83,7 +83,8 @@ module Shirobai
       ambiguous_block_association: 62,
       empty_line_after_guard_clause: 63,
       empty_comment: 64,
-      empty_line_after_magic_comment: 65
+      empty_line_after_magic_comment: 65,
+      empty_lines: 66
     }.freeze
 
     class << self
@@ -177,6 +178,9 @@ module Shirobai
         # Layout/EmptyLineAfterMagicComment is config-less too.
         _ = Cop::Layout::EmptyLineAfterMagicComment.bundle_args(config)
         ec = Cop::Layout::EmptyComment.bundle_args(config)
+        # Layout/EmptyLines is config-less; its `bundle_args` returns `[]`
+        # and contributes nothing to `nums` / `lists`.
+        _ = Cop::Layout::EmptyLines.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)

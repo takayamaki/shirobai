@@ -20,6 +20,7 @@ pub mod empty_comment;
 pub mod empty_line_after_guard_clause;
 pub mod empty_line_after_magic_comment;
 pub mod empty_line_between_defs;
+pub mod empty_lines;
 pub mod empty_lines_around_arguments;
 pub mod empty_lines_around_body;
 pub mod else_alignment;

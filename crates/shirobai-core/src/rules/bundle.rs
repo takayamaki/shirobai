@@ -18,6 +18,7 @@ use super::{
     empty_line_after_guard_clause,
     empty_line_after_magic_comment,
     empty_line_between_defs,
+    empty_lines,
     block_alignment, else_alignment, empty_lines_around_arguments, empty_lines_around_body,
     end_alignment,
     first_argument_indentation, first_array_element_indentation, first_hash_element_indentation,
@@ -548,6 +549,7 @@ pub struct BundleResult {
     pub empty_comment: Vec<empty_comment::EmptyCommentOffense>,
     pub empty_line_after_magic_comment:
         Vec<empty_line_after_magic_comment::MagicCommentCandidate>,
+    pub empty_lines: Vec<empty_lines::EmptyLinesOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -699,6 +701,13 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut htk_rule = hash_transform_keys::build_rule(source);
     let mut aba_rule =
         ambiguous_block_association::build_rule(source, cfg.ambiguous_block_association.clone());
+    // `Layout/EmptyLines` joins the shared walk only when the file actually
+    // contains `\n\n\n` (stock's prefilter); otherwise the rule's collected
+    // lines are unused and we skip both the walk push and the finalize. The
+    // rule has to be constructed even when ineligible to keep the borrow
+    // shape simple — `el_rule` is consumed only on the eligible path.
+    let empty_lines_eligible = empty_lines::contains_newline_triple(source);
+    let mut el_rule = empty_lines::build_rule(source);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -754,6 +763,9 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut htk_rule,
         &mut aba_rule,
     ];
+    if empty_lines_eligible {
+        rules.push(&mut el_rule);
+    }
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
     }
@@ -854,6 +866,13 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // `Layout/TrailingEmptyLines` is also a pure source scan (no walk).
     let trailing_empty_lines =
         trailing_empty_lines::check_trailing_empty_lines(source, &cfg.trailing_empty_lines);
+    // `Layout/EmptyLines` finalizes the shared walk's collected token-bearing
+    // lines (or stays empty when the prefilter skipped the walk).
+    let empty_lines = if empty_lines_eligible {
+        empty_lines::finalize(source, el_rule)
+    } else {
+        Vec::new()
+    };
     BundleResult {
         debugger,
         block_length,
@@ -916,6 +935,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         empty_line_after_guard_clause,
         empty_comment,
         empty_line_after_magic_comment,
+        empty_lines,
     }
 }
 
@@ -2101,6 +2121,31 @@ mod tests {
             );
         }
     }
+
+    /// `Layout/EmptyLines` merged into the shared walk must report exactly
+    /// what its standalone entry point reports, over a source that exercises
+    /// a basic blank gap between statements, a string literal whose embedded
+    /// blank lines must NOT trigger (per-line `tSTRING_CONTENT`), a percent
+    /// array where the gap inside DOES trigger (no per-line tokens), and a
+    /// gap inside a multi-line def.
+    #[test]
+    fn shared_walk_matches_standalone_empty_lines() {
+        let src = "a = 1\n\n\nb = 2\n\
+                   x = \"line\n\n\nstring\"\n\
+                   y = %w[a\n\n\nb]\n\
+                   def foo\n  bar\n\n\n  baz\nend\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::empty_lines::check_empty_lines(src.as_bytes());
+        assert!(!alone.is_empty());
+        assert_eq!(bundle.empty_lines.len(), alone.len());
+        for (a, b) in bundle.empty_lines.iter().zip(&alone) {
+            assert_eq!((a.start, a.end), (b.start, b.end));
+        }
+    }
+
 
     /// `Layout/EmptyLinesAroundArguments` merged into the shared walk must
     /// report exactly what its standalone entry point reports, over a source
