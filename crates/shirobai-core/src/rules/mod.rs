@@ -18,6 +18,7 @@ pub mod dispatch;
 pub mod dot_position;
 pub mod empty_comment;
 pub mod empty_line_after_guard_clause;
+pub mod empty_line_after_magic_comment;
 pub mod empty_line_between_defs;
 pub mod empty_lines_around_arguments;
 pub mod empty_lines_around_body;

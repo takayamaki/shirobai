@@ -404,6 +404,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Layout::EmptyComment,
       Shirobai::Cop::Layout::EmptyComment,
       "#\n"
+    ],
+    # A magic comment immediately followed by code: stock yields a
+    # `corrector.insert_before(range, "\n")` corrector (correctable). Guards
+    # that the wrapper attaches the corrector block in lint mode like stock.
+    "Layout/EmptyLineAfterMagicComment" => [
+      RuboCop::Cop::Layout::EmptyLineAfterMagicComment,
+      Shirobai::Cop::Layout::EmptyLineAfterMagicComment,
+      "# frozen_string_literal: true\nclass Foo; end\n"
     ]
   }
 

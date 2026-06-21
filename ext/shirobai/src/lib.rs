@@ -1115,7 +1115,7 @@ fn register_bundle_config(
 /// 60 unreachable_code / 61 hash_transform_keys /
 /// 62 ambiguous_block_association /
 /// 63 empty_line_after_guard_clause /
-/// 64 empty_comment
+/// 64 empty_comment / 65 empty_line_after_magic_comment
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1224,6 +1224,9 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             r.empty_line_after_guard_clause,
         ))?;
         ary.push(map_empty_comment(r.empty_comment))?;
+        ary.push(map_empty_line_after_magic_comment(
+            r.empty_line_after_magic_comment,
+        ))?;
         Ok(ary)
     })
 }
@@ -1257,6 +1260,20 @@ fn map_empty_comment(
 ) -> Vec<(usize, usize, usize, usize)> {
     v.into_iter()
         .map(|o| (o.offense_start, o.offense_end, o.ac_start, o.ac_end))
+        .collect()
+}
+
+/// `Layout/EmptyLineAfterMagicComment`: `[[start, end, line_1based], ...]`
+/// for every comment that appears before the file's first AST statement (or
+/// for every comment when the AST is empty). `[start, end)` is the comment's
+/// parser-gem `source_range` (CRLF trailing `\r` already snapped off). The
+/// Ruby wrapper filters by `MagicComment.parse(text).any?`, picks the last
+/// matching candidate, and builds the offense / corrector around it.
+fn map_empty_line_after_magic_comment(
+    v: Vec<shirobai_core::rules::empty_line_after_magic_comment::MagicCommentCandidate>,
+) -> Vec<(usize, usize, usize)> {
+    v.into_iter()
+        .map(|c| (c.start, c.end, c.line))
         .collect()
 }
 
@@ -2089,6 +2106,20 @@ fn check_empty_comment(
     ))
 }
 
+/// Ruby entry point for `Layout/EmptyLineAfterMagicComment` (standalone
+/// fallback, config-less). Returns the shape documented on
+/// `map_empty_line_after_magic_comment`.
+fn check_empty_line_after_magic_comment(
+    source: RString,
+) -> Vec<(usize, usize, usize)> {
+    map_empty_line_after_magic_comment(
+        shirobai_core::rules::empty_line_after_magic_comment::check_empty_line_after_magic_comment(
+            bytes(&source),
+        ),
+    )
+}
+
+
 /// Ruby entry point for `Layout/EmptyLinesAroundArguments` (no config). Returns
 /// the shape documented on `map_empty_lines_around_arguments`.
 fn check_empty_lines_around_arguments(source: RString) -> Vec<(usize, usize)> {
@@ -2569,6 +2600,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_empty_comment",
         function!(check_empty_comment, 3),
+    )?;
+    module.define_module_function(
+        "check_empty_line_after_magic_comment",
+        function!(check_empty_line_after_magic_comment, 1),
     )?;
     module.define_module_function(
         "check_space_around_method_call_operator",

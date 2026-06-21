@@ -82,7 +82,8 @@ module Shirobai
       hash_transform_keys: 61,
       ambiguous_block_association: 62,
       empty_line_after_guard_clause: 63,
-      empty_comment: 64
+      empty_comment: 64,
+      empty_line_after_magic_comment: 65
     }.freeze
 
     class << self
@@ -173,6 +174,8 @@ module Shirobai
         # Layout/EmptyLineAfterGuardClause is config-less; its `bundle_args` returns `[]`
         # and contributes nothing to `nums` / `lists`.
         _ = Cop::Layout::EmptyLineAfterGuardClause.bundle_args(config)
+        # Layout/EmptyLineAfterMagicComment is config-less too.
+        _ = Cop::Layout::EmptyLineAfterMagicComment.bundle_args(config)
         ec = Cop::Layout::EmptyComment.bundle_args(config)
 
         nums = [

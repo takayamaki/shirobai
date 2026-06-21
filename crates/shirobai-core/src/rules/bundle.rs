@@ -16,6 +16,7 @@ use super::{
     dot_position,
     empty_comment,
     empty_line_after_guard_clause,
+    empty_line_after_magic_comment,
     empty_line_between_defs,
     block_alignment, else_alignment, empty_lines_around_arguments, empty_lines_around_body,
     end_alignment,
@@ -545,6 +546,8 @@ pub struct BundleResult {
     pub empty_line_after_guard_clause:
         Vec<empty_line_after_guard_clause::GuardClauseCandidate>,
     pub empty_comment: Vec<empty_comment::EmptyCommentOffense>,
+    pub empty_line_after_magic_comment:
+        Vec<empty_line_after_magic_comment::MagicCommentCandidate>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -825,6 +828,11 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // `Layout/EmptyComment` is a comment-only check (no AST walk); it pulls
     // comment ranges from the shared parse cache.
     let empty_comment = empty_comment::check_empty_comment(source, cfg.empty_comment);
+    // `Layout/EmptyLineAfterMagicComment` is also a comment-only check (no
+    // AST walk); it pulls comments and the program first-statement line from
+    // the shared parse cache.
+    let empty_line_after_magic_comment =
+        empty_line_after_magic_comment::check_empty_line_after_magic_comment(source);
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -907,6 +915,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         ambiguous_block_association,
         empty_line_after_guard_clause,
         empty_comment,
+        empty_line_after_magic_comment,
     }
 }
 
