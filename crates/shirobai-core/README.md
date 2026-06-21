@@ -61,3 +61,5 @@ Read this before starting a new cop.
 | **ruby-prism `Visit` generated code calls typed visitors directly** (StatementsNode skips branch hooks) | In `Rule::enter`, catch `program_node` and explicitly process `statements()` |
 | **Prism `IndexOrWriteNode` family** | Also override `IndexOperatorWriteNode` / `IndexOrWriteNode` / `IndexAndWriteNode` |
 | **`ProcessedSource#lines.size` counts a phantom trailing empty entry** when source ends with `\n` (e.g. `"private\n".lines == ["private", ""]`); stock's `next_line_empty_and_exists?` compares against this size | Use `line_starts().len()` as-is — it matches stock's `lines.size`. Do NOT subtract 1 |
+| **prism `Node` is not Copy/Clone** (`PhantomData<&mut T>` marker) so it can't be stashed in a parent/sibling slot the obvious way, even though the underlying bytes are plain | `std::mem::transmute_copy` to byte-clone into `Node<'static>`. Safe as long as every stashed copy is popped within the same `dispatch::run` call (the parse is held by `parse_cache`) |
+| **prism heredoc `closing_loc` includes the trailing `\n`**, while stock's `loc.heredoc_end` does not | Snap the end back by 1 byte when the slice ends with `\n` |
