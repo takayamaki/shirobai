@@ -34,6 +34,7 @@ pub mod hash_syntax;
 pub mod hash_transform_keys;
 pub mod indentation_consistency;
 pub mod indentation_width;
+pub mod leading_empty_lines;
 pub mod line_end_concatenation;
 pub mod line_index;
 pub mod line_length;

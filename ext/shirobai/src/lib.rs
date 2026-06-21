@@ -1116,7 +1116,7 @@ fn register_bundle_config(
 /// 62 ambiguous_block_association /
 /// 63 empty_line_after_guard_clause /
 /// 64 empty_comment / 65 empty_line_after_magic_comment /
-/// 66 empty_lines
+/// 66 empty_lines / 67 leading_empty_lines
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1229,6 +1229,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             r.empty_line_after_magic_comment,
         ))?;
         ary.push(map_empty_lines_offenses(r.empty_lines))?;
+        ary.push(map_leading_empty_lines(r.leading_empty_lines))?;
         Ok(ary)
     })
 }
@@ -1290,6 +1291,19 @@ fn map_empty_lines_offenses(
     v.into_iter().map(|o| (o.start, o.end)).collect()
 }
 
+/// `Layout/LeadingEmptyLines`: at most one offense per file. Tuple shape
+/// `(start, end, ac_start, ac_end)`: `[start, end)` is the first lexical
+/// token's source range (the offense range stock yields to `add_offense`);
+/// `[ac_start, ac_end)` = `[0, token.begin_pos)` is the leading-blank range
+/// the corrector removes. Wrapped in a 0-or-1-element `Vec` for a uniform
+/// Ruby-side shape.
+fn map_leading_empty_lines(
+    v: Option<shirobai_core::rules::leading_empty_lines::LeadingEmptyLinesOffense>,
+) -> Vec<(usize, usize, usize, usize)> {
+    v.into_iter()
+        .map(|o| (o.start, o.end, o.ac_start, o.ac_end))
+        .collect()
+}
 
 /// Ruby entry point for `Lint/Debugger`. Takes the source, the flattened
 /// `DebuggerMethods` list and the flattened `DebuggerRequires` list, and
@@ -2133,13 +2147,20 @@ fn check_empty_line_after_magic_comment(
     )
 }
 
-
 /// Ruby entry point for `Layout/EmptyLines` (standalone fallback,
 /// config-less). Returns the shape documented on `map_empty_lines`.
 fn check_empty_lines(source: RString) -> Vec<(usize, usize)> {
     map_empty_lines_offenses(shirobai_core::rules::empty_lines::check_empty_lines(
         bytes(&source),
     ))
+}
+
+/// Ruby entry point for `Layout/LeadingEmptyLines` (no config). Returns a
+/// 0-or-1-element Vec (see `map_leading_empty_lines`).
+fn check_leading_empty_lines(source: RString) -> Vec<(usize, usize, usize, usize)> {
+    map_leading_empty_lines(
+        shirobai_core::rules::leading_empty_lines::check_leading_empty_lines(bytes(&source)),
+    )
 }
 
 /// Ruby entry point for `Layout/EmptyLinesAroundArguments` (no config). Returns
@@ -2630,6 +2651,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_empty_lines",
         function!(check_empty_lines, 1),
+    )?;
+    module.define_module_function(
+        "check_leading_empty_lines",
+        function!(check_leading_empty_lines, 1),
     )?;
     module.define_module_function(
         "check_space_around_method_call_operator",

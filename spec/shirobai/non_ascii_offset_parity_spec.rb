@@ -336,6 +336,11 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # on every offset Rust returns.
     "Layout/EmptyLines" =>
       "a = 1\n\n\nb = 2\n"
+    # NOTE: `Layout/LeadingEmptyLines` does not appear in this synthetic
+    # `prefix + body` sweep — the shared prefix puts a comment on line 1,
+    # which IS a token, so the cop never fires once prepended. The cop's
+    # byte→char path still gets non-ASCII coverage from the fileutils.rb
+    # sweep below (which uses the cop's own multibyte first token).
   }
 
   cases.each do |cop_name, body|

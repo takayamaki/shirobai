@@ -23,7 +23,9 @@ use super::{
     end_alignment,
     first_argument_indentation, first_array_element_indentation, first_hash_element_indentation,
     hash_alignment, hash_each_methods, hash_syntax, hash_transform_keys,
-    indentation_consistency, indentation_width, line_end_concatenation, line_length,
+    indentation_consistency, indentation_width,
+    leading_empty_lines,
+    line_end_concatenation, line_length,
     line_length_breakable, method_length, method_name,
     multiline_method_call_brace_layout, nested_parenthesized_calls,
     parentheses_as_grouped_expression,
@@ -550,6 +552,8 @@ pub struct BundleResult {
     pub empty_line_after_magic_comment:
         Vec<empty_line_after_magic_comment::MagicCommentCandidate>,
     pub empty_lines: Vec<empty_lines::EmptyLinesOffense>,
+    /// At most one offense per file (the leading-blank-line offense).
+    pub leading_empty_lines: Option<leading_empty_lines::LeadingEmptyLinesOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -845,6 +849,10 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // the shared parse cache.
     let empty_line_after_magic_comment =
         empty_line_after_magic_comment::check_empty_line_after_magic_comment(source);
+    // `Layout/LeadingEmptyLines` is a comment + first AST statement lookup
+    // from the cached parse, no AST walk.
+    let leading_empty_lines =
+        leading_empty_lines::check_leading_empty_lines(source);
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -936,6 +944,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         empty_comment,
         empty_line_after_magic_comment,
         empty_lines,
+        leading_empty_lines,
     }
 }
 
@@ -2145,7 +2154,6 @@ mod tests {
             assert_eq!((a.start, a.end), (b.start, b.end));
         }
     }
-
 
     /// `Layout/EmptyLinesAroundArguments` merged into the shared walk must
     /// report exactly what its standalone entry point reports, over a source
