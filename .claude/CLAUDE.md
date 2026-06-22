@@ -34,6 +34,8 @@ and "only happens in test code" are not reasons to ship.
 1. **Always work on a separate branch.**
    Do not commit directly to main.
 2. Steps:
+   - Check `docs/cop-status.md` first. If the cop has been attempted and
+     reverted before, read the reason — that's what's hard about it.
    - Read the stock implementation (in `vendor/rubocop`) and its vendor spec.
    - Probe the stock cop on real code to find quirks. Do not guess.
    - Build the Rust rule + Ruby wrapper + wiring (the 4+1 checklist):
@@ -50,6 +52,9 @@ and "only happens in test code" are not reasons to ship.
      assert that offenses and autocorrect output match.
    - Get `benches/parity_diff.sh` to show zero diff on all 5 corpora.
    - Finish as one commit on the branch.
+   - Update `docs/cop-status.md`: move the cop into the implemented list,
+     or add it to "Attempted but reverted" with the reason and lesson if
+     you had to revert.
 
 ## Four merge gates
 

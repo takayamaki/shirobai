@@ -149,6 +149,11 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # (the byte offset of the `\n` after `end`), all shifted by the multibyte
     # comment; the insert arm adds the missing empty line.
     "Layout/EmptyLineBetweenDefs" => "def a\nend\ndef b\nend\n",
+    # The whole-modifier offense range and the autocorrect `range_by_whole_lines`
+    # anchor, both shifted by the multibyte comment.  The guard's `if x` arm
+    # also exercises the parser-parent walk through DefNode/StatementsNode.
+    "Layout/EmptyLineAfterGuardClause" =>
+      "def foo\n  return if 日本\n  bar\nend\n",
     # The offense line range (the whole empty line plus its `\n`), which is also
     # the removal corrector range, shifted by the multibyte comment.
     "Layout/EmptyLinesAroundArguments" => "foo(\n\n  bar\n)\n",
@@ -310,7 +315,32 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # substitutions all run through `SourceOffsets`. The multibyte content
     # exercises the byte->char shift on every offset.
     "Lint/AmbiguousBlockAssociation" =>
-      "some_method あ { |el| puts 日本語 }\n"
+      "some_method あ { |el| puts 日本語 }\n",
+    # Two empty `#` lines (in default `AllowMarginComment: true` mode they
+    # chunk together — joined `#\n#\n` matches `/\A(#\n)+\z/` and both get
+    # flagged). The offense range and the whole-line removal range both sit
+    # after the multibyte comment, so the byte→char conversion runs on every
+    # offset Rust returns.
+    "Layout/EmptyComment" =>
+      "x = 0\n#\n#\n",
+    # A magic comment immediately followed by code, after the multibyte
+    # prefix comment. The offense is a 1-byte range at column 0 of the line
+    # below the magic, and the autocorrect inserts `"\n"` there. Both
+    # offsets fall after the multibyte prefix, so the byte→char conversion
+    # runs on every offset.
+    "Layout/EmptyLineAfterMagicComment" =>
+      "# frozen_string_literal: true\nclass Foo; end\n",
+    # Two blank lines between statements after the multibyte comment: the
+    # 1-byte offense range and the same range used as the removal corrector
+    # both sit after the multibyte prefix, so the byte->char conversion runs
+    # on every offset Rust returns.
+    "Layout/EmptyLines" =>
+      "a = 1\n\n\nb = 2\n"
+    # NOTE: `Layout/LeadingEmptyLines` does not appear in this synthetic
+    # `prefix + body` sweep — the shared prefix puts a comment on line 1,
+    # which IS a token, so the cop never fires once prepended. The cop's
+    # byte→char path still gets non-ASCII coverage from the fileutils.rb
+    # sweep below (which uses the cop's own multibyte first token).
   }
 
   cases.each do |cop_name, body|

@@ -80,7 +80,12 @@ module Shirobai
       stabby_lambda_parentheses: 59,
       unreachable_code: 60,
       hash_transform_keys: 61,
-      ambiguous_block_association: 62
+      ambiguous_block_association: 62,
+      empty_line_after_guard_clause: 63,
+      empty_comment: 64,
+      empty_line_after_magic_comment: 65,
+      empty_lines: 66,
+      leading_empty_lines: 67
     }.freeze
 
     class << self
@@ -168,6 +173,18 @@ module Shirobai
         # and contributes nothing to `nums` / `lists`.
         _ = Cop::Style::HashTransformKeys.bundle_args(config)
         aba = Cop::Lint::AmbiguousBlockAssociation.bundle_args(config)
+        # Layout/EmptyLineAfterGuardClause is config-less; its `bundle_args` returns `[]`
+        # and contributes nothing to `nums` / `lists`.
+        _ = Cop::Layout::EmptyLineAfterGuardClause.bundle_args(config)
+        # Layout/EmptyLineAfterMagicComment is config-less too.
+        _ = Cop::Layout::EmptyLineAfterMagicComment.bundle_args(config)
+        ec = Cop::Layout::EmptyComment.bundle_args(config)
+        # Layout/EmptyLines is config-less; its `bundle_args` returns `[]`
+        # and contributes nothing to `nums` / `lists`.
+        _ = Cop::Layout::EmptyLines.bundle_args(config)
+        # Layout/LeadingEmptyLines is config-less; its `bundle_args` returns
+        # `[]` and contributes nothing to `nums` / `lists`.
+        _ = Cop::Layout::LeadingEmptyLines.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -207,7 +224,8 @@ module Shirobai
           mmcbl[0][0], # MultilineMethodCallBraceLayout EnforcedStyle
           ami[0], ami[1], # AccessModifierIndentation style / indentation_width
           ai[0], # AssignmentIndentation IndentationWidth
-          slp[0] # StabbyLambdaParentheses style
+          slp[0], # StabbyLambdaParentheses style
+          ec[0], ec[1] # EmptyComment AllowBorderComment / AllowMarginComment
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0], aba[0]]

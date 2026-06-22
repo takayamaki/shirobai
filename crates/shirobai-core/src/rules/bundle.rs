@@ -14,12 +14,18 @@ use super::{
     block_delimiters, block_length, block_nesting,
     closing_parenthesis_indentation, colon_method_call, complexity, debugger, def_end_alignment,
     dot_position,
+    empty_comment,
+    empty_line_after_guard_clause,
+    empty_line_after_magic_comment,
     empty_line_between_defs,
+    empty_lines,
     block_alignment, else_alignment, empty_lines_around_arguments, empty_lines_around_body,
     end_alignment,
     first_argument_indentation, first_array_element_indentation, first_hash_element_indentation,
     hash_alignment, hash_each_methods, hash_syntax, hash_transform_keys,
-    indentation_consistency, indentation_width, line_end_concatenation, line_length,
+    indentation_consistency, indentation_width,
+    leading_empty_lines,
+    line_end_concatenation, line_length,
     line_length_breakable, method_length, method_name,
     multiline_method_call_brace_layout, nested_parenthesized_calls,
     parentheses_as_grouped_expression,
@@ -119,6 +125,8 @@ pub fn check_multiline_bundle(
 /// | 83  | access_modifier_indentation indentation_width (`Layout/AccessModifierIndentation` `IndentationWidth` override, falling back to `Layout/IndentationWidth` `Width`) |
 /// | 84  | assignment_indentation indentation_width (`Layout/AssignmentIndentation` `IndentationWidth` falling back to `Layout/IndentationWidth.Width` falling back to 2) |
 /// | 85  | stabby_lambda_parentheses style (`Style/StabbyLambdaParentheses` `EnforcedStyle`: 0 = require_parentheses, 1 = require_no_parentheses) |
+/// | 86  | empty_comment_allow_border (`Layout/EmptyComment` `AllowBorderComment`) |
+/// | 87  | empty_comment_allow_margin (`Layout/EmptyComment` `AllowMarginComment`) |
 ///
 /// `lists` (`Vec<String>`), 20 entries:
 ///
@@ -228,13 +236,14 @@ pub struct BundleConfig {
     pub assignment_indentation: assignment_indentation::Config,
     pub stabby_lambda_parentheses: stabby_lambda_parentheses::Config,
     pub ambiguous_block_association: ambiguous_block_association::Config,
+    pub empty_comment: empty_comment::Config,
 }
 
 // `Lint/ParenthesesAsGroupedExpression` carries no config so it doesn't appear
 // in the `nums` / `lists` packing; the bundle still computes its slot in the
 // shared walk (see `check_all_bundle` below).
 
-const NUMS_LEN: usize = 86;
+const NUMS_LEN: usize = 88;
 const LISTS_LEN: usize = 23;
 
 impl BundleConfig {
@@ -412,6 +421,10 @@ impl BundleConfig {
             ambiguous_block_association: ambiguous_block_association::Config {
                 allowed_methods: next_list(),
             },
+            empty_comment: empty_comment::Config {
+                allow_border_comment: nums[86] != 0,
+                allow_margin_comment: nums[87] != 0,
+            },
         })
     }
 }
@@ -533,6 +546,14 @@ pub struct BundleResult {
     pub hash_transform_keys: Vec<hash_transform_keys::HashTransformKeysOffense>,
     pub ambiguous_block_association:
         Vec<ambiguous_block_association::AmbiguousBlockAssociationOffense>,
+    pub empty_line_after_guard_clause:
+        Vec<empty_line_after_guard_clause::GuardClauseCandidate>,
+    pub empty_comment: Vec<empty_comment::EmptyCommentOffense>,
+    pub empty_line_after_magic_comment:
+        Vec<empty_line_after_magic_comment::MagicCommentCandidate>,
+    pub empty_lines: Vec<empty_lines::EmptyLinesOffense>,
+    /// At most one offense per file (the leading-blank-line offense).
+    pub leading_empty_lines: Option<leading_empty_lines::LeadingEmptyLinesOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -684,6 +705,13 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut htk_rule = hash_transform_keys::build_rule(source);
     let mut aba_rule =
         ambiguous_block_association::build_rule(source, cfg.ambiguous_block_association.clone());
+    // `Layout/EmptyLines` joins the shared walk only when the file actually
+    // contains `\n\n\n` (stock's prefilter); otherwise the rule's collected
+    // lines are unused and we skip both the walk push and the finalize. The
+    // rule has to be constructed even when ineligible to keep the borrow
+    // shape simple — `el_rule` is consumed only on the eligible path.
+    let empty_lines_eligible = empty_lines::contains_newline_triple(source);
+    let mut el_rule = empty_lines::build_rule(source);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -739,6 +767,9 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut htk_rule,
         &mut aba_rule,
     ];
+    if empty_lines_eligible {
+        rules.push(&mut el_rule);
+    }
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
     }
@@ -806,6 +837,22 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let unreachable_code = uc_rule.offenses;
     let hash_transform_keys = htk_rule.offenses;
     let ambiguous_block_association = aba_rule.offenses;
+    // `Layout/EmptyLineAfterGuardClause` walks the AST on its own (separate
+    // `dispatch::run`); joining the shared walk is future work.
+    let empty_line_after_guard_clause =
+        empty_line_after_guard_clause::check_empty_line_after_guard_clause(source);
+    // `Layout/EmptyComment` is a comment-only check (no AST walk); it pulls
+    // comment ranges from the shared parse cache.
+    let empty_comment = empty_comment::check_empty_comment(source, cfg.empty_comment);
+    // `Layout/EmptyLineAfterMagicComment` is also a comment-only check (no
+    // AST walk); it pulls comments and the program first-statement line from
+    // the shared parse cache.
+    let empty_line_after_magic_comment =
+        empty_line_after_magic_comment::check_empty_line_after_magic_comment(source);
+    // `Layout/LeadingEmptyLines` is a comment + first AST statement lookup
+    // from the cached parse, no AST walk.
+    let leading_empty_lines =
+        leading_empty_lines::check_leading_empty_lines(source);
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -827,6 +874,13 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // `Layout/TrailingEmptyLines` is also a pure source scan (no walk).
     let trailing_empty_lines =
         trailing_empty_lines::check_trailing_empty_lines(source, &cfg.trailing_empty_lines);
+    // `Layout/EmptyLines` finalizes the shared walk's collected token-bearing
+    // lines (or stays empty when the prefilter skipped the walk).
+    let empty_lines = if empty_lines_eligible {
+        empty_lines::finalize(source, el_rule)
+    } else {
+        Vec::new()
+    };
     BundleResult {
         debugger,
         block_length,
@@ -886,6 +940,11 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         unreachable_code,
         hash_transform_keys,
         ambiguous_block_association,
+        empty_line_after_guard_clause,
+        empty_comment,
+        empty_line_after_magic_comment,
+        empty_lines,
+        leading_empty_lines,
     }
 }
 
@@ -962,6 +1021,7 @@ mod tests {
             0, 2, // access_modifier_indentation: style (indent) / indentation_width (2)
             2, // assignment_indentation: indentation_width (default 2)
             0, // stabby_lambda_parentheses: style (require_parentheses)
+            1, 1, // empty_comment: allow_border / allow_margin (defaults)
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -2068,6 +2128,30 @@ mod tests {
                 (a.start_offset, a.end_offset, &a.message, a.insert, a.pos, a.n),
                 (b.start_offset, b.end_offset, &b.message, b.insert, b.pos, b.n)
             );
+        }
+    }
+
+    /// `Layout/EmptyLines` merged into the shared walk must report exactly
+    /// what its standalone entry point reports, over a source that exercises
+    /// a basic blank gap between statements, a string literal whose embedded
+    /// blank lines must NOT trigger (per-line `tSTRING_CONTENT`), a percent
+    /// array where the gap inside DOES trigger (no per-line tokens), and a
+    /// gap inside a multi-line def.
+    #[test]
+    fn shared_walk_matches_standalone_empty_lines() {
+        let src = "a = 1\n\n\nb = 2\n\
+                   x = \"line\n\n\nstring\"\n\
+                   y = %w[a\n\n\nb]\n\
+                   def foo\n  bar\n\n\n  baz\nend\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::empty_lines::check_empty_lines(src.as_bytes());
+        assert!(!alone.is_empty());
+        assert_eq!(bundle.empty_lines.len(), alone.len());
+        for (a, b) in bundle.empty_lines.iter().zip(&alone) {
+            assert_eq!((a.start, a.end), (b.start, b.end));
         }
     }
 

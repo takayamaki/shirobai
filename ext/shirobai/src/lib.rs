@@ -1113,7 +1113,10 @@ fn register_bundle_config(
 /// 56 assignment_indentation / 57 redundant_self_assignment /
 /// 58 colon_method_call / 59 stabby_lambda_parentheses /
 /// 60 unreachable_code / 61 hash_transform_keys /
-/// 62 ambiguous_block_association
+/// 62 ambiguous_block_association /
+/// 63 empty_line_after_guard_clause /
+/// 64 empty_comment / 65 empty_line_after_magic_comment /
+/// 66 empty_lines / 67 leading_empty_lines
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1218,8 +1221,88 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_ambiguous_block_association(
             r.ambiguous_block_association,
         ))?;
+        ary.push(map_empty_line_after_guard_clause(
+            r.empty_line_after_guard_clause,
+        ))?;
+        ary.push(map_empty_comment(r.empty_comment))?;
+        ary.push(map_empty_line_after_magic_comment(
+            r.empty_line_after_magic_comment,
+        ))?;
+        ary.push(map_empty_lines_offenses(r.empty_lines))?;
+        ary.push(map_leading_empty_lines(r.leading_empty_lines))?;
         Ok(ary)
     })
+}
+
+/// `Layout/EmptyLineAfterGuardClause`: `[[offense_start, offense_end,
+/// ac_anchor_first_line_start, ac_anchor_last_line], ...]`.
+fn map_empty_line_after_guard_clause(
+    v: Vec<shirobai_core::rules::empty_line_after_guard_clause::GuardClauseCandidate>,
+) -> Vec<(usize, usize, usize, usize)> {
+    v.into_iter()
+        .map(|c| {
+            (
+                c.offense_start,
+                c.offense_end,
+                c.ac_anchor_first_line_start,
+                c.ac_anchor_last_line,
+            )
+        })
+        .collect()
+}
+
+/// `Layout/EmptyComment`: `[[offense_start, offense_end, ac_start, ac_end],
+/// ...]`. `[offense_start, offense_end)` is the comment range stock reports
+/// (matches `comment.source_range`; CRLF trailing `\r` already snapped off);
+/// `[ac_start, ac_end)` is the range the wrapper passes to
+/// `corrector.remove` (whole-line including the final newline, OR the
+/// comment with its leading horizontal whitespace when the comment shares a
+/// line with earlier code).
+fn map_empty_comment(
+    v: Vec<shirobai_core::rules::empty_comment::EmptyCommentOffense>,
+) -> Vec<(usize, usize, usize, usize)> {
+    v.into_iter()
+        .map(|o| (o.offense_start, o.offense_end, o.ac_start, o.ac_end))
+        .collect()
+}
+
+/// `Layout/EmptyLineAfterMagicComment`: `[[start, end, line_1based], ...]`
+/// for every comment that appears before the file's first AST statement (or
+/// for every comment when the AST is empty). `[start, end)` is the comment's
+/// parser-gem `source_range` (CRLF trailing `\r` already snapped off). The
+/// Ruby wrapper filters by `MagicComment.parse(text).any?`, picks the last
+/// matching candidate, and builds the offense / corrector around it.
+fn map_empty_line_after_magic_comment(
+    v: Vec<shirobai_core::rules::empty_line_after_magic_comment::MagicCommentCandidate>,
+) -> Vec<(usize, usize, usize)> {
+    v.into_iter()
+        .map(|c| (c.start, c.end, c.line))
+        .collect()
+}
+
+/// `Layout/EmptyLines`: `[[start, end], ...]`. `[start, end)` is the 1-byte
+/// `source_range(buffer, line, 0)` the wrapper passes to both `add_offense`
+/// and `corrector.remove`. Named with the `_offenses` suffix because the
+/// other `map_empty_lines` in this file maps the `empty_lines_around_body`
+/// family's offense shape.
+fn map_empty_lines_offenses(
+    v: Vec<shirobai_core::rules::empty_lines::EmptyLinesOffense>,
+) -> Vec<(usize, usize)> {
+    v.into_iter().map(|o| (o.start, o.end)).collect()
+}
+
+/// `Layout/LeadingEmptyLines`: at most one offense per file. Tuple shape
+/// `(start, end, ac_start, ac_end)`: `[start, end)` is the first lexical
+/// token's source range (the offense range stock yields to `add_offense`);
+/// `[ac_start, ac_end)` = `[0, token.begin_pos)` is the leading-blank range
+/// the corrector removes. Wrapped in a 0-or-1-element `Vec` for a uniform
+/// Ruby-side shape.
+fn map_leading_empty_lines(
+    v: Option<shirobai_core::rules::leading_empty_lines::LeadingEmptyLinesOffense>,
+) -> Vec<(usize, usize, usize, usize)> {
+    v.into_iter()
+        .map(|o| (o.start, o.end, o.ac_start, o.ac_end))
+        .collect()
 }
 
 /// Ruby entry point for `Lint/Debugger`. Takes the source, the flattened
@@ -2009,6 +2092,77 @@ fn check_empty_line_between_defs(
     )
 }
 
+/// Ruby entry point for `Layout/EmptyLineAfterGuardClause`. Returns one entry
+/// per candidate offense: `[[offense_start, offense_end,
+/// ac_anchor_first_line_start, ac_anchor_last_line], ...]`. The Ruby wrapper
+/// finishes the directive-comment check (`# rubocop:enable` / `# :nocov:` /
+/// `# simplecov:disable`|`enable`) using `processed_source.comment_at_line`
+/// and `DirectiveComment#enabled?`.
+fn check_empty_line_after_guard_clause(
+    source: RString,
+) -> Vec<(usize, usize, usize, usize)> {
+    shirobai_core::rules::empty_line_after_guard_clause::check_empty_line_after_guard_clause(
+        bytes(&source),
+    )
+    .into_iter()
+    .map(|c| {
+        (
+            c.offense_start,
+            c.offense_end,
+            c.ac_anchor_first_line_start,
+            c.ac_anchor_last_line,
+        )
+    })
+    .collect()
+}
+
+/// Ruby entry point for `Layout/EmptyComment` (standalone fallback). Takes
+/// the source and the two config flags (`AllowBorderComment` /
+/// `AllowMarginComment`). Returns the shape documented on `map_empty_comment`.
+fn check_empty_comment(
+    source: RString,
+    allow_border_comment: bool,
+    allow_margin_comment: bool,
+) -> Vec<(usize, usize, usize, usize)> {
+    let cfg = shirobai_core::rules::empty_comment::Config {
+        allow_border_comment,
+        allow_margin_comment,
+    };
+    map_empty_comment(shirobai_core::rules::empty_comment::check_empty_comment(
+        bytes(&source),
+        cfg,
+    ))
+}
+
+/// Ruby entry point for `Layout/EmptyLineAfterMagicComment` (standalone
+/// fallback, config-less). Returns the shape documented on
+/// `map_empty_line_after_magic_comment`.
+fn check_empty_line_after_magic_comment(
+    source: RString,
+) -> Vec<(usize, usize, usize)> {
+    map_empty_line_after_magic_comment(
+        shirobai_core::rules::empty_line_after_magic_comment::check_empty_line_after_magic_comment(
+            bytes(&source),
+        ),
+    )
+}
+
+/// Ruby entry point for `Layout/EmptyLines` (standalone fallback,
+/// config-less). Returns the shape documented on `map_empty_lines`.
+fn check_empty_lines(source: RString) -> Vec<(usize, usize)> {
+    map_empty_lines_offenses(shirobai_core::rules::empty_lines::check_empty_lines(
+        bytes(&source),
+    ))
+}
+
+/// Ruby entry point for `Layout/LeadingEmptyLines` (no config). Returns a
+/// 0-or-1-element Vec (see `map_leading_empty_lines`).
+fn check_leading_empty_lines(source: RString) -> Vec<(usize, usize, usize, usize)> {
+    map_leading_empty_lines(
+        shirobai_core::rules::leading_empty_lines::check_leading_empty_lines(bytes(&source)),
+    )
+}
+
 /// Ruby entry point for `Layout/EmptyLinesAroundArguments` (no config). Returns
 /// the shape documented on `map_empty_lines_around_arguments`.
 fn check_empty_lines_around_arguments(source: RString) -> Vec<(usize, usize)> {
@@ -2481,6 +2635,26 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_empty_lines_around_arguments",
         function!(check_empty_lines_around_arguments, 1),
+    )?;
+    module.define_module_function(
+        "check_empty_line_after_guard_clause",
+        function!(check_empty_line_after_guard_clause, 1),
+    )?;
+    module.define_module_function(
+        "check_empty_comment",
+        function!(check_empty_comment, 3),
+    )?;
+    module.define_module_function(
+        "check_empty_line_after_magic_comment",
+        function!(check_empty_line_after_magic_comment, 1),
+    )?;
+    module.define_module_function(
+        "check_empty_lines",
+        function!(check_empty_lines, 1),
+    )?;
+    module.define_module_function(
+        "check_leading_empty_lines",
+        function!(check_leading_empty_lines, 1),
     )?;
     module.define_module_function(
         "check_space_around_method_call_operator",

@@ -170,6 +170,13 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Layout::EmptyLineBetweenDefs,
       "def a\nend\ndef b\nend\n"
     ],
+    # A guard clause (`return if ...`) followed by a non-blank line: the
+    # offense carries an `insert_after(range, "\n")` corrector (correctable).
+    "Layout/EmptyLineAfterGuardClause" => [
+      RuboCop::Cop::Layout::EmptyLineAfterGuardClause,
+      Shirobai::Cop::Layout::EmptyLineAfterGuardClause,
+      "def foo\n  return if x\n  bar\nend\n"
+    ],
     "Layout/EmptyLinesAroundArguments" => [
       RuboCop::Cop::Layout::EmptyLinesAroundArguments,
       Shirobai::Cop::Layout::EmptyLinesAroundArguments,
@@ -389,6 +396,38 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Lint::AmbiguousBlockAssociation,
       Shirobai::Cop::Lint::AmbiguousBlockAssociation,
       "some_method a { |el| puts el }\n"
+    ],
+    # A lonely empty `#` line: stock emits a `corrector.remove(range_by_whole_lines)`
+    # corrector (correctable). Guards that the wrapper attaches the corrector block
+    # in lint mode like stock.
+    "Layout/EmptyComment" => [
+      RuboCop::Cop::Layout::EmptyComment,
+      Shirobai::Cop::Layout::EmptyComment,
+      "#\n"
+    ],
+    # A magic comment immediately followed by code: stock yields a
+    # `corrector.insert_before(range, "\n")` corrector (correctable). Guards
+    # that the wrapper attaches the corrector block in lint mode like stock.
+    "Layout/EmptyLineAfterMagicComment" => [
+      RuboCop::Cop::Layout::EmptyLineAfterMagicComment,
+      Shirobai::Cop::Layout::EmptyLineAfterMagicComment,
+      "# frozen_string_literal: true\nclass Foo; end\n"
+    ],
+    # Two consecutive blank lines: stock yields a `corrector.remove(range)`
+    # corrector (correctable). Guards that the wrapper attaches the corrector
+    # block in lint mode like stock.
+    "Layout/EmptyLines" => [
+      RuboCop::Cop::Layout::EmptyLines,
+      Shirobai::Cop::Layout::EmptyLines,
+      "a = 1\n\n\nb = 2\n"
+    ],
+    # A leading blank line before a class: stock yields a `corrector.remove(range)`
+    # corrector (correctable). Guards that the wrapper attaches the corrector
+    # block in lint mode like stock.
+    "Layout/LeadingEmptyLines" => [
+      RuboCop::Cop::Layout::LeadingEmptyLines,
+      Shirobai::Cop::Layout::LeadingEmptyLines,
+      "\nclass Foo\nend\n"
     ]
   }
 
