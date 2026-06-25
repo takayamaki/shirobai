@@ -116,8 +116,8 @@ post-cluster HEAD on the corpus's own `.rubocop.yml`).
   a no-op semantically, but it costs CPU.
 - **Why it was reverted**: the pre-walk overhead scales with file size. On
   Discourse (10,519 files) it added enough per-file cost that the cluster's
-  cumulative paired bench against `main` showed a 0.75s regression on
-  Discourse and a 0.36s regression on Mastodon. The per-cop saving was not
+  cumulative paired bench against `main` showed a clear regression on
+  Discourse and a smaller one on Mastodon. The per-cop saving was not
   large enough to offset the pre-walk cost.
 
 ### `Layout/EmptyLinesAroundAttributeAccessor`
@@ -126,8 +126,8 @@ post-cluster HEAD on the corpus's own `.rubocop.yml`).
 - **What we tried**: shared-walk cop matching stock's
   `on_send`-then-look-at-next-sibling pattern, with config-aware
   `IgnoreClasses` handling.
-- **Why it was reverted**: the per-cop paired bench on Mastodon was -0.31s
-  (regression). With the cluster's other regressors dropped, this cop's
+- **Why it was reverted**: the per-cop paired bench on Mastodon showed a
+  regression. With the cluster's other regressors dropped, this cop's
   cumulative contribution was still net-negative.
 
 ### `Layout/InitialIndentation`
@@ -141,7 +141,51 @@ post-cluster HEAD on the corpus's own `.rubocop.yml`).
   `&.`, `**`, `..`, `...`).
 - **Why it was reverted**: the byte-width lexer ran on every file regardless
   of whether the file actually had any offense, and the per-file overhead was
-  disproportionate to the saving. Per-cop paired bench on Mastodon was -0.31s.
+  disproportionate to the saving. Per-cop paired bench on Mastodon showed a
+  regression.
+
+### Token-spacing cluster (6 cops)
+
+`Layout/ExtraSpacing`, `Layout/SpaceInsideParens`, `Layout/SpaceBeforeComma`,
+`Layout/SpaceAfterComma`, `Layout/SpaceAroundOperators` (AllowForAlignment
+path), `Layout/SpaceBeforeFirstArg`.
+
+- **Where**: branch isolated from `main` from the start (2026-06-14), never
+  merged.
+- **What we tried**: a shared token-scan rule built on top of a
+  parser-gem-compatible token stream reconstructed from prism's lex output.
+  All six cops share the token pass. The three AST-only siblings that don't
+  depend on tokens (`SpaceAroundKeyword`, `SpaceInsideBlockBraces`,
+  `SpaceAroundMethodCallOperator`) shipped separately and are in the
+  Implemented list.
+- **Why it was reverted**: stock RuboCop gets the parser-gem token stream
+  for free as a by-product of its parse. The prism-based port has no such
+  stream and has to spend an extra per-file pass to manufacture one — the
+  "lex tax". The cluster's paired bench against `main` was net-negative even
+  though detection and autocorrect matched stock byte-for-byte. Recovering
+  the saving requires a parse-and-lex single-pass overhaul of the parsing
+  layer, which is a much larger investment than the cluster itself.
+
+### `Style/RedundantBegin`
+
+- **Where**: branch isolated from `main`, never merged (2026-06-17).
+- **What we tried**: drop-in port of the redundant `begin` / `end` removal
+  cop.
+- **Why it was reverted**: detection over-fired by 5 offenses across the
+  verification corpora — drop-in compat violation. Reverted regardless of
+  speed.
+
+### `Style/RedundantPercentQ` / `Lint/RedundantStringCoercion`
+
+- **Where**: branch isolated from `main`, never merged (2026-06-17). Bundled
+  with `Style/RedundantBegin` as a three-cop bulk candidate.
+- **What we tried**: drop-in ports of redundant-removal cops grouped with
+  `RedundantBegin`.
+- **Why it was reverted**: per-cop parity was clean for these two, but the
+  three-cop bulk paired bench against `main` showed no signal —
+  round-to-round sign-consistency was zero. With `RedundantBegin` dropped
+  for the parity failure, the remaining two were too small to justify
+  shipping on their own. Worth re-evaluating in a future cluster.
 
 ## Notes on cop selection
 
