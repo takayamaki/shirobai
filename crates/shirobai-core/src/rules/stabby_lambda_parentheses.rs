@@ -155,6 +155,13 @@ impl Visitor<'_> {
 }
 
 impl super::dispatch::Rule for Visitor<'_> {
+    fn interest(&self) -> super::dispatch::Interest {
+        use super::dispatch::Interest;
+        Interest(
+            Interest::ENTER_LAMBDA,
+        )
+    }
+    
     fn enter(&mut self, node: &Node<'_>) {
         if let Some(n) = node.as_lambda_node() {
             self.handle_lambda(&n);

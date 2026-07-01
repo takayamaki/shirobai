@@ -311,6 +311,15 @@ impl<'pr> Visit<'pr> for Visitor<'_> {
 /// `call` field — an `=~` operator call, which never carries a block literal,
 /// so `process_call` skips it anyway.
 impl super::dispatch::Rule for Visitor<'_> {
+    fn interest(&self) -> super::dispatch::Interest {
+        use super::dispatch::Interest;
+        Interest(
+            Interest::ENTER_CALL
+                    | Interest::ENTER_LAMBDA
+                    | Interest::ENTER_SUPER,
+        )
+    }
+    
     fn enter(&mut self, node: &Node<'_>) {
         if let Some(call) = node.as_call_node() {
             self.process_call(&call);

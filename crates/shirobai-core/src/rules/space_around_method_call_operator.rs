@@ -225,6 +225,15 @@ impl<'pr> Visit<'pr> for Visitor<'_> {
 /// `parent` field, walked generically; assignment-target const paths are a
 /// different node type and never match `as_constant_path_node`).
 impl super::dispatch::Rule for Visitor<'_> {
+    fn interest(&self) -> super::dispatch::Interest {
+        use super::dispatch::Interest;
+        Interest(
+            Interest::ENTER_CALL
+                    | Interest::ENTER_CONST_PATH
+                    | Interest::ENTER_WRITE,
+        )
+    }
+    
     fn enter(&mut self, node: &Node<'_>) {
         if let Some(call) = node.as_call_node() {
             self.process_send(&call);

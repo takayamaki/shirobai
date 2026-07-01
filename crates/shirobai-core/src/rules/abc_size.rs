@@ -142,6 +142,14 @@ impl<'pr> Visit<'pr> for AbcFinder<'_> {
 /// the `=~` call reached through that typed field is never a `define_method`
 /// block, so missing it is harmless.
 impl super::dispatch::Rule for AbcFinder<'_> {
+    fn interest(&self) -> super::dispatch::Interest {
+        use super::dispatch::Interest;
+        Interest(
+            Interest::ENTER_CALL
+                    | Interest::ENTER_DEF,
+        )
+    }
+    
     fn enter(&mut self, node: &Node<'_>) {
         if let Some(def) = node.as_def_node() {
             self.process_def(&def);

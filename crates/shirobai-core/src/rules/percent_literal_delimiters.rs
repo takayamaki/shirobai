@@ -578,6 +578,15 @@ impl<'pr> Visit<'pr> for Visitor<'_> {
 }
 
 impl super::dispatch::Rule for Visitor<'_> {
+    fn interest(&self) -> super::dispatch::Interest {
+        use super::dispatch::Interest;
+        Interest(
+            Interest::ENTER_ISTRING
+                    | Interest::ENTER_LITERAL
+                    | Interest::LEAF,
+        )
+    }
+    
     fn enter(&mut self, node: &Node<'_>) {
         match node {
             Node::InterpolatedStringNode { .. } => {

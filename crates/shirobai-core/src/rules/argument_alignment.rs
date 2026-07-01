@@ -236,6 +236,13 @@ fn braceless_hash_pairs(node: &Node<'_>) -> Option<Vec<(usize, usize)>> {
 }
 
 impl super::dispatch::Rule for Visitor<'_> {
+    fn interest(&self) -> super::dispatch::Interest {
+        use super::dispatch::Interest;
+        Interest(
+            Interest::ENTER_CALL,
+        )
+    }
+    
     fn enter(&mut self, node: &Node<'_>) {
         if let Some(c) = node.as_call_node() {
             self.process_send(&c);

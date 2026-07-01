@@ -227,6 +227,13 @@ impl<'pr> Visit<'pr> for Visitor<'_> {
 /// `MatchWriteNode`'s concretely-typed `call` field — an `=~` operator call,
 /// whose name is never `+`/`<<`, so `process_call` rejects it anyway.
 impl super::dispatch::Rule for Visitor<'_> {
+    fn interest(&self) -> super::dispatch::Interest {
+        use super::dispatch::Interest;
+        Interest(
+            Interest::ENTER_CALL,
+        )
+    }
+    
     fn enter(&mut self, node: &Node<'_>) {
         if node.as_call_node().is_some() {
             self.process_call(node);

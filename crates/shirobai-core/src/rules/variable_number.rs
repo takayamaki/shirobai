@@ -166,6 +166,14 @@ impl Visitor<'_> {
 }
 
 impl super::dispatch::Rule for Visitor<'_> {
+    fn interest(&self) -> super::dispatch::Interest {
+        use super::dispatch::Interest;
+        Interest(
+            Interest::ENTER_ALL
+                    | Interest::LEAF,
+        )
+    }
+    
     fn enter(&mut self, node: &Node<'_>) {
         self.process(node);
     }

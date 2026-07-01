@@ -284,6 +284,15 @@ impl<'a> Visitor<'a> {
 }
 
 impl super::dispatch::Rule for Visitor<'_> {
+    fn interest(&self) -> super::dispatch::Interest {
+        use super::dispatch::Interest;
+        Interest(
+            Interest::ENTER_CLASS_MOD
+                    | Interest::ENTER_BLOCK
+                    | Interest::ENTER_LAMBDA,
+        )
+    }
+    
     fn enter(&mut self, node: &Node<'_>) {
         if let Some(n) = node.as_class_node() {
             self.handle_class(&n);

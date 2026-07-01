@@ -729,6 +729,13 @@ fn is_hash_const(node: &Node<'_>) -> bool {
 }
 
 impl super::dispatch::Rule for Visitor<'_> {
+    fn interest(&self) -> super::dispatch::Interest {
+        use super::dispatch::Interest;
+        Interest(
+            Interest::ENTER_CALL,
+        )
+    }
+    
     fn enter(&mut self, node: &Node<'_>) {
         if let Some(call) = node.as_call_node() {
             self.process_call(&call);

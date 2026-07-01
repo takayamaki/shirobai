@@ -188,6 +188,14 @@ impl<'pr> Visit<'pr> for Finder<'_> {
 /// `MatchWriteNode`'s concretely-typed `call` field — an `=~` operator call,
 /// which is never a `define_method`, so `process_call` skips it anyway.
 impl super::dispatch::Rule for Finder<'_> {
+    fn interest(&self) -> super::dispatch::Interest {
+        use super::dispatch::Interest;
+        Interest(
+            Interest::ENTER_CALL
+                    | Interest::ENTER_DEF,
+        )
+    }
+    
     fn enter(&mut self, node: &Node<'_>) {
         if let Some(def) = node.as_def_node() {
             self.process_def(&def);

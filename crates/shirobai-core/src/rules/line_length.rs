@@ -297,6 +297,14 @@ impl<'pr> Visit<'pr> for HeredocVisitor<'_> {
 /// their interpolated counterparts are branch nodes whose parts the shared
 /// walk recurses into, exactly like the typed visits above.
 impl super::dispatch::Rule for HeredocVisitor<'_> {
+    fn interest(&self) -> super::dispatch::Interest {
+        use super::dispatch::Interest;
+        Interest(
+            Interest::ENTER_ISTRING
+                    | Interest::LEAF,
+        )
+    }
+    
     fn enter(&mut self, node: &Node<'_>) {
         if let Some(s) = node.as_interpolated_string_node() {
             self.process_interpolated_string(&s);
