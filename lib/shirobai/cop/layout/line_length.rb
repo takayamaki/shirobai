@@ -42,6 +42,19 @@ module Shirobai
           [cop_config["Max"] || 120, tab_width, !!cop_config["SplitStrings"]]
         end
 
+        # `LineLengthHelp#uri_regexp` memoizes per cop instance, and the real
+        # CLI builds a fresh cop per file — so stock rebuilds the same Regexp
+        # (an expensive `URI` parser call) for every file with a candidate
+        # line. The regexp depends only on the cop's `URISchemes`, so share it
+        # per cop-config object instead.
+        def self.uri_regexp_for(cop_config)
+          @uri_regexp_cache ||= {}.compare_by_identity
+          @uri_regexp_cache[cop_config] ||= begin
+            parser = defined?(URI::RFC2396_PARSER) ? URI::RFC2396_PARSER : URI::DEFAULT_PARSER
+            parser.make_regexp(cop_config["URISchemes"])
+          end
+        end
+
         def on_new_investigation
           candidates = Dispatch.offenses_for(processed_source, config, :line_length)
 
@@ -64,6 +77,10 @@ module Shirobai
         end
 
         private
+
+        def uri_regexp
+          @uri_regexp ||= self.class.uri_regexp_for(cop_config)
+        end
 
         # Install the per-line autocorrection data (insertion byte offset and,
         # for `SplitStrings`, the string delimiter). Mirrors upstream's

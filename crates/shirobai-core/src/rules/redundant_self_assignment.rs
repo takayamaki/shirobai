@@ -403,6 +403,14 @@ impl<'pr, 's> Visit<'pr> for RedundantSelfAssignmentVisitor<'s> {
 }
 
 impl<'s> super::dispatch::Rule for RedundantSelfAssignmentVisitor<'s> {
+    fn interest(&self) -> super::dispatch::Interest {
+        use super::dispatch::Interest;
+        Interest(
+            Interest::ENTER_WRITE
+                    | Interest::ENTER_CALL,
+        )
+    }
+    
     fn enter(&mut self, node: &Node<'_>) {
         if let Some(n) = node.as_local_variable_write_node() {
             self.check_lvasgn(&n);

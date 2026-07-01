@@ -142,6 +142,13 @@ impl<'pr> Visit<'pr> for ColonMethodCallVisitor {
 }
 
 impl super::dispatch::Rule for ColonMethodCallVisitor {
+    fn interest(&self) -> super::dispatch::Interest {
+        use super::dispatch::Interest;
+        Interest(
+            Interest::ENTER_CALL,
+        )
+    }
+    
     fn enter(&mut self, node: &Node<'_>) {
         if let Some(call) = node.as_call_node() {
             self.check_call(&call);
