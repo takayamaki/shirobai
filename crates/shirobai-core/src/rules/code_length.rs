@@ -21,9 +21,11 @@
 //!   the enclosing call's `(` / `)` that do not coincide with the hash's own
 //!   span — so the fold removes the brace-substitute lines too.
 
+use std::rc::Rc;
+
 use ruby_prism::{Location, Node, Visit};
 
-use super::line_index::LineIndex;
+use super::line_index::{self, LineIndex};
 
 /// Which constructs `CountAsOne` folds. Unknown types are ignored here; the
 /// Ruby side raises `RuboCop::Warning` for them.
@@ -60,7 +62,7 @@ pub struct CodeLength<'a> {
     source: &'a [u8],
     count_comments: bool,
     fold: Fold,
-    index: LineIndex,
+    index: Rc<LineIndex>,
 }
 
 impl<'a> CodeLength<'a> {
@@ -69,7 +71,10 @@ impl<'a> CodeLength<'a> {
             source,
             count_comments,
             fold,
-            index: LineIndex::new(source),
+            // Shared with the other cops on this source: BlockLength and
+            // MethodLength each build a calculator per file, and a private
+            // index would be a redundant full-source scan for each.
+            index: line_index::with_line_index(source, Rc::clone),
         }
     }
 
@@ -80,6 +85,25 @@ impl<'a> CodeLength<'a> {
     /// `irrelevant_line?`: blank, or (without `CountComments`) a comment line.
     fn irrelevant(&self, line: &str) -> bool {
         line.trim().is_empty() || (!self.count_comments && line.trim_start().starts_with('#'))
+    }
+
+    /// Sound fast reject: `true` when the measured body length provably cannot
+    /// exceed `max`, without measuring. Everything in [`Self::body_length`]
+    /// only ever *shrinks* the count relative to the body's physical line
+    /// span — irrelevant-line filtering and `CountAsOne` folds subtract, and
+    /// the implicit-`begin` / single-statement normalizations narrow the
+    /// span — except for the heredoc extension, which measures through lines
+    /// past the body's own end. A heredoc reaches those lines only via a
+    /// `<<~` / `<<-` / `<<` marker inside the body's source, so a body whose
+    /// span already fits in `max` and whose slice has no `<<` cannot come out
+    /// over `max`. `false` only means "measure precisely", never "over".
+    pub fn cannot_exceed(&self, body: Option<&Node<'_>>, max: usize) -> bool {
+        let Some(body) = body else { return true };
+        let loc = body.location();
+        let (lo, hi) = (loc.start_offset(), loc.end_offset());
+        let last = hi.max(lo + 1) - 1;
+        let span = self.index.line_of(last) - self.index.line_of(lo) + 1;
+        span <= max && !self.source[lo..hi].windows(2).any(|w| w == b"<<")
     }
 
     /// Body length of a definition body, matching `CodeLengthCalculator#calculate`:

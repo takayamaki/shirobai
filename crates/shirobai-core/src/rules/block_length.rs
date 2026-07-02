@@ -211,6 +211,7 @@ impl Visitor<'_> {
     fn process_call(&mut self, node: &ruby_prism::CallNode<'_>) {
         if let Some(block) = node.block()
             && let Some(block_node) = block.as_block_node()
+            && !self.calc.cannot_exceed(block_node.body().as_ref(), self.max)
             && !self.is_class_constructor(node)
         {
             let length = self.body_length(block_node.body());
@@ -234,6 +235,9 @@ impl Visitor<'_> {
 
     /// `on_block` for `-> { ... }` lambda literals.
     fn process_lambda(&mut self, node: &ruby_prism::LambdaNode<'_>) {
+        if self.calc.cannot_exceed(node.body().as_ref(), self.max) {
+            return;
+        }
         let length = self.body_length(node.body());
         if length > self.max && !self.excluded("lambda", "") {
             let loc = node.location();
@@ -261,6 +265,9 @@ impl Visitor<'_> {
         let Some(block_node) = block.as_block_node() else {
             return;
         };
+        if self.calc.cannot_exceed(block_node.body().as_ref(), self.max) {
+            return;
+        }
         let length = self.body_length(block_node.body());
         if length > self.max && !self.excluded("super", "") {
             self.push_candidate(
@@ -589,5 +596,34 @@ mod tests {
         let got =
             check_block_length_filtered(LONG_BLOCK.as_bytes(), 2, false, &[], &allowed, false);
         assert_eq!(got.len(), 1);
+    }
+
+    // The fast reject (span <= max and no `<<` in the body) must not hide a
+    // heredoc that extends the measured lines past the body's own span: the
+    // body statement is one physical line, but the heredoc content pushes the
+    // count to 5 (marker line + 3 body lines + closing delimiter line).
+    #[test]
+    fn heredoc_extension_still_measured_when_span_fits_max() {
+        let src = "foo do\n  x = <<~S\n    a\n    b\n    c\n  S\nend";
+        let got = run(src, 3, false);
+        assert_eq!(got.lengths, vec![5]);
+        assert!(run(src, 5, false).lengths.is_empty());
+    }
+
+    // A `<<` shift/append operator only makes the fast reject conservative
+    // (it falls back to the precise count), never wrong.
+    #[test]
+    fn shift_operator_body_is_not_an_offense() {
+        let src = "foo do\n  a << b\nend";
+        assert!(run(src, 1, false).lengths.is_empty());
+    }
+
+    // Boundary around the fast reject: a 3-line body is skipped at max=3 and
+    // measured (and reported) at max=2.
+    #[test]
+    fn span_boundary_at_max() {
+        let src = "foo do\n  a = 1\n  a = 2\n  a = 3\nend";
+        assert!(run(src, 3, false).lengths.is_empty());
+        assert_eq!(run(src, 2, false).lengths, vec![3]);
     }
 }
