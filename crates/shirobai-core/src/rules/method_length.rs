@@ -96,6 +96,9 @@ impl Finder<'_> {
     /// `on_def` / `on_defs`: measure the `def` body. An empty-bodied method has
     /// length 0 and never exceeds a non-negative `Max`.
     fn process_def(&mut self, node: &ruby_prism::DefNode<'_>) {
+        if self.calc.cannot_exceed(node.body().as_ref(), self.max) {
+            return;
+        }
         let length = self.calc.body_length(node.body());
         if length > self.max {
             let loc = node.location();
@@ -128,6 +131,9 @@ impl Finder<'_> {
         else {
             return;
         };
+        if self.calc.cannot_exceed(block.body().as_ref(), self.max) {
+            return;
+        }
         let length = self.calc.body_length(block.body());
         if length <= self.max {
             return;
@@ -407,5 +413,26 @@ mod tests {
         let got = run(src, 2, false);
         // The outer block (8 body lines) and the inner def (3) both exceed 2.
         assert_eq!(got.lengths.len(), 2);
+    }
+
+    // The fast reject (span <= max and no `<<` in the body) must not hide a
+    // heredoc that extends the measured lines past the body's own span: the
+    // def body is one physical line, but the heredoc content pushes the count
+    // to 5 (marker line + 3 body lines + closing delimiter line).
+    #[test]
+    fn heredoc_extension_still_measured_when_span_fits_max() {
+        let src = "def m\n  x = <<~S\n    a\n    b\n    c\n  S\nend";
+        let got = run(src, 3, false);
+        assert_eq!(got.lengths, vec![5]);
+        assert!(run(src, 5, false).lengths.is_empty());
+    }
+
+    // Boundary around the fast reject: a 3-line body is skipped at max=3 and
+    // measured (and reported) at max=2.
+    #[test]
+    fn span_boundary_at_max() {
+        let src = "def m\n  a = 1\n  a = 2\n  a = 3\nend";
+        assert!(run(src, 3, false).lengths.is_empty());
+        assert_eq!(run(src, 2, false).lengths, vec![3]);
     }
 }
