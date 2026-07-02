@@ -123,6 +123,11 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     "Metrics/PerceivedComplexity" => "def m\n#{(1..9).map { |i| "  x#{i} if c#{i}\n" }.join}end\n",
     # start/fin/head_end (default Max 17, so 18 assignments => vector <18, 0, 0>).
     "Metrics/AbcSize" => "def m\n#{(1..18).map { |i| "  v#{i} = #{i}\n" }.join}end\n",
+    # start/fin/head_end (default Max 100 => 101 counted lines; no autocorrect).
+    "Metrics/ClassLength" => "class Test\n#{"  x = 1\n" * 101}end\n",
+    # start/fin/head_end for the module and the `Foo = Module.new do` name range.
+    "Metrics/ModuleLength" =>
+      "module Test\n#{"  x = 1\n" * 101}end\nFoo = Module.new do\n#{"  x = 1\n" * 101}end\n",
     # start/fin (fb_start/fb_end are covered by the forbidden-identifier case below).
     "Naming/MethodName" => "def fooBar; end\n",
     # start/fin.

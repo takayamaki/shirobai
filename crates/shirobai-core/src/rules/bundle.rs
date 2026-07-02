@@ -12,6 +12,7 @@ use super::{
     abc_size, access_modifier_indentation, ambiguous_block_association, argument_alignment,
     assignment_indentation,
     block_delimiters, block_length, block_nesting,
+    class_length,
     closing_parenthesis_indentation, colon_method_call, complexity, debugger, def_end_alignment,
     dot_position,
     empty_comment,
@@ -26,7 +27,7 @@ use super::{
     indentation_consistency, indentation_width,
     leading_empty_lines,
     line_end_concatenation, line_length,
-    line_length_breakable, method_length, method_name,
+    line_length_breakable, method_length, method_name, module_length,
     multiline_method_call_brace_layout, nested_parenthesized_calls,
     parentheses_as_grouped_expression,
     percent_literal_delimiters,
@@ -127,6 +128,8 @@ pub fn check_multiline_bundle(
 /// | 85  | stabby_lambda_parentheses style (`Style/StabbyLambdaParentheses` `EnforcedStyle`: 0 = require_parentheses, 1 = require_no_parentheses) |
 /// | 86  | empty_comment_allow_border (`Layout/EmptyComment` `AllowBorderComment`) |
 /// | 87  | empty_comment_allow_margin (`Layout/EmptyComment` `AllowMarginComment`) |
+/// | 88-89 | class_length max / count_comments (`Metrics/ClassLength` `Max` / `CountComments`) |
+/// | 90-91 | module_length max / count_comments (`Metrics/ModuleLength` `Max` / `CountComments`) |
 ///
 /// `lists` (`Vec<String>`), 20 entries:
 ///
@@ -155,6 +158,8 @@ pub fn check_multiline_bundle(
 /// | 20  | nested_parenthesized_calls_allowed_methods (`Style/NestedParenthesizedCalls` `AllowedMethods`) |
 /// | 21  | percent_literal_delimiters_pairs (`Style/PercentLiteralDelimiters` `PreferredDelimiters`, resolved to 10 two-byte strings in `[%, %i, %I, %q, %Q, %r, %s, %w, %W, %x]` order) |
 /// | 22  | ambiguous_block_association_allowed_methods (`Lint/AmbiguousBlockAssociation` `AllowedMethods`, regexp entries dropped by the Ruby wrapper which falls back to standalone when any regexp is present) |
+/// | 23  | class_length_count_as_one (`Metrics/ClassLength` `CountAsOne`) |
+/// | 24  | module_length_count_as_one (`Metrics/ModuleLength` `CountAsOne`) |
 ///
 /// `Layout/IndentationWidth`'s `allowed_lines` and `prior_ranges` are fixed to
 /// empty in the bundle: the non-empty cases (configured `AllowedPatterns`,
@@ -228,6 +233,12 @@ pub struct BundleConfig {
     pub method_length_max: usize,
     pub method_length_count_comments: bool,
     pub method_length_count_as_one: Vec<String>,
+    pub class_length_max: usize,
+    pub class_length_count_comments: bool,
+    pub class_length_count_as_one: Vec<String>,
+    pub module_length_max: usize,
+    pub module_length_count_comments: bool,
+    pub module_length_count_as_one: Vec<String>,
     pub def_end_alignment: def_end_alignment::Config,
     pub multiline_method_call_brace_style: u8,
     pub nested_parenthesized_calls_allowed_methods: Vec<String>,
@@ -243,8 +254,8 @@ pub struct BundleConfig {
 // in the `nums` / `lists` packing; the bundle still computes its slot in the
 // shared walk (see `check_all_bundle` below).
 
-const NUMS_LEN: usize = 88;
-const LISTS_LEN: usize = 23;
+const NUMS_LEN: usize = 92;
+const LISTS_LEN: usize = 25;
 
 impl BundleConfig {
     /// Build a config from the flat wire format (see the struct docs for the
@@ -402,6 +413,10 @@ impl BundleConfig {
             method_length_max: nums[78] as usize,
             method_length_count_comments: nums[79] != 0,
             method_length_count_as_one: next_list(),
+            class_length_max: nums[88] as usize,
+            class_length_count_comments: nums[89] != 0,
+            module_length_max: nums[90] as usize,
+            module_length_count_comments: nums[91] != 0,
             def_end_alignment: def_end_alignment::Config {
                 style: nums[80] as u8,
             },
@@ -425,6 +440,10 @@ impl BundleConfig {
                 allow_border_comment: nums[86] != 0,
                 allow_margin_comment: nums[87] != 0,
             },
+            // Struct literal order is evaluation order: these two must stay
+            // last so `next_list()` reads lists 23 / 24.
+            class_length_count_as_one: next_list(),
+            module_length_count_as_one: next_list(),
         })
     }
 }
@@ -523,6 +542,8 @@ pub struct BundleResult {
     pub space_inside_block_braces:
         Vec<space_inside_block_braces::SpaceInsideBlockBracesOffense>,
     pub method_length: Vec<method_length::MethodLengthCandidate>,
+    pub class_length: Vec<class_length::ClassLengthCandidate>,
+    pub module_length: Vec<module_length::ModuleLengthCandidate>,
     pub def_end_alignment: Vec<def_end_alignment::DefEndAlignmentRecord>,
     pub require_parentheses: Vec<require_parentheses::RequireParenthesesOffense>,
     pub self_assignment: Vec<self_assignment::SelfAssignmentOffense>,
@@ -680,6 +701,18 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         cfg.method_length_count_comments,
         &cfg.method_length_count_as_one,
     );
+    let mut cl_rule = class_length::build_rule(
+        source,
+        cfg.class_length_max,
+        cfg.class_length_count_comments,
+        &cfg.class_length_count_as_one,
+    );
+    let mut mol_rule = module_length::build_rule(
+        source,
+        cfg.module_length_max,
+        cfg.module_length_count_comments,
+        &cfg.module_length_count_as_one,
+    );
     let mut dea_rule = def_end_alignment::build_rule(source, cfg.def_end_alignment);
     let mut rp_rule = require_parentheses::build_rule();
     let mut sa_rule = self_assignment::build_rule(source);
@@ -751,6 +784,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut sak_rule,
         &mut sibb_rule,
         &mut ml_rule,
+        &mut cl_rule,
+        &mut mol_rule,
         &mut dea_rule,
         &mut rp_rule,
         &mut sa_rule,
@@ -822,6 +857,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let space_around_keyword = sak_rule.offenses;
     let space_inside_block_braces = sibb_rule.offenses;
     let method_length = ml_rule.out;
+    let class_length = cl_rule.out;
+    let module_length = mol_rule.out;
     let def_end_alignment = dea_rule.records;
     let require_parentheses = rp_rule.offenses;
     let self_assignment = sa_rule.offenses;
@@ -925,6 +962,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         space_around_keyword,
         space_inside_block_braces,
         method_length,
+        class_length,
+        module_length,
         def_end_alignment,
         require_parentheses,
         self_assignment,
@@ -1022,6 +1061,8 @@ mod tests {
             2, // assignment_indentation: indentation_width (default 2)
             0, // stabby_lambda_parentheses: style (require_parentheses)
             1, 1, // empty_comment: allow_border / allow_margin (defaults)
+            100, 0, // class_length: max(100) / count_comments
+            100, 0, // module_length: max(100) / count_comments
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -1068,6 +1109,8 @@ mod tests {
             ],
             // ambiguous_block_association: AllowedMethods (default empty).
             vec![],
+            vec![], // class_length: count_as_one
+            vec![], // module_length: count_as_one
         ];
         (nums, lists)
     }
@@ -2000,6 +2043,66 @@ mod tests {
             assert_eq!(
                 (a.start_offset, a.end_offset, a.head_end, a.length, &a.name, a.filterable),
                 (b.start_offset, b.end_offset, b.head_end, b.length, &b.name, b.filterable)
+            );
+        }
+    }
+
+    /// `Metrics/ClassLength` merged into the shared walk must report exactly
+    /// what its standalone entry point reports, over a source exercising a
+    /// plain class, a suppressed-inside-class `class << self`, a toplevel
+    /// sclass and the `Foo = Struct.new(...) do` constructor form.
+    #[test]
+    fn shared_walk_matches_standalone_class_length() {
+        let src = "class A\n  x = 1\n  x = 2\n  x = 3\nend\n\
+                   class << self\n  y = 1\n  y = 2\n  y = 3\nend\n\
+                   Foo = Struct.new(:a) do\n  z = 1\n  z = 2\n  z = 3\nend\n";
+        let (mut nums, lists) = default_packed();
+        nums[88] = 2; // class_length max
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::class_length::check_class_length(
+            src.as_bytes(),
+            cfg.class_length_max,
+            cfg.class_length_count_comments,
+            &cfg.class_length_count_as_one,
+        );
+        assert_eq!(alone.len(), 3);
+        assert!(alone.iter().any(|c| c.sclass));
+        assert_eq!(bundle.class_length.len(), alone.len());
+        for (a, b) in bundle.class_length.iter().zip(&alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.head_end, a.length, a.sclass),
+                (b.start_offset, b.end_offset, b.head_end, b.length, b.sclass)
+            );
+        }
+    }
+
+    /// `Metrics/ModuleLength` merged into the shared walk must report exactly
+    /// what its standalone entry point reports, over a plain module and the
+    /// `Foo = Module.new do` constructor form (whose offense is the constant
+    /// name).
+    #[test]
+    fn shared_walk_matches_standalone_module_length() {
+        let src = "module A\n  x = 1\n  x = 2\n  x = 3\nend\n\
+                   Foo = Module.new do\n  z = 1\n  z = 2\n  z = 3\nend\n";
+        let (mut nums, lists) = default_packed();
+        nums[90] = 2; // module_length max
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::module_length::check_module_length(
+            src.as_bytes(),
+            cfg.module_length_max,
+            cfg.module_length_count_comments,
+            &cfg.module_length_count_as_one,
+        );
+        assert_eq!(alone.len(), 2);
+        assert_eq!(bundle.module_length.len(), alone.len());
+        for (a, b) in bundle.module_length.iter().zip(&alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.head_end, a.length),
+                (b.start_offset, b.end_offset, b.head_end, b.length)
             );
         }
     }

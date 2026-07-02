@@ -85,7 +85,9 @@ module Shirobai
       empty_comment: 64,
       empty_line_after_magic_comment: 65,
       empty_lines: 66,
-      leading_empty_lines: 67
+      leading_empty_lines: 67,
+      class_length: 68,
+      module_length: 69
     }.freeze
 
     class << self
@@ -159,6 +161,8 @@ module Shirobai
         tel = Cop::Layout::TrailingEmptyLines.bundle_args(config)
         sibb = Cop::Layout::SpaceInsideBlockBraces.bundle_args(config)
         ml = Cop::Metrics::MethodLength.bundle_args(config)
+        cl = Cop::Metrics::ClassLength.bundle_args(config)
+        mol = Cop::Metrics::ModuleLength.bundle_args(config)
         dea = Cop::Layout::DefEndAlignment.bundle_args(config)
         npc = Cop::Style::NestedParenthesizedCalls.bundle_args(config)
         # Lint::ParenthesesAsGroupedExpression and Lint::UnreachableCode are
@@ -225,10 +229,13 @@ module Shirobai
           ami[0], ami[1], # AccessModifierIndentation style / indentation_width
           ai[0], # AssignmentIndentation IndentationWidth
           slp[0], # StabbyLambdaParentheses style
-          ec[0], ec[1] # EmptyComment AllowBorderComment / AllowMarginComment
+          ec[0], ec[1], # EmptyComment AllowBorderComment / AllowMarginComment
+          cl[0], num(cl[1]), # ClassLength Max / CountComments
+          mol[0], num(mol[1]) # ModuleLength Max / CountComments
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
-                 uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0], aba[0]]
+                 uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0], aba[0],
+                 cl[2], mol[2]]
         [nums, lists]
       end
 

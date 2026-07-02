@@ -193,7 +193,9 @@ fn split_dot_first_two(entry: &str) -> (Option<&str>, Option<&str>) {
 
 /// Returns the constant name when `node` is a top-level constant (`Foo` or
 /// `::Foo`), matching RuboCop's `global_const?` (`(const {nil? cbase} _)`).
-fn top_level_const_name<'a>(node: &Node<'a>) -> Option<&'a [u8]> {
+/// Shared with `Metrics/ClassLength` / `Metrics/ModuleLength`, whose
+/// `class_definition?` / `module_definition?` receivers use the same pattern.
+pub(crate) fn top_level_const_name<'a>(node: &Node<'a>) -> Option<&'a [u8]> {
     if let Some(read) = node.as_constant_read_node() {
         return Some(read.name().as_slice());
     }

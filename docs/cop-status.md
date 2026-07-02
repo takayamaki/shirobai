@@ -4,7 +4,7 @@ This document tracks which RuboCop cops shirobai has reimplemented in Rust,
 and which cops were attempted but reverted because they did not meet the
 project's drop-in compatibility and speed requirements together.
 
-## Implemented (68 cops)
+## Implemented (70 cops)
 
 shirobai replaces these cops with Rust implementations.
 Every offense position, message, and autocorrected byte matches stock RuboCop
@@ -62,13 +62,15 @@ and RuboCop itself).
 - `Lint/UselessAccessModifier`
 - `Lint/Void`
 
-### Metrics (6)
+### Metrics (8)
 
 - `Metrics/AbcSize`
 - `Metrics/BlockLength`
 - `Metrics/BlockNesting`
+- `Metrics/ClassLength`
 - `Metrics/CyclomaticComplexity`
 - `Metrics/MethodLength`
+- `Metrics/ModuleLength`
 - `Metrics/PerceivedComplexity`
 
 ### Naming (3)

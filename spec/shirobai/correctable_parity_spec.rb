@@ -165,6 +165,18 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Metrics::MethodLength,
       "def m\n#{(1..11).map { |i| "  v = #{i}" }.join("\n")}\nend\n"
     ],
+    # Pure metric cops (no autocorrect): offenses must stay `:unsupported` on
+    # both sides. Default `Max` is 100, so the bodies need 101 counted lines.
+    "Metrics/ClassLength" => [
+      RuboCop::Cop::Metrics::ClassLength,
+      Shirobai::Cop::Metrics::ClassLength,
+      "class C\n#{(1..101).map { |i| "  v = #{i}" }.join("\n")}\nend\n"
+    ],
+    "Metrics/ModuleLength" => [
+      RuboCop::Cop::Metrics::ModuleLength,
+      Shirobai::Cop::Metrics::ModuleLength,
+      "module M\n#{(1..101).map { |i| "  v = #{i}" }.join("\n")}\nend\n"
+    ],
     "Layout/EmptyLineBetweenDefs" => [
       RuboCop::Cop::Layout::EmptyLineBetweenDefs,
       Shirobai::Cop::Layout::EmptyLineBetweenDefs,

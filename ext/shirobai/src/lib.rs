@@ -69,6 +69,27 @@ fn map_method_length(
         .collect()
 }
 
+/// `Metrics/ClassLength` per-class results: `[start, end, head_end, length,
+/// sclass]`. The Ruby wrapper builds the message and skips `sclass`
+/// candidates in LSP mode (stock errors out on those instead of reporting).
+fn map_class_length(
+    v: Vec<shirobai_core::rules::class_length::ClassLengthCandidate>,
+) -> Vec<(usize, usize, usize, usize, bool)> {
+    v.into_iter()
+        .map(|c| (c.start_offset, c.end_offset, c.head_end, c.length, c.sclass))
+        .collect()
+}
+
+/// `Metrics/ModuleLength` per-module results: `[start, end, head_end,
+/// length]`. The Ruby wrapper builds the message.
+fn map_module_length(
+    v: Vec<shirobai_core::rules::module_length::ModuleLengthCandidate>,
+) -> Vec<(usize, usize, usize, usize)> {
+    v.into_iter()
+        .map(|c| (c.start_offset, c.end_offset, c.head_end, c.length))
+        .collect()
+}
+
 fn map_block_nesting(
     (offenses, deepest): (
         Vec<shirobai_core::rules::block_nesting::BlockNestingOffense>,
@@ -1116,7 +1137,8 @@ fn register_bundle_config(
 /// 62 ambiguous_block_association /
 /// 63 empty_line_after_guard_clause /
 /// 64 empty_comment / 65 empty_line_after_magic_comment /
-/// 66 empty_lines / 67 leading_empty_lines
+/// 66 empty_lines / 67 leading_empty_lines /
+/// 68 class_length / 69 module_length
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1127,7 +1149,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(68);
+        let ary = ruby.ary_new_capa(70);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -1230,6 +1252,8 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ))?;
         ary.push(map_empty_lines_offenses(r.empty_lines))?;
         ary.push(map_leading_empty_lines(r.leading_empty_lines))?;
+        ary.push(map_class_length(r.class_length))?;
+        ary.push(map_module_length(r.module_length))?;
         Ok(ary)
     })
 }
@@ -1355,6 +1379,40 @@ fn check_method_length(
     count_as_one: Vec<String>,
 ) -> Vec<(usize, usize, usize, usize, String, bool)> {
     map_method_length(shirobai_core::rules::method_length::check_method_length(
+        bytes(&source),
+        max,
+        count_comments,
+        &count_as_one,
+    ))
+}
+
+/// Ruby entry point for `Metrics/ClassLength`. Returns one entry per class
+/// definition whose measured length exceeds `max`: `[[start, end, head_end,
+/// length, sclass], ...]`.
+fn check_class_length(
+    source: RString,
+    max: usize,
+    count_comments: bool,
+    count_as_one: Vec<String>,
+) -> Vec<(usize, usize, usize, usize, bool)> {
+    map_class_length(shirobai_core::rules::class_length::check_class_length(
+        bytes(&source),
+        max,
+        count_comments,
+        &count_as_one,
+    ))
+}
+
+/// Ruby entry point for `Metrics/ModuleLength`. Returns one entry per module
+/// definition whose measured length exceeds `max`: `[[start, end, head_end,
+/// length], ...]`.
+fn check_module_length(
+    source: RString,
+    max: usize,
+    count_comments: bool,
+    count_as_one: Vec<String>,
+) -> Vec<(usize, usize, usize, usize)> {
+    map_module_length(shirobai_core::rules::module_length::check_module_length(
         bytes(&source),
         max,
         count_comments,
@@ -2580,6 +2638,8 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function("check_debugger", function!(check_debugger, 3))?;
     module.define_module_function("check_block_length", function!(check_block_length, 6))?;
     module.define_module_function("check_method_length", function!(check_method_length, 4))?;
+    module.define_module_function("check_class_length", function!(check_class_length, 4))?;
+    module.define_module_function("check_module_length", function!(check_module_length, 4))?;
     module.define_module_function("check_complexity", function!(check_complexity, 3))?;
     module.define_module_function("check_abc_size", function!(check_abc_size, 3))?;
     module.define_module_function("check_block_nesting", function!(check_block_nesting, 4))?;

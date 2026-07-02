@@ -116,17 +116,145 @@ impl<'a> CodeLength<'a> {
         if !self.fold.any() {
             return base.max(0) as usize;
         }
-        let mut fv = FoldVisitor {
-            outer: self,
-            suppress: 0,
-            stack: Vec::new(),
-            lift_stack: Vec::new(),
-            lift_starts: Vec::new(),
-            ancestors: Vec::new(),
-            delta: 0,
-        };
+        let mut fv = FoldVisitor::new(self);
         fv.visit(&body);
         (base + fv.delta).max(0) as usize
+    }
+
+    /// Sound fast reject for [`Self::classlike_length`]: the classlike measure
+    /// counts a subset of the lines *strictly between* the node's first and
+    /// last line (inner classlike lines and irrelevant lines are skipped, and
+    /// `CountAsOne` folds only subtract — a folded descendant's `code_length`
+    /// is always >= 1, so each fold contributes `1 - len - omit <= 0`). There
+    /// is no heredoc extension on this path (the count is line-number based),
+    /// so a node whose interior span already fits in `max` can never exceed it.
+    pub fn classlike_cannot_exceed(&self, node: &Node<'_>, max: usize) -> bool {
+        let loc = node.location();
+        let first = self.index.line_of(loc.start_offset());
+        let last = self
+            .index
+            .line_of(loc.end_offset().max(loc.start_offset() + 1) - 1);
+        last.saturating_sub(first).saturating_sub(1) <= max
+    }
+
+    /// Stock `calculate` for a prism `ClassNode` / `ModuleNode`
+    /// (`Metrics/ClassLength` / `Metrics/ModuleLength`): the base is
+    /// `classlike_code_length` (line-number counting, see
+    /// [`Self::classlike_base`]) and the `CountAsOne` fold walk starts at the
+    /// node's *children* (stock's `each_top_level_descendant(@node, ...)`
+    /// iterates `each_child_node`, so the name constant, a superclass
+    /// expression and the body are all fold roots, while the classlike node
+    /// itself is never a fold boundary).
+    pub fn classlike_length(&self, node: &Node<'_>) -> usize {
+        let base = self.classlike_base(node) as isize;
+        if !self.fold.any() {
+            return base.max(0) as usize;
+        }
+        let mut fv = FoldVisitor::new(self);
+        if let Some(class) = node.as_class_node() {
+            ruby_prism::visit_class_node(&mut fv, &class);
+        } else if let Some(module) = node.as_module_node() {
+            ruby_prism::visit_module_node(&mut fv, &module);
+        }
+        (base + fv.delta).max(0) as usize
+    }
+
+    /// Stock `calculate` for a constant-assigned constructor block
+    /// (`Foo = Class.new do ... end` / `Foo = Module.new do ... end`): the
+    /// base is the block body's `code_length` (stock's `extract_body` for a
+    /// `casgn` recurses into the expression), and the `CountAsOne` fold walk
+    /// is rooted at the *call* node. Stock's fold walk from the casgn recurses
+    /// into the parser block node and yields its `send` child, so a
+    /// `method_call` fold collapses a multi-line `Struct.new(:a,\n:b)` send
+    /// part too (probed against stock, 2026-07-02); entering the prism
+    /// `CallNode` reproduces exactly that via `fold_call_with_block`.
+    pub fn casgn_call_length(&self, call: &Node<'_>, body: Option<Node<'_>>) -> usize {
+        let base = body.as_ref().map_or(0, |b| self.code_length(b)) as isize;
+        if !self.fold.any() {
+            return base.max(0) as usize;
+        }
+        let mut fv = FoldVisitor::new(self);
+        fv.visit(call);
+        (base + fv.delta).max(0) as usize
+    }
+
+    /// Port of stock `classlike_code_length`, line-number based:
+    ///
+    /// - `namespace_module?`: a body that is exactly one class/module
+    ///   statement counts 0 (parser-gem `node.body` is the lone statement).
+    /// - `body_line_numbers = line_range(node).to_a[1...-1]` — the **1-based**
+    ///   numbers strictly between the node's first and last line — minus the
+    ///   1-based inclusive `line_range` of every class/module descendant.
+    /// - Each remaining number `n` is sampled as `@processed_source[n]`, which
+    ///   indexes the **0-based** `lines` array — so relevance is read one line
+    ///   *below* the number (the first body line's relevance is never
+    ///   consulted and the closing `end` line's is). This off-by-one is real
+    ///   stock behavior, probed 2026-07-02: a class whose first body line is
+    ///   blank counts one MORE than its true relevant-line count
+    ///   (`[6/5]` where a body-window count would give 5).
+    fn classlike_base(&self, node: &Node<'_>) -> usize {
+        let body = if let Some(class) = node.as_class_node() {
+            class.body()
+        } else if let Some(module) = node.as_module_node() {
+            module.body()
+        } else {
+            return 0;
+        };
+        // `namespace_module?`: prism wraps the body in a `StatementsNode`;
+        // parser-gem's `node.body` is the statement itself when there is
+        // exactly one.
+        if let Some(b) = &body
+            && let Some(stmts) = b.as_statements_node()
+        {
+            let mut it = stmts.body().iter();
+            if let (Some(only), None) = (it.next(), it.next())
+                && is_classlike(&only)
+            {
+                return 0;
+            }
+        }
+        let loc = node.location();
+        let first = self.index.line_of(loc.start_offset());
+        let last = self
+            .index
+            .line_of(loc.end_offset().max(loc.start_offset() + 1) - 1);
+        if last < first + 2 {
+            return 0; // `(first..last).to_a[1...-1]` is empty
+        }
+        // 1-based inclusive line ranges of every classlike descendant
+        // (`line_numbers_of_inner_nodes`), merged for a linear sweep.
+        let mut scan = ClasslikeScan {
+            outer: self,
+            depth: 0,
+            ranges: Vec::new(),
+        };
+        scan.visit(node);
+        scan.ranges.sort_unstable();
+        let mut inner: Vec<(usize, usize)> = Vec::with_capacity(scan.ranges.len());
+        for r in scan.ranges {
+            match inner.last_mut() {
+                Some(last) if r.0 <= last.1 + 1 => last.1 = last.1.max(r.1),
+                _ => inner.push(r),
+            }
+        }
+        let starts = self.index.line_starts();
+        let mut count = 0;
+        let mut ri = 0;
+        for n in (first + 1)..=(last - 1) {
+            while ri < inner.len() && inner[ri].1 < n {
+                ri += 1;
+            }
+            if ri < inner.len() && inner[ri].0 <= n {
+                continue; // inside an inner class/module line range
+            }
+            // Sample the 0-based line `n` (stock's `lines[n]`).
+            let ls = starts[n];
+            let le = starts.get(n + 1).copied().unwrap_or(self.source.len());
+            if !self.irrelevant(&self.slice(ls, le)) {
+                count += 1;
+            }
+        }
+        count
     }
 
     /// Measure a *body* node (stock's `code_length(@node)` after `extract_body`):
@@ -468,6 +596,20 @@ struct FoldVisitor<'a, 'b, 'pr> {
     delta: isize,
 }
 
+impl<'a, 'b, 'pr> FoldVisitor<'a, 'b, 'pr> {
+    fn new(outer: &'b CodeLength<'a>) -> Self {
+        FoldVisitor {
+            outer,
+            suppress: 0,
+            stack: Vec::new(),
+            lift_stack: Vec::new(),
+            lift_starts: Vec::new(),
+            ancestors: Vec::new(),
+            delta: 0,
+        }
+    }
+}
+
 impl<'pr> FoldVisitor<'_, '_, 'pr> {
     fn count_top_level(&mut self, node: &Node<'pr>) {
         self.delta += 1 - self.outer.descendant_length(node) as isize;
@@ -547,6 +689,36 @@ impl<'pr> Visit<'pr> for FoldVisitor<'_, '_, 'pr> {
 
     fn visit_leaf_node_leave(&mut self) {
         self.lift_stack.pop();
+    }
+}
+
+/// Collects the 1-based inclusive line ranges of every class/module
+/// *descendant* of the visited root (the root itself, at depth 0, is
+/// excluded), mirroring stock's `line_numbers_of_inner_nodes` /
+/// `each_descendant(:module, :class)`.
+struct ClasslikeScan<'a, 'b> {
+    outer: &'b CodeLength<'a>,
+    /// Depth from the scanned root (the root is depth 0 and excluded).
+    depth: usize,
+    ranges: Vec<(usize, usize)>,
+}
+
+impl<'pr> Visit<'pr> for ClasslikeScan<'_, '_> {
+    fn visit_branch_node_enter(&mut self, node: Node<'pr>) {
+        if self.depth > 0 && is_classlike(&node) {
+            let loc = node.location();
+            let first = self.outer.index.line_of(loc.start_offset());
+            let last = self
+                .outer
+                .index
+                .line_of(loc.end_offset().max(loc.start_offset() + 1) - 1);
+            self.ranges.push((first, last));
+        }
+        self.depth += 1;
+    }
+
+    fn visit_branch_node_leave(&mut self) {
+        self.depth -= 1;
     }
 }
 
