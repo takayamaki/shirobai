@@ -240,6 +240,20 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Style::TrailingCommaInArguments,
       "some_method(a, b, c,)\n"
     ],
+    # Same `avoid_comma` shape on a braced hash literal under the default
+    # `no_comma` style: the offense carries a removal corrector (correctable).
+    "Style/TrailingCommaInHashLiteral" => [
+      RuboCop::Cop::Style::TrailingCommaInHashLiteral,
+      Shirobai::Cop::Style::TrailingCommaInHashLiteral,
+      "h = { a: 1, b: 2, }\n"
+    ],
+    # Same `avoid_comma` shape on an array literal under the default
+    # `no_comma` style: the offense carries a removal corrector (correctable).
+    "Style/TrailingCommaInArrayLiteral" => [
+      RuboCop::Cop::Style::TrailingCommaInArrayLiteral,
+      Shirobai::Cop::Style::TrailingCommaInArrayLiteral,
+      "x = [1, 2, 3,]\n"
+    ],
     # A double-quoted string inside an interpolation under the default
     # single_quotes style: the offense carries a corrector (correctable), and
     # the outer double-quoted string is unaffected (not inside interpolation).

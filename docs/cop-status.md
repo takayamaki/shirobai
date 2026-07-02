@@ -4,7 +4,7 @@ This document tracks which RuboCop cops shirobai has reimplemented in Rust,
 and which cops were attempted but reverted because they did not meet the
 project's drop-in compatibility and speed requirements together.
 
-## Implemented (70 cops)
+## Implemented (72 cops)
 
 shirobai replaces these cops with Rust implementations.
 Every offense position, message, and autocorrected byte matches stock RuboCop
@@ -79,7 +79,7 @@ and RuboCop itself).
 - `Naming/PredicatePrefix`
 - `Naming/VariableNumber`
 
-### Style (14)
+### Style (16)
 
 - `Style/BlockDelimiters`
 - `Style/ColonMethodCall`
@@ -95,6 +95,8 @@ and RuboCop itself).
 - `Style/StringLiterals`
 - `Style/StringLiteralsInInterpolation`
 - `Style/TrailingCommaInArguments`
+- `Style/TrailingCommaInArrayLiteral`
+- `Style/TrailingCommaInHashLiteral`
 
 ## Attempted but reverted
 

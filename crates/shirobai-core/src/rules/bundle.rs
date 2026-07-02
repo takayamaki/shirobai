@@ -37,7 +37,9 @@ use super::{
     stabby_lambda_parentheses,
     string_literals,
     string_literals_in_interpolation,
-    trailing_comma_in_arguments, trailing_empty_lines, unreachable_code, useless_access_modifier,
+    trailing_comma, trailing_comma_in_arguments, trailing_comma_in_array_literal,
+    trailing_comma_in_hash_literal, trailing_empty_lines, unreachable_code,
+    useless_access_modifier,
     variable_number, void,
 };
 
@@ -130,6 +132,8 @@ pub fn check_multiline_bundle(
 /// | 87  | empty_comment_allow_margin (`Layout/EmptyComment` `AllowMarginComment`) |
 /// | 88-89 | class_length max / count_comments (`Metrics/ClassLength` `Max` / `CountComments`) |
 /// | 90-91 | module_length max / count_comments (`Metrics/ModuleLength` `Max` / `CountComments`) |
+/// | 92  | trailing_comma_in_hash_literal style (`EnforcedStyleForMultiline`: 0 no_comma, 1 comma, 2 consistent_comma, 3 diff_comma) |
+/// | 93  | trailing_comma_in_array_literal style (`EnforcedStyleForMultiline`, same coding) |
 ///
 /// `lists` (`Vec<String>`), 20 entries:
 ///
@@ -228,6 +232,8 @@ pub struct BundleConfig {
     pub string_literals: string_literals::Config,
     pub string_literals_in_interpolation: string_literals_in_interpolation::Config,
     pub trailing_comma_in_arguments: trailing_comma_in_arguments::Config,
+    pub trailing_comma_in_hash_literal: trailing_comma::Config,
+    pub trailing_comma_in_array_literal: trailing_comma::Config,
     pub trailing_empty_lines: trailing_empty_lines::Config,
     pub space_inside_block_braces: space_inside_block_braces::Config,
     pub method_length_max: usize,
@@ -254,7 +260,7 @@ pub struct BundleConfig {
 // in the `nums` / `lists` packing; the bundle still computes its slot in the
 // shared walk (see `check_all_bundle` below).
 
-const NUMS_LEN: usize = 92;
+const NUMS_LEN: usize = 94;
 const LISTS_LEN: usize = 25;
 
 impl BundleConfig {
@@ -390,6 +396,12 @@ impl BundleConfig {
             },
             trailing_comma_in_arguments: trailing_comma_in_arguments::Config {
                 style: nums[72] as u8,
+            },
+            trailing_comma_in_hash_literal: trailing_comma::Config {
+                style: nums[92] as u8,
+            },
+            trailing_comma_in_array_literal: trailing_comma::Config {
+                style: nums[93] as u8,
             },
             string_literals_in_interpolation: string_literals_in_interpolation::Config {
                 style: nums[73] as u8,
@@ -534,6 +546,8 @@ pub struct BundleResult {
         Vec<string_literals_in_interpolation::StringLiteralsInInterpolationOffense>,
     pub trailing_comma_in_arguments:
         Vec<trailing_comma_in_arguments::TrailingCommaInArgumentsOffense>,
+    pub trailing_comma_in_hash_literal: Vec<trailing_comma::TrailingCommaOffense>,
+    pub trailing_comma_in_array_literal: Vec<trailing_comma::TrailingCommaOffense>,
     /// At most one offense per file (the final-newline / trailing-blank check).
     pub trailing_empty_lines: Option<trailing_empty_lines::TrailingEmptyLinesOffense>,
     pub space_around_method_call_operator:
@@ -692,6 +706,10 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     );
     let mut tca_rule =
         trailing_comma_in_arguments::build_rule(source, &cfg.trailing_comma_in_arguments);
+    let mut tchl_rule =
+        trailing_comma_in_hash_literal::build_rule(source, &cfg.trailing_comma_in_hash_literal);
+    let mut tcal_rule =
+        trailing_comma_in_array_literal::build_rule(source, &cfg.trailing_comma_in_array_literal);
     let mut samco_rule = space_around_method_call_operator::build_rule(source);
     let mut sak_rule = space_around_keyword::build_rule(source);
     let mut sibb_rule = space_inside_block_braces::build_rule(source, cfg.space_inside_block_braces);
@@ -780,6 +798,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut sl_rule,
         &mut sli_rule,
         &mut tca_rule,
+        &mut tchl_rule,
+        &mut tcal_rule,
         &mut samco_rule,
         &mut sak_rule,
         &mut sibb_rule,
@@ -853,6 +873,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let string_literals = sl_rule.offenses;
     let string_literals_in_interpolation = sli_rule.offenses;
     let trailing_comma_in_arguments = tca_rule.offenses;
+    let trailing_comma_in_hash_literal = tchl_rule.checker.offenses;
+    let trailing_comma_in_array_literal = tcal_rule.checker.offenses;
     let space_around_method_call_operator = samco_rule.offenses;
     let space_around_keyword = sak_rule.offenses;
     let space_inside_block_braces = sibb_rule.offenses;
@@ -957,6 +979,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         string_literals,
         string_literals_in_interpolation,
         trailing_comma_in_arguments,
+        trailing_comma_in_hash_literal,
+        trailing_comma_in_array_literal,
         trailing_empty_lines,
         space_around_method_call_operator,
         space_around_keyword,
@@ -1063,6 +1087,8 @@ mod tests {
             1, 1, // empty_comment: allow_border / allow_margin (defaults)
             100, 0, // class_length: max(100) / count_comments
             100, 0, // module_length: max(100) / count_comments
+            0, // trailing_comma_in_hash_literal: style (no_comma)
+            0, // trailing_comma_in_array_literal: style (no_comma)
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -2724,6 +2750,73 @@ mod tests {
                 "len mismatch style={style}"
             );
             for (a, b) in bundle.trailing_comma_in_arguments.iter().zip(&alone) {
+                assert_eq!(
+                    (a.start_offset, a.end_offset, a.message, a.fix),
+                    (b.start_offset, b.end_offset, b.message, b.fix),
+                    "style={style}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shared_walk_matches_standalone_trailing_comma_in_hash_literal() {
+        let src = "h = { a: 1, b: 2, }\n\
+                   g = {\n  a: 1,\n  b: 2,\n}\n\
+                   f = {\n  a: 1,\n  b: 2\n}\n\
+                   e = { a: 1,\n      b: 2 }\n\
+                   d = {\n  **kw\n}\n\
+                   m(a: 1, b: 2,)\n\
+                   c = { x: { y: 1 }, }\n";
+        for style in 0..=3u8 {
+            let (mut nums, lists) = default_packed();
+            nums[92] = style as i64;
+            let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+            let bundle = check_all_bundle(src.as_bytes(), &cfg);
+            let alone = super::trailing_comma_in_hash_literal::check_trailing_comma_in_hash_literal(
+                src.as_bytes(),
+                &cfg.trailing_comma_in_hash_literal,
+            );
+            assert_eq!(
+                bundle.trailing_comma_in_hash_literal.len(),
+                alone.len(),
+                "len mismatch style={style}"
+            );
+            for (a, b) in bundle.trailing_comma_in_hash_literal.iter().zip(&alone) {
+                assert_eq!(
+                    (a.start_offset, a.end_offset, a.message, a.fix),
+                    (b.start_offset, b.end_offset, b.message, b.fix),
+                    "style={style}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shared_walk_matches_standalone_trailing_comma_in_array_literal() {
+        let src = "x = [1, 2,]\n\
+                   y = [\n  1,\n  2,\n]\n\
+                   z = [\n  1,\n  2\n]\n\
+                   w = [1,\n     2]\n\
+                   v = %w[\n  a\n  b\n]\n\
+                   u = [\n  *rest\n]\n\
+                   t = [[1, 2,], [3],]\n";
+        for style in 0..=3u8 {
+            let (mut nums, lists) = default_packed();
+            nums[93] = style as i64;
+            let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+            let bundle = check_all_bundle(src.as_bytes(), &cfg);
+            let alone =
+                super::trailing_comma_in_array_literal::check_trailing_comma_in_array_literal(
+                    src.as_bytes(),
+                    &cfg.trailing_comma_in_array_literal,
+                );
+            assert_eq!(
+                bundle.trailing_comma_in_array_literal.len(),
+                alone.len(),
+                "len mismatch style={style}"
+            );
+            for (a, b) in bundle.trailing_comma_in_array_literal.iter().zip(&alone) {
                 assert_eq!(
                     (a.start_offset, a.end_offset, a.message, a.fix),
                     (b.start_offset, b.end_offset, b.message, b.fix),

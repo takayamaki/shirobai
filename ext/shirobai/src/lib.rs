@@ -495,6 +495,17 @@ fn map_trailing_comma_in_arguments(
         .collect()
 }
 
+/// `Style/TrailingCommaInHashLiteral` / `Style/TrailingCommaInArrayLiteral`
+/// records, same wire shape as `map_trailing_comma_in_arguments`: `[start,
+/// end, message, fix]`.
+fn map_trailing_comma_literal(
+    v: Vec<shirobai_core::rules::trailing_comma::TrailingCommaOffense>,
+) -> Vec<(usize, usize, u8, u8)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.message, o.fix))
+        .collect()
+}
+
 /// `Layout/TrailingEmptyLines`: at most one record per file, flattened to a
 /// `Vec` of length 0 or 1. Each entry is `[report_start, report_end, ac_start,
 /// ac_end, replacement, blank_lines]`: Ruby reports the caret range
@@ -1138,7 +1149,8 @@ fn register_bundle_config(
 /// 63 empty_line_after_guard_clause /
 /// 64 empty_comment / 65 empty_line_after_magic_comment /
 /// 66 empty_lines / 67 leading_empty_lines /
-/// 68 class_length / 69 module_length
+/// 68 class_length / 69 module_length /
+/// 70 trailing_comma_in_hash_literal / 71 trailing_comma_in_array_literal
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1149,7 +1161,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(70);
+        let ary = ruby.ary_new_capa(72);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -1254,6 +1266,8 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_leading_empty_lines(r.leading_empty_lines))?;
         ary.push(map_class_length(r.class_length))?;
         ary.push(map_module_length(r.module_length))?;
+        ary.push(map_trailing_comma_literal(r.trailing_comma_in_hash_literal))?;
+        ary.push(map_trailing_comma_literal(r.trailing_comma_in_array_literal))?;
         Ok(ary)
     })
 }
@@ -1928,6 +1942,42 @@ fn check_trailing_comma_in_arguments(
     };
     map_trailing_comma_in_arguments(
         shirobai_core::rules::trailing_comma_in_arguments::check_trailing_comma_in_arguments(
+            bytes(&source),
+            &cfg,
+        ),
+    )
+}
+
+/// Ruby entry point for `Style/TrailingCommaInHashLiteral`. Takes the source
+/// and the packed config nums (`[style]`). Returns one entry per record (see
+/// `map_trailing_comma_literal`).
+fn check_trailing_comma_in_hash_literal(
+    source: RString,
+    nums: Vec<i64>,
+) -> Vec<(usize, usize, u8, u8)> {
+    let cfg = shirobai_core::rules::trailing_comma::Config {
+        style: nums[0] as u8,
+    };
+    map_trailing_comma_literal(
+        shirobai_core::rules::trailing_comma_in_hash_literal::check_trailing_comma_in_hash_literal(
+            bytes(&source),
+            &cfg,
+        ),
+    )
+}
+
+/// Ruby entry point for `Style/TrailingCommaInArrayLiteral`. Takes the source
+/// and the packed config nums (`[style]`). Returns one entry per record (see
+/// `map_trailing_comma_literal`).
+fn check_trailing_comma_in_array_literal(
+    source: RString,
+    nums: Vec<i64>,
+) -> Vec<(usize, usize, u8, u8)> {
+    let cfg = shirobai_core::rules::trailing_comma::Config {
+        style: nums[0] as u8,
+    };
+    map_trailing_comma_literal(
+        shirobai_core::rules::trailing_comma_in_array_literal::check_trailing_comma_in_array_literal(
             bytes(&source),
             &cfg,
         ),
@@ -2841,6 +2891,14 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_trailing_comma_in_arguments",
         function!(check_trailing_comma_in_arguments, 2),
+    )?;
+    module.define_module_function(
+        "check_trailing_comma_in_hash_literal",
+        function!(check_trailing_comma_in_hash_literal, 2),
+    )?;
+    module.define_module_function(
+        "check_trailing_comma_in_array_literal",
+        function!(check_trailing_comma_in_array_literal, 2),
     )?;
     module.define_module_function(
         "check_trailing_empty_lines",

@@ -203,6 +203,12 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # caret range and a removal corrector; both offsets sit after the multibyte
     # comment, so the byte->char conversion must shift them.
     "Style/TrailingCommaInArguments" => "some_method(あ, い,)\n",
+    # Same `avoid_comma` shape on a braced hash literal: the caret range and
+    # the removal corrector both sit after multibyte keys/values, so every
+    # offset must be byte->char converted.
+    "Style/TrailingCommaInHashLiteral" => "h = { a: \"あ\", b: \"い\", }\n",
+    # Same `avoid_comma` shape on an array literal with multibyte elements.
+    "Style/TrailingCommaInArrayLiteral" => "x = [\"あ\", \"い\",]\n",
     # The offending interpolation-internal string node range plus the autocorrect
     # replacement, all shifted by the multibyte comment. The inner string content
     # is itself multibyte, so the wrapper's `to_string_literal` on the decoded

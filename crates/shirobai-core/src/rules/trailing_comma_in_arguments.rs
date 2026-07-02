@@ -16,7 +16,9 @@
 //!
 //! Reconstructed over Prism, mirroring stock's `on_send`/`on_csend` (a
 //! parser-gem `(send …)` / `(csend …)` is a Prism `CallNode`) and the shared
-//! `TrailingComma#check` mixin. The trigger guard is `node.arguments? &&
+//! `TrailingComma#check` mixin (the mixin helpers live in
+//! [`trailing_comma`](super::trailing_comma), shared with the hash/array
+//! literal cops). The trigger guard is `node.arguments? &&
 //! (node.parenthesized? || node.method?(:[]))`:
 //!
 //! - `arguments?` -> the `CallNode` has a non-empty `ArgumentsNode`.
@@ -44,26 +46,15 @@
 use ruby_prism::Node;
 
 use super::line_index::LineIndex;
-
-/// Configured `EnforcedStyleForMultiline`.
-pub const STYLE_NO_COMMA: u8 = 0;
-pub const STYLE_COMMA: u8 = 1;
-pub const STYLE_CONSISTENT_COMMA: u8 = 2;
-pub const STYLE_DIFF_COMMA: u8 = 3;
-
-/// Message selector. `AVOID_*` mirror the style-specific `extra_avoid_comma_info`
-/// suffixes; `PUT` is the style-independent "Put a comma" message.
-pub const MSG_AVOID_NO_COMMA: u8 = 0;
-pub const MSG_AVOID_COMMA: u8 = 1;
-pub const MSG_AVOID_CONSISTENT_COMMA: u8 = 2;
-pub const MSG_AVOID_DIFF_COMMA: u8 = 3;
-pub const MSG_PUT: u8 = 4;
-
-/// Corrector op kind. `AVOID` removes the one-char comma at the caret range
-/// (`swap_comma` sees a `,`); `PUT` inserts a comma after the caret range
-/// (`swap_comma` sees a non-comma).
-pub const FIX_AVOID: u8 = 0;
-pub const FIX_PUT: u8 = 1;
+use super::trailing_comma::{
+    any_heredoc, autocorrect_range, begins_its_line, comma_offset, inside_comment,
+    starts_with_optional_comma_to_newline,
+};
+pub use super::trailing_comma::{
+    FIX_AVOID, FIX_PUT, MSG_AVOID_COMMA, MSG_AVOID_CONSISTENT_COMMA, MSG_AVOID_DIFF_COMMA,
+    MSG_AVOID_NO_COMMA, MSG_PUT, STYLE_COMMA, STYLE_CONSISTENT_COMMA, STYLE_DIFF_COMMA,
+    STYLE_NO_COMMA,
+};
 
 /// `Style/TrailingCommaInArguments` configuration.
 #[derive(Clone, Copy)]
@@ -187,7 +178,7 @@ impl Visitor<'_> {
 
         if let Some(off) = comma_offset {
             let comma_pos = begin_pos + off;
-            if !self.inside_comment(begin_pos, comma_pos) {
+            if !inside_comment(&self.line_index, &self.comments, begin_pos, comma_pos) {
                 self.check_comma(call, args, comma_pos);
             } else if self.should_have_comma(call, args) {
                 self.put_comma(args);
@@ -225,39 +216,13 @@ impl Visitor<'_> {
             return;
         }
         let (start, end) = (last.location().start_offset(), last.location().end_offset());
-        let range = self.autocorrect_range(start, end);
+        let range = autocorrect_range(self.source, start, end);
         self.offenses.push(TrailingCommaInArgumentsOffense {
             start_offset: range.0,
             end_offset: range.1,
             message: MSG_PUT,
             fix: FIX_PUT,
         });
-    }
-
-    /// `autocorrect_range`: from the last item, drop everything up to and
-    /// including its last newline, then skip leading whitespace; the range runs
-    /// from there to the item's end.
-    fn autocorrect_range(&self, start: usize, end: usize) -> (usize, usize) {
-        let src = self.src(start, end);
-        // `ix = source.rindex("\n") || 0`. Ruby's `rindex` returns the index of
-        // the `\n`; `source[ix..] =~ /\S/` then advances past it (and any
-        // further whitespace). When there is no `\n`, `ix` starts at 0.
-        let ix = src.iter().rposition(|&b| b == b'\n').unwrap_or(0);
-        let advance = src[ix..]
-            .iter()
-            .position(|&b| !is_space(b))
-            .unwrap_or(0);
-        (start + ix + advance, end)
-    }
-
-    /// `inside_comment?`: the comma lies inside a comment on its line.
-    fn inside_comment(&self, range_begin: usize, comma_pos: usize) -> bool {
-        // `processed_source.comment_at_line(range.line)`: the comment whose
-        // start line equals the range's begin line, if any.
-        let line = self.line_of(range_begin);
-        self.comments.iter().any(|&(cs, _)| {
-            self.line_of(cs) == line && cs < comma_pos
-        })
     }
 
     /// `should_have_comma?(style, node)`.
@@ -284,7 +249,8 @@ impl Visitor<'_> {
     /// !begins_its_line?(node_end_location)`.
     fn allowed_multiline_argument(&self, call: &ruby_prism::CallNode<'_>, args: &[Node<'_>]) -> bool {
         let elems = self.elements(args);
-        elems.len() == 1 && !self.begins_its_line(self.node_end_location(call))
+        elems.len() == 1
+            && !begins_its_line(self.source, &self.line_index, self.node_end_location(call))
     }
 
     /// `node_end_location` = `node.loc.end || …`. For the calls we trigger on
@@ -375,165 +341,6 @@ impl Visitor<'_> {
         let to = self.effective_node_end(call);
         starts_with_optional_comma_to_newline(self.src(from, to))
     }
-
-    /// `Util.begins_its_line?(range)`: the first non-whitespace byte on the
-    /// range's line is exactly at the range start.
-    fn begins_its_line(&self, off: usize) -> bool {
-        let line_start = self.line_index.line_start(off);
-        let mut p = line_start;
-        while p < self.source.len() && self.source[p] != b'\n' && is_space(self.source[p]) {
-            p += 1;
-        }
-        p == off
-    }
-}
-
-/// `comma_offset(items, range)`: the index of the first comma reachable through
-/// leading whitespace, or `None`. With a heredoc among the items the leading
-/// whitespace may not include a newline (`/\A[^\S\n]*,/`); otherwise any
-/// whitespace is allowed (`/\A\s*,/`).
-fn comma_offset(range_src: &[u8], has_heredoc: bool) -> Option<usize> {
-    let mut i = 0;
-    while i < range_src.len() {
-        match range_src[i] {
-            b',' => return Some(i),
-            b'\n' if has_heredoc => return None,
-            b if is_space(b) => i += 1,
-            _ => return None,
-        }
-    }
-    None
-}
-
-/// `/,?\s*(#.*)?\n/` anchored at the start of `src`: optional comma, any
-/// whitespace, an optional `#`-comment running to end of line, then a newline.
-fn starts_with_optional_comma_to_newline(src: &[u8]) -> bool {
-    let mut i = 0;
-    // Optional single comma.
-    if src.first() == Some(&b',') {
-        i += 1;
-    }
-    // `\s*` — but a `\n` here both satisfies `\s*` greedily and the trailing
-    // `\n`. Ruby's regex backtracks, so the simplest faithful port is: scan
-    // `\s*`, and a match succeeds if we land on a `\n`, or on a `#` whose line
-    // ends in `\n`. We mirror the regex by scanning whitespace, then allowing an
-    // optional comment, then requiring a `\n`.
-    //
-    // Because `\s` includes `\n`, the regex can match by consuming whitespace up
-    // to and including a `\n`. Equivalent test: somewhere in the leading
-    // whitespace run (optionally followed by a `# …` comment) there is a `\n`.
-    let start = i;
-    while i < src.len() && is_space_no_newline(src[i]) {
-        i += 1;
-    }
-    match src.get(i) {
-        Some(b'\n') => true,
-        Some(b'#') => {
-            // `(#.*)?\n`: a comment to end of line, then `\n`.
-            while i < src.len() && src[i] != b'\n' {
-                i += 1;
-            }
-            i < src.len() && src[i] == b'\n'
-        }
-        _ => {
-            // No comment and no inline `\n`; the whitespace run itself must have
-            // contained a `\n` (consumed above only if `is_space_no_newline`
-            // failed on it). Re-scan the run allowing `\n`.
-            let mut j = start;
-            while j < src.len() && is_space(src[j]) {
-                if src[j] == b'\n' {
-                    return true;
-                }
-                j += 1;
-            }
-            false
-        }
-    }
-}
-
-/// Ruby's `/\s/` over a single byte.
-fn is_space(b: u8) -> bool {
-    matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c)
-}
-
-/// `/\s/` without the newline (the `[^\S\n]` class).
-fn is_space_no_newline(b: u8) -> bool {
-    matches!(b, b' ' | b'\t' | b'\r' | 0x0b | 0x0c)
-}
-
-/// `any_heredoc?(items)`: any argument is (or wraps) a heredoc.
-fn any_heredoc(args: &[Node<'_>]) -> bool {
-    args.iter().any(heredoc)
-}
-
-/// `heredoc?(node)`, ported to Prism node types.
-fn heredoc(node: &Node<'_>) -> bool {
-    // `node.loc?(:heredoc_body)`: a string/xstring literal whose opening is a
-    // heredoc marker (`<<…`).
-    if is_heredoc_literal(node) {
-        return true;
-    }
-    match node {
-        // `heredoc_send?`: parser-gem `(send recv meth *args)`. children.size==2
-        // (`recv.meth`, no args) -> check the receiver; size>2 (has args) ->
-        // check the last argument.
-        Node::CallNode { .. } => {
-            let call = node.as_call_node().unwrap();
-            let args: Vec<Node<'_>> = match call.arguments() {
-                Some(a) => a.arguments().iter().collect(),
-                None => Vec::new(),
-            };
-            if !args.is_empty() {
-                heredoc(args.last().unwrap())
-            } else if let Some(recv) = call.receiver() {
-                heredoc(&recv)
-            } else {
-                false
-            }
-        }
-        // `node.type?(:pair, :hash)` -> `heredoc?(node.children.last)` (the
-        // value of the last pair / the last hash element's value). A braceless
-        // hash argument is a `KeywordHashNode`; a braced one is a `HashNode`.
-        Node::HashNode { .. } => last_hash_value(node.as_hash_node().unwrap().elements()),
-        Node::KeywordHashNode { .. } => {
-            last_hash_value(node.as_keyword_hash_node().unwrap().elements())
-        }
-        Node::AssocNode { .. } => {
-            let pair = node.as_assoc_node().unwrap();
-            heredoc(&pair.value())
-        }
-        _ => false,
-    }
-}
-
-/// `heredoc?` of the last element's value (for a hash node).
-fn last_hash_value(elements: ruby_prism::NodeList<'_>) -> bool {
-    match elements.iter().last() {
-        Some(Node::AssocNode { .. }) => {
-            let last = elements.iter().last().unwrap();
-            let pair = last.as_assoc_node().unwrap();
-            heredoc(&pair.value())
-        }
-        Some(other) => heredoc(&other),
-        None => false,
-    }
-}
-
-/// A string/xstring literal whose opening marker is `<<…` (a heredoc).
-fn is_heredoc_literal(node: &Node<'_>) -> bool {
-    let opening = match node {
-        Node::StringNode { .. } => node.as_string_node().unwrap().opening_loc(),
-        Node::InterpolatedStringNode { .. } => {
-            node.as_interpolated_string_node().unwrap().opening_loc()
-        }
-        // `XStringNode`'s opening is always present (the backtick / `<<` marker).
-        Node::XStringNode { .. } => Some(node.as_x_string_node().unwrap().opening_loc()),
-        Node::InterpolatedXStringNode { .. } => {
-            Some(node.as_interpolated_x_string_node().unwrap().opening_loc())
-        }
-        _ => return false,
-    };
-    opening.is_some_and(|o| o.as_slice().starts_with(b"<<"))
 }
 
 impl super::dispatch::Rule for Visitor<'_> {
@@ -543,7 +350,7 @@ impl super::dispatch::Rule for Visitor<'_> {
             Interest::ENTER_CALL,
         )
     }
-    
+
     fn enter(&mut self, node: &Node<'_>) {
         if let Some(call) = node.as_call_node() {
             self.on_call(&call);
@@ -671,6 +478,21 @@ mod tests {
     #[test]
     fn heredoc_arg_no_offense() {
         assert!(run("route(1, <<-HELP.chomp)\n...\nHELP\n", STYLE_NO_COMMA).is_empty());
+    }
+
+    #[test]
+    fn csend_heredoc_not_heredoc_flagged() {
+        // Stock's `heredoc?` only treats `send_type?` (`:send`), so a
+        // safe-navigation call wrapping a heredoc is NOT heredoc-flagged and
+        // the comma regex crosses the newline into the heredoc body (probed
+        // on stock 1.88.0: the comma inside the body is an offense).
+        let src = "m(x, a&.b(<<~X)\n, inside\n  X\n)\n";
+        let r = run(src, STYLE_NO_COMMA);
+        assert_eq!(r.len(), 1);
+        assert_eq!(&src.as_bytes()[r[0].0..r[0].1], b",");
+        assert_eq!(r[0].0, 16);
+        // The plain `.` version IS heredoc-flagged -> no offense.
+        assert!(run("m(x, a.b(<<~X)\n, inside\n  X\n)\n", STYLE_NO_COMMA).is_empty());
     }
 
     #[test]
