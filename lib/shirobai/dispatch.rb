@@ -89,7 +89,10 @@ module Shirobai
       class_length: 68,
       module_length: 69,
       trailing_comma_in_hash_literal: 70,
-      trailing_comma_in_array_literal: 71
+      trailing_comma_in_array_literal: 71,
+      space_inside_hash_literal_braces: 72,
+      space_inside_array_literal_brackets: 73,
+      space_before_block_braces: 74
     }.freeze
 
     class << self
@@ -193,6 +196,11 @@ module Shirobai
         # Layout/LeadingEmptyLines is config-less; its `bundle_args` returns
         # `[]` and contributes nothing to `nums` / `lists`.
         _ = Cop::Layout::LeadingEmptyLines.bundle_args(config)
+        sihlb = Cop::Layout::SpaceInsideHashLiteralBraces.bundle_args(config)
+        sialb = Cop::Layout::SpaceInsideArrayLiteralBrackets.bundle_args(config)
+        # Layout/SpaceBeforeBlockBraces is config-free on the Rust side; its
+        # `bundle_args` returns `[]` and contributes nothing.
+        _ = Cop::Layout::SpaceBeforeBlockBraces.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -237,7 +245,9 @@ module Shirobai
           cl[0], num(cl[1]), # ClassLength Max / CountComments
           mol[0], num(mol[1]), # ModuleLength Max / CountComments
           *tchl[0], # TrailingCommaInHashLiteral style (1 num)
-          *tcal[0] # TrailingCommaInArrayLiteral style (1 num)
+          *tcal[0], # TrailingCommaInArrayLiteral style (1 num)
+          *sihlb[0], # SpaceInsideHashLiteralBraces style / empty no_space (2 nums)
+          *sialb[0] # SpaceInsideArrayLiteralBrackets style / empty space (2 nums)
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0], aba[0],

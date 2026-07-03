@@ -234,6 +234,17 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # body, so their byte offsets are shifted ahead of the char offsets and must
     # be converted; both spaces are inserted under the default `space` style.
     "Layout/SpaceInsideBlockBraces" => "foo.each {puts 日本語}\n",
+    # Both brace offenses (the `{` and `}` anchors of the insert correctors)
+    # sit after the multibyte comment and the hash value is itself multibyte,
+    # so every offense/corrector byte offset must be converted.
+    "Layout/SpaceInsideHashLiteralBraces" => "h = {a: \"日本語\", b: 2}\n",
+    # The two space-run offense ranges and the node's removal corrector
+    # ranges all sit after the multibyte comment with multibyte elements
+    # between them, so the byte offsets must be converted.
+    "Layout/SpaceInsideArrayLiteralBrackets" => "a = [ \"日本語\", 2 ]\n",
+    # The `{` offense range (also the `insert_before` anchor) sits after the
+    # multibyte comment and after a multibyte receiver on the same line.
+    "Layout/SpaceBeforeBlockBraces" => "あいう.each{ puts 1 }\n",
     # Predicate-style call with an `&&` argument: the whole-call offense range
     # sits after the multibyte comment, so the byte offsets must be converted
     # to character offsets. No autocorrect, so no other ranges to check.

@@ -294,6 +294,32 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Layout::SpaceInsideBlockBraces,
       "foo.each {puts x}\n"
     ],
+    # A hash literal missing both inner spaces under the default `space`
+    # style: both offenses carry their own corrector (correctable). Guards
+    # that the wrapper attaches the corrector block in lint mode like stock.
+    "Layout/SpaceInsideHashLiteralBraces" => [
+      RuboCop::Cop::Layout::SpaceInsideHashLiteralBraces,
+      Shirobai::Cop::Layout::SpaceInsideHashLiteralBraces,
+      "h = {a: 1}\n"
+    ],
+    # An array with spaces inside under the default `no_space` style: stock
+    # corrects the whole node on the FIRST offense (`ignore_node`), so the
+    # first offense is correctable and the second is NOT (its corrector block
+    # stays empty). Guards that the wrapper reproduces the per-node grouping,
+    # not just the offense list.
+    "Layout/SpaceInsideArrayLiteralBrackets" => [
+      RuboCop::Cop::Layout::SpaceInsideArrayLiteralBrackets,
+      Shirobai::Cop::Layout::SpaceInsideArrayLiteralBrackets,
+      "a = [ 1, 2 ]\n"
+    ],
+    # A block brace with no space before it under the default `space` style:
+    # the offense carries an `insert_before` corrector (correctable). Guards
+    # that the wrapper attaches the corrector block in lint mode like stock.
+    "Layout/SpaceBeforeBlockBraces" => [
+      RuboCop::Cop::Layout::SpaceBeforeBlockBraces,
+      Shirobai::Cop::Layout::SpaceBeforeBlockBraces,
+      "foo.each{ puts x }\n"
+    ],
     # A predicate-style call with an `&&` argument: stock has no autocorrect,
     # so both stock and shirobai offenses must stay `:unsupported` (never
     # correctable). Guards that the wrapper does not accidentally attach a

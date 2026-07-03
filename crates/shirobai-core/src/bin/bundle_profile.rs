@@ -368,6 +368,25 @@ fn run_perrule(sources: &[Vec<u8>], cfg: &BundleConfig, iterations: usize) {
                 cfg.space_inside_block_braces,
             ));
         }),
+        e!("space_inside_hash_literal_braces", |s: &[u8]| {
+            std::hint::black_box(
+                r::space_inside_hash_literal_braces::check_space_inside_hash_literal_braces(
+                    s,
+                    cfg.space_inside_hash_literal_braces,
+                ),
+            );
+        }),
+        e!("space_inside_array_literal_brackets", |s: &[u8]| {
+            std::hint::black_box(
+                r::space_inside_array_literal_brackets::check_space_inside_array_literal_brackets(
+                    s,
+                    cfg.space_inside_array_literal_brackets,
+                ),
+            );
+        }),
+        e!("space_before_block_braces", |s: &[u8]| {
+            std::hint::black_box(r::space_before_block_braces::check_space_before_block_braces(s));
+        }),
         e!("method_length", |s: &[u8]| {
             std::hint::black_box(r::method_length::check_method_length(
                 s,

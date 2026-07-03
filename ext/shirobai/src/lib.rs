@@ -704,6 +704,75 @@ fn map_space_inside_block_braces(
         .collect()
 }
 
+/// `Layout/SpaceInsideHashLiteralBraces`: `[[start, end, message_code], ...]`
+/// — `[start, end)` is the offense range stock reports (also the autocorrect
+/// anchor); `message_code` selects the fixed message (0 `{` missing, 1 `{`
+/// detected, 2 `}` missing, 3 `}` detected, 4 empty missing, 5 empty
+/// detected). The wrapper derives the corrector from the live `range.source`
+/// like stock (whitespace: remove, `{`: insert after, else insert before).
+fn map_space_inside_hash_literal_braces(
+    v: Vec<
+        shirobai_core::rules::space_inside_hash_literal_braces::SpaceInsideHashLiteralBracesOffense,
+    >,
+) -> Vec<(usize, usize, u8)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.message.code()))
+        .collect()
+}
+
+/// `Layout/SpaceInsideArrayLiteralBrackets`:
+/// `[[[start, end, message_code, node, suppress], ...], [[[op, s, e], ...], ...]]`
+/// — the first array is the offenses (`message_code`: 0 use, 1 do-not-use,
+/// 2 use-one-empty, 3 do-not-use-empty; `node` indexes the second array;
+/// `suppress` drops the offense under `--disable-uncorrectable`), the second
+/// is the per-node corrector program (`op`: 0 `remove [s, e)`, 1
+/// `insert_after` a space at range `[s, e)`, 2 `insert_before`). The wrapper
+/// replays a node's program on its first offense (stock's `ignore_node`
+/// grouping).
+#[allow(clippy::type_complexity)]
+fn map_space_inside_array_literal_brackets(
+    r: shirobai_core::rules::space_inside_array_literal_brackets::ArrayBracketsResult,
+) -> (
+    Vec<(usize, usize, u8, usize, bool)>,
+    Vec<Vec<(u8, usize, usize)>>,
+) {
+    (
+        r.offenses
+            .into_iter()
+            .map(|o| {
+                (
+                    o.start_offset,
+                    o.end_offset,
+                    o.message.code(),
+                    o.node,
+                    o.suppress_when_disable_uncorrectable,
+                )
+            })
+            .collect(),
+        r.node_ops
+            .into_iter()
+            .map(|ops| {
+                ops.into_iter()
+                    .map(shirobai_core::rules::space_inside_array_literal_brackets::Op::packed)
+                    .collect()
+            })
+            .collect(),
+    )
+}
+
+/// `Layout/SpaceBeforeBlockBraces`: `[[left_start, left_end, space_begin,
+/// empty, multiline], ...]` — one record per brace block in document order
+/// (`do ... end` blocks are already excluded). The wrapper replays stock's
+/// `check_empty` / `check_non_empty` (including the
+/// `config_to_allow_offenses` state machine) over the records.
+fn map_space_before_block_braces(
+    v: Vec<shirobai_core::rules::space_before_block_braces::SpaceBeforeBlockBracesRecord>,
+) -> Vec<(usize, usize, usize, bool, bool)> {
+    v.into_iter()
+        .map(|r| (r.left_start, r.left_end, r.space_begin, r.empty, r.multiline))
+        .collect()
+}
+
 /// `Layout/EndAlignment`: `[[end_start, end_end, matching, message, align_column], ...]`
 /// — `[end_start, end_end)` is the `end` keyword range; `matching` is the list
 /// of style ids the `end` already aligns with, in the path's hash order
@@ -1150,7 +1219,9 @@ fn register_bundle_config(
 /// 64 empty_comment / 65 empty_line_after_magic_comment /
 /// 66 empty_lines / 67 leading_empty_lines /
 /// 68 class_length / 69 module_length /
-/// 70 trailing_comma_in_hash_literal / 71 trailing_comma_in_array_literal
+/// 70 trailing_comma_in_hash_literal / 71 trailing_comma_in_array_literal /
+/// 72 space_inside_hash_literal_braces /
+/// 73 space_inside_array_literal_brackets / 74 space_before_block_braces
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1161,7 +1232,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(72);
+        let ary = ruby.ary_new_capa(75);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -1268,6 +1339,13 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_module_length(r.module_length))?;
         ary.push(map_trailing_comma_literal(r.trailing_comma_in_hash_literal))?;
         ary.push(map_trailing_comma_literal(r.trailing_comma_in_array_literal))?;
+        ary.push(map_space_inside_hash_literal_braces(
+            r.space_inside_hash_literal_braces,
+        ))?;
+        ary.push(map_space_inside_array_literal_brackets(
+            r.space_inside_array_literal_brackets,
+        ))?;
+        ary.push(map_space_before_block_braces(r.space_before_block_braces))?;
         Ok(ary)
     })
 }
@@ -2325,6 +2403,69 @@ fn check_space_inside_block_braces(
     map_space_inside_block_braces(sibb::check_space_inside_block_braces(bytes(&source), cfg))
 }
 
+/// Ruby entry point for `Layout/SpaceInsideHashLiteralBraces` (the bundle is
+/// the usual path). `style` is 0 = space, 1 = no_space, 2 = compact;
+/// `no_space_empty` is `EnforcedStyleForEmptyBraces == 'no_space'`. Returns
+/// the shape documented on `map_space_inside_hash_literal_braces`.
+fn check_space_inside_hash_literal_braces(
+    source: RString,
+    style: u8,
+    no_space_empty: bool,
+) -> Vec<(usize, usize, u8)> {
+    use shirobai_core::rules::space_inside_hash_literal_braces as sihlb;
+    let cfg = sihlb::Config {
+        style: match style {
+            1 => sihlb::Style::NoSpace,
+            2 => sihlb::Style::Compact,
+            _ => sihlb::Style::Space,
+        },
+        no_space_empty,
+    };
+    map_space_inside_hash_literal_braces(sihlb::check_space_inside_hash_literal_braces(
+        bytes(&source),
+        cfg,
+    ))
+}
+
+/// Ruby entry point for `Layout/SpaceInsideArrayLiteralBrackets` (the bundle
+/// is the usual path). `style` is 0 = no_space, 1 = space, 2 = compact;
+/// `space_empty` is `EnforcedStyleForEmptyBrackets == 'space'`. Returns the
+/// shape documented on `map_space_inside_array_literal_brackets`.
+#[allow(clippy::type_complexity)]
+fn check_space_inside_array_literal_brackets(
+    source: RString,
+    style: u8,
+    space_empty: bool,
+) -> (
+    Vec<(usize, usize, u8, usize, bool)>,
+    Vec<Vec<(u8, usize, usize)>>,
+) {
+    use shirobai_core::rules::space_inside_array_literal_brackets as sialb;
+    let cfg = sialb::Config {
+        style: match style {
+            1 => sialb::Style::Space,
+            2 => sialb::Style::Compact,
+            _ => sialb::Style::NoSpace,
+        },
+        space_empty,
+    };
+    map_space_inside_array_literal_brackets(sialb::check_space_inside_array_literal_brackets(
+        bytes(&source),
+        cfg,
+    ))
+}
+
+/// Ruby entry point for `Layout/SpaceBeforeBlockBraces` (the bundle is the
+/// usual path). Config-free: the wrapper applies the styles. Returns the
+/// shape documented on `map_space_before_block_braces`.
+fn check_space_before_block_braces(source: RString) -> Vec<(usize, usize, usize, bool, bool)> {
+    map_space_before_block_braces(
+        shirobai_core::rules::space_before_block_braces::check_space_before_block_braces(bytes(
+            &source,
+        )),
+    )
+}
+
 /// Ruby entry point for `Layout/EndAlignment`. `style` is the
 /// `EnforcedStyleAlignWith` selector (0 = keyword, 1 = variable,
 /// 2 = start_of_line). Returns the shape documented on `map_end_alignment`.
@@ -2777,6 +2918,18 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_space_inside_block_braces",
         function!(check_space_inside_block_braces, 4),
+    )?;
+    module.define_module_function(
+        "check_space_inside_hash_literal_braces",
+        function!(check_space_inside_hash_literal_braces, 3),
+    )?;
+    module.define_module_function(
+        "check_space_inside_array_literal_brackets",
+        function!(check_space_inside_array_literal_brackets, 3),
+    )?;
+    module.define_module_function(
+        "check_space_before_block_braces",
+        function!(check_space_before_block_braces, 1),
     )?;
     module.define_module_function("check_end_alignment", function!(check_end_alignment, 2))?;
     module.define_module_function(

@@ -33,7 +33,9 @@ use super::{
     percent_literal_delimiters,
     predicate_prefix, redundant_self, redundant_self_assignment,
     require_parentheses, safe_navigation_chain, self_assignment,
-    space_around_keyword, space_around_method_call_operator, space_inside_block_braces,
+    space_around_keyword, space_around_method_call_operator, space_before_block_braces,
+    space_inside_array_literal_brackets, space_inside_block_braces,
+    space_inside_hash_literal_braces,
     stabby_lambda_parentheses,
     string_literals,
     string_literals_in_interpolation,
@@ -134,6 +136,14 @@ pub fn check_multiline_bundle(
 /// | 90-91 | module_length max / count_comments (`Metrics/ModuleLength` `Max` / `CountComments`) |
 /// | 92  | trailing_comma_in_hash_literal style (`EnforcedStyleForMultiline`: 0 no_comma, 1 comma, 2 consistent_comma, 3 diff_comma) |
 /// | 93  | trailing_comma_in_array_literal style (`EnforcedStyleForMultiline`, same coding) |
+/// | 94  | space_inside_hash_literal_braces style (`EnforcedStyle`: 0 space, 1 no_space, 2 compact) |
+/// | 95  | space_inside_hash_literal_braces empty no_space (`EnforcedStyleForEmptyBraces == 'no_space'`) |
+/// | 96  | space_inside_array_literal_brackets style (`EnforcedStyle`: 0 no_space, 1 space, 2 compact) |
+/// | 97  | space_inside_array_literal_brackets empty space (`EnforcedStyleForEmptyBrackets == 'space'`) |
+///
+/// `Layout/SpaceBeforeBlockBraces` carries no Rust-side config (its records
+/// are style-independent; the wrapper applies the styles), so it does not
+/// appear in the packing.
 ///
 /// `lists` (`Vec<String>`), 20 entries:
 ///
@@ -254,13 +264,15 @@ pub struct BundleConfig {
     pub stabby_lambda_parentheses: stabby_lambda_parentheses::Config,
     pub ambiguous_block_association: ambiguous_block_association::Config,
     pub empty_comment: empty_comment::Config,
+    pub space_inside_hash_literal_braces: space_inside_hash_literal_braces::Config,
+    pub space_inside_array_literal_brackets: space_inside_array_literal_brackets::Config,
 }
 
 // `Lint/ParenthesesAsGroupedExpression` carries no config so it doesn't appear
 // in the `nums` / `lists` packing; the bundle still computes its slot in the
 // shared walk (see `check_all_bundle` below).
 
-const NUMS_LEN: usize = 94;
+const NUMS_LEN: usize = 98;
 const LISTS_LEN: usize = 25;
 
 impl BundleConfig {
@@ -452,10 +464,27 @@ impl BundleConfig {
                 allow_border_comment: nums[86] != 0,
                 allow_margin_comment: nums[87] != 0,
             },
-            // Struct literal order is evaluation order: these two must stay
-            // last so `next_list()` reads lists 23 / 24.
+            // Struct literal order is evaluation order: these two must come
+            // after every earlier `next_list()` so they read lists 23 / 24
+            // (the space cop configs below consume no lists).
             class_length_count_as_one: next_list(),
             module_length_count_as_one: next_list(),
+            space_inside_hash_literal_braces: space_inside_hash_literal_braces::Config {
+                style: match nums[94] {
+                    1 => space_inside_hash_literal_braces::Style::NoSpace,
+                    2 => space_inside_hash_literal_braces::Style::Compact,
+                    _ => space_inside_hash_literal_braces::Style::Space,
+                },
+                no_space_empty: nums[95] != 0,
+            },
+            space_inside_array_literal_brackets: space_inside_array_literal_brackets::Config {
+                style: match nums[96] {
+                    1 => space_inside_array_literal_brackets::Style::Space,
+                    2 => space_inside_array_literal_brackets::Style::Compact,
+                    _ => space_inside_array_literal_brackets::Style::NoSpace,
+                },
+                space_empty: nums[97] != 0,
+            },
         })
     }
 }
@@ -589,6 +618,12 @@ pub struct BundleResult {
     pub empty_lines: Vec<empty_lines::EmptyLinesOffense>,
     /// At most one offense per file (the leading-blank-line offense).
     pub leading_empty_lines: Option<leading_empty_lines::LeadingEmptyLinesOffense>,
+    pub space_inside_hash_literal_braces:
+        Vec<space_inside_hash_literal_braces::SpaceInsideHashLiteralBracesOffense>,
+    pub space_inside_array_literal_brackets:
+        space_inside_array_literal_brackets::ArrayBracketsResult,
+    pub space_before_block_braces:
+        Vec<space_before_block_braces::SpaceBeforeBlockBracesRecord>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -713,6 +748,15 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut samco_rule = space_around_method_call_operator::build_rule(source);
     let mut sak_rule = space_around_keyword::build_rule(source);
     let mut sibb_rule = space_inside_block_braces::build_rule(source, cfg.space_inside_block_braces);
+    let mut sihlb_rule = space_inside_hash_literal_braces::build_rule(
+        source,
+        cfg.space_inside_hash_literal_braces,
+    );
+    let mut sialb_rule = space_inside_array_literal_brackets::build_rule(
+        source,
+        cfg.space_inside_array_literal_brackets,
+    );
+    let mut sbbb_rule = space_before_block_braces::build_rule(source);
     let mut ml_rule = method_length::build_rule(
         source,
         cfg.method_length_max,
@@ -803,6 +847,9 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut samco_rule,
         &mut sak_rule,
         &mut sibb_rule,
+        &mut sihlb_rule,
+        &mut sialb_rule,
+        &mut sbbb_rule,
         &mut ml_rule,
         &mut cl_rule,
         &mut mol_rule,
@@ -878,6 +925,9 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let space_around_method_call_operator = samco_rule.offenses;
     let space_around_keyword = sak_rule.offenses;
     let space_inside_block_braces = sibb_rule.offenses;
+    let space_inside_hash_literal_braces = sihlb_rule.into_offenses();
+    let space_inside_array_literal_brackets = sialb_rule.into_result();
+    let space_before_block_braces = sbbb_rule.records;
     let method_length = ml_rule.out;
     let class_length = cl_rule.out;
     let module_length = mol_rule.out;
@@ -1008,6 +1058,9 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         empty_line_after_magic_comment,
         empty_lines,
         leading_empty_lines,
+        space_inside_hash_literal_braces,
+        space_inside_array_literal_brackets,
+        space_before_block_braces,
     }
 }
 
@@ -1089,6 +1142,8 @@ mod tests {
             100, 0, // module_length: max(100) / count_comments
             0, // trailing_comma_in_hash_literal: style (no_comma)
             0, // trailing_comma_in_array_literal: style (no_comma)
+            0, 1, // space_inside_hash_literal_braces: style(space) / empty(no_space)
+            0, 0, // space_inside_array_literal_brackets: style(no_space) / empty(no_space)
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -2719,6 +2774,137 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn shared_walk_matches_standalone_space_inside_hash_literal_braces() {
+        let src = "h = {a: 1}\n\
+                   g = {  b: 2  }\n\
+                   e1 = {}\n\
+                   e2 = { }\n\
+                   e3 = {\n}\n\
+                   c = { a: { b: 1 } }\n\
+                   d = { k => %w{a} }\n\
+                   f = { a: proc {} }\n\
+                   cm = { # comment\n  a: 1 }\n\
+                   case x\nin {k1: 0}\n  1\nend\n";
+        for style in 0..=2i64 {
+            for empty in 0..=1i64 {
+                let (mut nums, lists) = default_packed();
+                nums[94] = style;
+                nums[95] = empty;
+                let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+                let bundle = check_all_bundle(src.as_bytes(), &cfg);
+                let alone = super::space_inside_hash_literal_braces::
+                    check_space_inside_hash_literal_braces(
+                        src.as_bytes(),
+                        cfg.space_inside_hash_literal_braces,
+                    );
+                assert_eq!(
+                    bundle.space_inside_hash_literal_braces.len(),
+                    alone.len(),
+                    "len mismatch style={style} empty={empty}"
+                );
+                for (a, b) in bundle.space_inside_hash_literal_braces.iter().zip(&alone) {
+                    assert_eq!(
+                        (a.start_offset, a.end_offset, a.message.code()),
+                        (b.start_offset, b.end_offset, b.message.code()),
+                        "style={style} empty={empty}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shared_walk_matches_standalone_space_inside_array_literal_brackets() {
+        let src = "a = [ 2, 3 ]\n\
+                   b = [1, [2], %w[a]]\n\
+                   e1 = []\n\
+                   e2 = [ ]\n\
+                   e3 = [\n]\n\
+                   d = [ [1] ]\n\
+                   f = [\n  [1], [2]]\n\
+                   cm = [ # comment\n  1]\n\
+                   case v\nin [ x, y ]\n  1\nin ADT[ i, [j ]]\n  2\nin ADT([g ], [h ])\n  3\nend\n";
+        for style in 0..=2i64 {
+            for empty in 0..=1i64 {
+                let (mut nums, lists) = default_packed();
+                nums[96] = style;
+                nums[97] = empty;
+                let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+                let bundle = check_all_bundle(src.as_bytes(), &cfg);
+                let alone = super::space_inside_array_literal_brackets::
+                    check_space_inside_array_literal_brackets(
+                        src.as_bytes(),
+                        cfg.space_inside_array_literal_brackets,
+                    );
+                assert_eq!(
+                    bundle.space_inside_array_literal_brackets.offenses.len(),
+                    alone.offenses.len(),
+                    "offense len mismatch style={style} empty={empty}"
+                );
+                for (a, b) in bundle
+                    .space_inside_array_literal_brackets
+                    .offenses
+                    .iter()
+                    .zip(&alone.offenses)
+                {
+                    assert_eq!(
+                        (
+                            a.start_offset,
+                            a.end_offset,
+                            a.message.code(),
+                            a.node,
+                            a.suppress_when_disable_uncorrectable
+                        ),
+                        (
+                            b.start_offset,
+                            b.end_offset,
+                            b.message.code(),
+                            b.node,
+                            b.suppress_when_disable_uncorrectable
+                        ),
+                        "style={style} empty={empty}"
+                    );
+                }
+                let pack = |r: &super::space_inside_array_literal_brackets::ArrayBracketsResult| {
+                    r.node_ops
+                        .iter()
+                        .map(|ops| ops.iter().map(|o| o.packed()).collect::<Vec<_>>())
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(
+                    pack(&bundle.space_inside_array_literal_brackets),
+                    pack(&alone),
+                    "ops mismatch style={style} empty={empty}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shared_walk_matches_standalone_space_before_block_braces() {
+        let src = "each { puts }\n\
+                   each{ puts }\n\
+                   7.times {}\n\
+                   ->(){ }\n\
+                   foo.map(a,\n  b) { |x| x }\n\
+                   foo.bar { |x|\n  x\n}\n\
+                   x.each do |n| n end\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone =
+            super::space_before_block_braces::check_space_before_block_braces(src.as_bytes());
+        assert_eq!(bundle.space_before_block_braces.len(), alone.len());
+        assert!(!alone.is_empty());
+        for (a, b) in bundle.space_before_block_braces.iter().zip(&alone) {
+            assert_eq!(
+                (a.left_start, a.left_end, a.space_begin, a.empty, a.multiline),
+                (b.left_start, b.left_end, b.space_begin, b.empty, b.multiline)
+            );
         }
     }
 
