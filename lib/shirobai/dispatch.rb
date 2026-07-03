@@ -199,9 +199,7 @@ module Shirobai
         _ = Cop::Layout::LeadingEmptyLines.bundle_args(config)
         sihlb = Cop::Layout::SpaceInsideHashLiteralBraces.bundle_args(config)
         sialb = Cop::Layout::SpaceInsideArrayLiteralBrackets.bundle_args(config)
-        # Layout/SpaceBeforeBlockBraces is config-free on the Rust side; its
-        # `bundle_args` returns `[]` and contributes nothing.
-        _ = Cop::Layout::SpaceBeforeBlockBraces.bundle_args(config)
+        sbbb = Cop::Layout::SpaceBeforeBlockBraces.bundle_args(config)
         ium = Cop::Style::IfUnlessModifier.bundle_args(config)
 
         nums = [
@@ -250,7 +248,8 @@ module Shirobai
           *tcal[0], # TrailingCommaInArrayLiteral style (1 num)
           *sihlb[0], # SpaceInsideHashLiteralBraces style / empty no_space (2 nums)
           *sialb[0], # SpaceInsideArrayLiteralBrackets style / empty space (2 nums)
-          *ium # IfUnlessModifier max_line_length (-1 = disabled) / tab_width (2 nums)
+          *ium, # IfUnlessModifier max_line_length (-1 = disabled) / tab_width (2 nums)
+          *sbbb[0] # SpaceBeforeBlockBraces style / empty style / bd conflict flag (3 nums)
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0], aba[0],

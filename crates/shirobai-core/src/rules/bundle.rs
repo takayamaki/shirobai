@@ -144,10 +144,9 @@ pub fn check_multiline_bundle(
 ///
 /// | 98  | if_unless_modifier_max (`Style/IfUnlessModifier`'s view of `Layout/LineLength` `Max`; `-1` when that cop is disabled) |
 /// | 99  | if_unless_modifier_tab_width (`LineLengthHelp#tab_indentation_width` for this cop) |
-///
-/// `Layout/SpaceBeforeBlockBraces` carries no Rust-side config (its records
-/// are style-independent; the wrapper applies the styles), so it does not
-/// appear in the packing.
+/// | 100 | space_before_block_braces style (`EnforcedStyle`: 0 space, 1 no_space) |
+/// | 101 | space_before_block_braces empty style (`EnforcedStyleForEmptyBraces` resolved: 0 space, 1 no_space, 2 invalid — `nil` follows `EnforcedStyle`) |
+/// | 102 | space_before_block_braces bd_line_count_based (`Style/BlockDelimiters` `EnforcedStyle == 'line_count_based'`) |
 ///
 /// `lists` (`Vec<String>`), 20 entries:
 ///
@@ -271,13 +270,14 @@ pub struct BundleConfig {
     pub space_inside_hash_literal_braces: space_inside_hash_literal_braces::Config,
     pub space_inside_array_literal_brackets: space_inside_array_literal_brackets::Config,
     pub if_unless_modifier: if_unless_modifier::Config,
+    pub space_before_block_braces: space_before_block_braces::Config,
 }
 
 // `Lint/ParenthesesAsGroupedExpression` carries no config so it doesn't appear
 // in the `nums` / `lists` packing; the bundle still computes its slot in the
 // shared walk (see `check_all_bundle` below).
 
-const NUMS_LEN: usize = 100;
+const NUMS_LEN: usize = 103;
 const LISTS_LEN: usize = 25;
 
 impl BundleConfig {
@@ -494,6 +494,19 @@ impl BundleConfig {
                 max_line_length: if nums[98] < 0 { None } else { Some(nums[98]) },
                 tab_width: nums[99],
             },
+            space_before_block_braces: space_before_block_braces::Config {
+                style: if nums[100] != 0 {
+                    space_before_block_braces::Style::NoSpace
+                } else {
+                    space_before_block_braces::Style::Space
+                },
+                empty_style: match nums[101] {
+                    1 => space_before_block_braces::EmptyStyle::NoSpace,
+                    2 => space_before_block_braces::EmptyStyle::Invalid,
+                    _ => space_before_block_braces::EmptyStyle::Space,
+                },
+                bd_line_count_based: nums[102] != 0,
+            },
         })
     }
 }
@@ -632,8 +645,7 @@ pub struct BundleResult {
         Vec<space_inside_hash_literal_braces::SpaceInsideHashLiteralBracesOffense>,
     pub space_inside_array_literal_brackets:
         space_inside_array_literal_brackets::ArrayBracketsResult,
-    pub space_before_block_braces:
-        Vec<space_before_block_braces::SpaceBeforeBlockBracesRecord>,
+    pub space_before_block_braces: space_before_block_braces::SpaceBeforeBlockBracesResult,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -766,7 +778,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         source,
         cfg.space_inside_array_literal_brackets,
     );
-    let mut sbbb_rule = space_before_block_braces::build_rule(source);
+    let mut sbbb_rule =
+        space_before_block_braces::build_rule(source, cfg.space_before_block_braces);
     let mut ml_rule = method_length::build_rule(
         source,
         cfg.method_length_max,
@@ -939,7 +952,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let space_inside_block_braces = sibb_rule.offenses;
     let space_inside_hash_literal_braces = sihlb_rule.into_offenses();
     let space_inside_array_literal_brackets = sialb_rule.into_result();
-    let space_before_block_braces = sbbb_rule.records;
+    let space_before_block_braces = sbbb_rule.into_result();
     let method_length = ml_rule.out;
     let class_length = cl_rule.out;
     let module_length = mol_rule.out;
@@ -1158,6 +1171,7 @@ mod tests {
             0, 1, // space_inside_hash_literal_braces: style(space) / empty(no_space)
             0, 0, // space_inside_array_literal_brackets: style(no_space) / empty(no_space)
             120, 2, // if_unless_modifier: max_line_length / tab_width (defaults)
+            0, 0, 1, // space_before_block_braces: style(space) / empty(space) / bd(line_count_based)
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -2903,22 +2917,46 @@ mod tests {
         let src = "each { puts }\n\
                    each{ puts }\n\
                    7.times {}\n\
+                   7.times {}\n\
                    ->(){ }\n\
                    foo.map(a,\n  b) { |x| x }\n\
                    foo.bar { |x|\n  x\n}\n\
                    x.each do |n| n end\n";
-        let (nums, lists) = default_packed();
-        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
-        let bundle = check_all_bundle(src.as_bytes(), &cfg);
-        let alone =
-            super::space_before_block_braces::check_space_before_block_braces(src.as_bytes());
-        assert_eq!(bundle.space_before_block_braces.len(), alone.len());
-        assert!(!alone.is_empty());
-        for (a, b) in bundle.space_before_block_braces.iter().zip(&alone) {
-            assert_eq!(
-                (a.left_start, a.left_end, a.space_begin, a.empty, a.multiline),
-                (b.left_start, b.left_end, b.space_begin, b.empty, b.multiline)
-            );
+        for style in 0..=1i64 {
+            for empty in 0..=2i64 {
+                for bd in 0..=1i64 {
+                    let (mut nums, lists) = default_packed();
+                    nums[100] = style;
+                    nums[101] = empty;
+                    nums[102] = bd;
+                    let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+                    let bundle = check_all_bundle(src.as_bytes(), &cfg);
+                    let alone = super::space_before_block_braces::check_space_before_block_braces(
+                        src.as_bytes(),
+                        cfg.space_before_block_braces,
+                    );
+                    let tag = format!("style={style} empty={empty} bd={bd}");
+                    let (b, a) = (&bundle.space_before_block_braces, &alone);
+                    assert_eq!(b.offenses.len(), a.offenses.len(), "len mismatch {tag}");
+                    for (x, y) in b.offenses.iter().zip(&a.offenses) {
+                        assert_eq!(
+                            (x.start_offset, x.end_offset, x.detected, x.from_empty),
+                            (y.start_offset, y.end_offset, y.detected, y.from_empty),
+                            "{tag}"
+                        );
+                    }
+                    let pack = |s: &super::space_before_block_braces::Summary| {
+                        (
+                            s.a_correct,
+                            s.b_match_first,
+                            s.b_offense,
+                            s.b_match_after,
+                            s.saw_empty,
+                        )
+                    };
+                    assert_eq!(pack(&b.summary), pack(&a.summary), "{tag}");
+                }
+            }
         }
     }
 

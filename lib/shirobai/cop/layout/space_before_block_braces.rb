@@ -5,18 +5,29 @@ module Shirobai
     module Layout
       # Drop-in Rust reimplementation of `Layout/SpaceBeforeBlockBraces`.
       #
-      # Rust walks the AST once and reports every brace block (`do ... end`
-      # already excluded) as `[left_start, left_end, space_begin, empty,
-      # multiline]` in document order: `space_begin` is the begin of
-      # `range_with_surrounding_space(left_brace)` and `multiline` mirrors
-      # `BlockNode#multiline?` (brace lines, not the whole node).
+      # Rust walks the AST once and decides every offense (`do ... end` and
+      # the `Style/BlockDelimiters` multiline conflict already excluded),
+      # sending back only the offense ranges plus a five-flag style-detection
+      # summary — an earlier version shipped one record per brace block and
+      # decided here, which scaled the wire volume with the number of blocks.
       #
-      # Everything stateful stays here, verbatim from stock: the
-      # `Style/BlockDelimiters` conflict skip, `check_empty` /
-      # `check_non_empty` with their `config_to_allow_offenses` bookkeeping
-      # (the vendor spec asserts it), the lazy
-      # `EnforcedStyleForEmptyBraces` validation raise, and the
-      # `range.source`-keyed corrector.
+      # The summary replays stock's `config_to_allow_offenses` bookkeeping
+      # byte-identically (the vendor spec asserts it):
+      #
+      # - non-empty blocks matching the style fire `correct_style_detected`
+      #   once (the state machine intersects sets, so repeats are idempotent);
+      # - each non-empty offense fires `opposite_style_detected` inside its
+      #   `add_offense` block, exactly like stock (so directive-disabled lines
+      #   suppress it);
+      # - the empty-braces axis writes one fixed value and can only be cleared
+      #   by a matching empty block seen while a value is stored, so "match
+      #   before first offense" / "match after some offense" bits reproduce
+      #   every ordering (`no_acceptable_style!` replaces the whole hash and
+      #   freezes all later events, making the flag replay exact).
+      #
+      # The lazy `Unknown EnforcedStyleForEmptyBraces selected!` raise fires
+      # when an empty-brace block was seen under an invalid setting, mirroring
+      # stock's raise from `check_empty`.
       class SpaceBeforeBlockBraces < RuboCop::Cop::Base
         include RuboCop::Cop::ConfigurableEnforcedStyle
         include RuboCop::Cop::RangeHelp
@@ -24,6 +35,8 @@ module Shirobai
 
         MISSING_MSG = "Space missing to the left of {."
         DETECTED_MSG = "Space detected to the left of {."
+
+        STYLES = { "space" => 0, "no_space" => 1 }.freeze
 
         # Stock declares the same incompatibility: both cops can rewrite the
         # same brace, so RuboCop's correction loop defers a conflicting pass.
@@ -34,53 +47,56 @@ module Shirobai
         def self.cop_name = "Layout/SpaceBeforeBlockBraces"
         def self.badge = RuboCop::Cop::Badge.parse(cop_name)
 
-        # The Rust side is config-free (every style decision happens here), so
-        # nothing joins the packed bundle config.
-        def self.bundle_args(_config)
-          []
+        # Packed args for the bundled run: `[nums, lists]` with
+        # `nums = [EnforcedStyle, resolved EnforcedStyleForEmptyBraces
+        # (0 space / 1 no_space / 2 invalid; nil follows EnforcedStyle),
+        # Style/BlockDelimiters EnforcedStyle == 'line_count_based']`.
+        def self.bundle_args(config)
+          cop_config = config.for_badge(badge)
+          style = STYLES.fetch(cop_config["EnforcedStyle"] || "space")
+          empty = case cop_config["EnforcedStyleForEmptyBraces"]
+                  when "space" then 0
+                  when "no_space" then 1
+                  when nil then style
+                  else 2
+                  end
+          bd = config.for_cop("Style/BlockDelimiters")["EnforcedStyle"] == "line_count_based"
+          [[style, empty, bd ? 1 : 0], []]
         end
 
         def on_new_investigation
-          @buffer = processed_source.buffer
+          buffer = processed_source.buffer
           off = SourceOffsets.for(processed_source.raw_source)
+          offenses, summary = result_for_source
+          a_correct, b_match_first, b_offense, b_match_after, saw_empty = summary
 
-          records_for_source.each do |left_start, left_end, space_begin, empty, multiline|
-            next if conflict_with_block_delimiters?(multiline)
+          # Stock raises lazily from check_empty when an empty-brace block is
+          # reached under an invalid EnforcedStyleForEmptyBraces.
+          raise "Unknown EnforcedStyleForEmptyBraces selected!" if saw_empty && invalid_empty_style?
 
-            left_brace = range_between(off[left_start], off[left_end])
-            space_start = off[space_begin]
-            used_style = space_begin < left_start ? :space : :no_space
+          replay_empty_braces_axis(b_match_first, b_offense, b_match_after)
+          correct_style_detected if a_correct
 
-            if empty
-              check_empty(left_brace, space_start, used_style)
-            else
-              check_non_empty(left_brace, space_start, used_style)
+          offenses.each do |start, fin, detected, from_empty|
+            range = Parser::Source::Range.new(buffer, off[start], off[fin])
+            add_offense(range, message: detected ? DETECTED_MSG : MISSING_MSG) do |corrector|
+              autocorrect(corrector, range)
+              opposite_style_detected unless from_empty
             end
           end
         end
 
         private
 
-        def range_between(start_pos, end_pos)
-          Parser::Source::Range.new(@buffer, start_pos, end_pos)
-        end
-
-        def check_empty(left_brace, space_start, used_style)
-          if style_for_empty_braces == used_style
-            handle_different_styles_for_empty_braces(used_style)
-            return
-          elsif !config_to_allow_offenses.key?("Enabled")
+        # Replays check_empty's config_to_allow_offenses effects in an order
+        # equivalent to the in-file event order (see the class docs).
+        def replay_empty_braces_axis(b_match_first, b_offense, b_match_after)
+          handle_different_styles_for_empty_braces(style_for_empty_braces) if b_match_first
+          if b_offense && !config_to_allow_offenses.key?("Enabled")
+            used_style = style_for_empty_braces == :space ? :no_space : :space
             config_to_allow_offenses["EnforcedStyleForEmptyBraces"] = used_style.to_s
           end
-
-          if style_for_empty_braces == :space
-            range = left_brace
-            msg = MISSING_MSG
-          else
-            range = range_between(space_start, left_brace.begin_pos)
-            msg = DETECTED_MSG
-          end
-          add_offense(range, message: msg) { |corrector| autocorrect(corrector, range) }
+          handle_different_styles_for_empty_braces(style_for_empty_braces) if b_match_after
         end
 
         def handle_different_styles_for_empty_braces(used_style)
@@ -88,30 +104,6 @@ module Shirobai
              config_to_allow_offenses["EnforcedStyleForEmptyBraces"].to_sym != used_style
             config_to_allow_offenses.clear
             config_to_allow_offenses["Enabled"] = false
-          end
-        end
-
-        def check_non_empty(left_brace, space_start, used_style)
-          case used_style
-          when style then correct_style_detected
-          when :space then space_detected(left_brace, space_start)
-          else space_missing(left_brace)
-          end
-        end
-
-        def space_missing(left_brace)
-          add_offense(left_brace, message: MISSING_MSG) do |corrector|
-            autocorrect(corrector, left_brace)
-            opposite_style_detected
-          end
-        end
-
-        def space_detected(left_brace, space_start)
-          space = range_between(space_start, left_brace.begin_pos)
-
-          add_offense(space, message: DETECTED_MSG) do |corrector|
-            autocorrect(corrector, space)
-            opposite_style_detected
           end
         end
 
@@ -131,24 +123,24 @@ module Shirobai
           end
         end
 
-        def conflict_with_block_delimiters?(multiline)
-          block_delimiters_style == "line_count_based" && style == :no_space && multiline
+        def invalid_empty_style?
+          !["space", "no_space", nil].include?(cop_config["EnforcedStyleForEmptyBraces"])
         end
 
-        def block_delimiters_style
-          config.for_cop("Style/BlockDelimiters")["EnforcedStyle"]
-        end
-
-        def records_for_source
+        def result_for_source
           if bundle_eligible?
             Dispatch.offenses_for(processed_source, config, :space_before_block_braces)
           else
-            Shirobai.check_space_before_block_braces(processed_source.raw_source)
+            nums, = self.class.bundle_args(config)
+            Shirobai.check_space_before_block_braces(
+              processed_source.raw_source, nums[0], nums[1], nums[2] == 1
+            )
           end
         end
 
-        # No per-investigation state on the Rust side at all, so this cop is
-        # always bundle eligible. Kept for symmetry / a future fallback.
+        # No per-investigation state and no config that can't be packed, so
+        # this cop is always bundle eligible. Kept for symmetry / a future
+        # fallback.
         def bundle_eligible?
           true
         end

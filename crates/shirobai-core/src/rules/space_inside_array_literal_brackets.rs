@@ -144,7 +144,12 @@ impl Op {
     }
 }
 
-/// Offenses plus the per-node correction programs they reference.
+/// Offenses plus the per-node correction programs they reference. `node_ops`
+/// holds programs only for nodes that produced at least one offense (indexed
+/// by the offenses' `node` field in first-appearance order) — a program is
+/// only ever replayed on a node's first offense, and shipping one per checked
+/// node made the wire volume scale with the number of array literals instead
+/// of the number of offenses.
 pub struct ArrayBracketsResult {
     pub offenses: Vec<SpaceInsideArrayLiteralBracketsOffense>,
     pub node_ops: Vec<Vec<Op>>,
@@ -257,7 +262,26 @@ impl<'a> Visitor<'a> {
                 }
             }
         }
-        ArrayBracketsResult { offenses, node_ops }
+        // Keep only the offending nodes' programs; renumber the offenses'
+        // node keys to the compacted vector (first-appearance order).
+        let mut remap: Vec<Option<usize>> = vec![None; node_ops.len()];
+        let mut kept_ops: Vec<Vec<Op>> = Vec::new();
+        for offense in &mut offenses {
+            let slot = match remap[offense.node] {
+                Some(slot) => slot,
+                None => {
+                    let slot = kept_ops.len();
+                    kept_ops.push(std::mem::take(&mut node_ops[offense.node]));
+                    remap[offense.node] = Some(slot);
+                    slot
+                }
+            };
+            offense.node = slot;
+        }
+        ArrayBracketsResult {
+            offenses,
+            node_ops: kept_ops,
+        }
     }
 
     fn offense(
@@ -921,7 +945,7 @@ mod tests {
         // Without the constant the inner pattern is checked normally.
         assert_eq!(
             run("case v\nin [[a, b ]]\n  1\nend\n", Style::NoSpace, false),
-            vec![(16, 17, 1, 1, true)]
+            vec![(16, 17, 1, 0, true)]
         );
     }
 

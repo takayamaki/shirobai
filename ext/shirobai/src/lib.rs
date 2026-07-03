@@ -760,17 +760,31 @@ fn map_space_inside_array_literal_brackets(
     )
 }
 
-/// `Layout/SpaceBeforeBlockBraces`: `[[left_start, left_end, space_begin,
-/// empty, multiline], ...]` — one record per brace block in document order
-/// (`do ... end` blocks are already excluded). The wrapper replays stock's
-/// `check_empty` / `check_non_empty` (including the
-/// `config_to_allow_offenses` state machine) over the records.
+/// `Layout/SpaceBeforeBlockBraces`:
+/// `[[[start, end, detected, from_empty], ...], [a_correct, b_match_first,
+/// b_offense, b_match_after, saw_empty]]` — the offenses (range +
+/// message/axis selectors) plus the five-flag style-detection summary the
+/// wrapper replays into `config_to_allow_offenses` (see the rule docs).
+#[allow(clippy::type_complexity)]
 fn map_space_before_block_braces(
-    v: Vec<shirobai_core::rules::space_before_block_braces::SpaceBeforeBlockBracesRecord>,
-) -> Vec<(usize, usize, usize, bool, bool)> {
-    v.into_iter()
-        .map(|r| (r.left_start, r.left_end, r.space_begin, r.empty, r.multiline))
-        .collect()
+    r: shirobai_core::rules::space_before_block_braces::SpaceBeforeBlockBracesResult,
+) -> (
+    Vec<(usize, usize, bool, bool)>,
+    (bool, bool, bool, bool, bool),
+) {
+    (
+        r.offenses
+            .into_iter()
+            .map(|o| (o.start_offset, o.end_offset, o.detected, o.from_empty))
+            .collect(),
+        (
+            r.summary.a_correct,
+            r.summary.b_match_first,
+            r.summary.b_offense,
+            r.summary.b_match_after,
+            r.summary.saw_empty,
+        ),
+    )
 }
 
 /// `Layout/EndAlignment`: `[[end_start, end_end, matching, message, align_column], ...]`
@@ -2520,14 +2534,35 @@ fn check_space_inside_array_literal_brackets(
 }
 
 /// Ruby entry point for `Layout/SpaceBeforeBlockBraces` (the bundle is the
-/// usual path). Config-free: the wrapper applies the styles. Returns the
-/// shape documented on `map_space_before_block_braces`.
-fn check_space_before_block_braces(source: RString) -> Vec<(usize, usize, usize, bool, bool)> {
-    map_space_before_block_braces(
-        shirobai_core::rules::space_before_block_braces::check_space_before_block_braces(bytes(
-            &source,
-        )),
-    )
+/// usual path). `style` is 0 = space, 1 = no_space; `empty_style` is the
+/// resolved `EnforcedStyleForEmptyBraces` (0 space, 1 no_space, 2 invalid);
+/// `bd_line_count_based` is `Style/BlockDelimiters`' conflict flag. Returns
+/// the shape documented on `map_space_before_block_braces`.
+#[allow(clippy::type_complexity)]
+fn check_space_before_block_braces(
+    source: RString,
+    style: u8,
+    empty_style: u8,
+    bd_line_count_based: bool,
+) -> (
+    Vec<(usize, usize, bool, bool)>,
+    (bool, bool, bool, bool, bool),
+) {
+    use shirobai_core::rules::space_before_block_braces as sbbb;
+    let cfg = sbbb::Config {
+        style: if style != 0 {
+            sbbb::Style::NoSpace
+        } else {
+            sbbb::Style::Space
+        },
+        empty_style: match empty_style {
+            1 => sbbb::EmptyStyle::NoSpace,
+            2 => sbbb::EmptyStyle::Invalid,
+            _ => sbbb::EmptyStyle::Space,
+        },
+        bd_line_count_based,
+    };
+    map_space_before_block_braces(sbbb::check_space_before_block_braces(bytes(&source), cfg))
 }
 
 /// Ruby entry point for `Layout/EndAlignment`. `style` is the
@@ -2997,7 +3032,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     )?;
     module.define_module_function(
         "check_space_before_block_braces",
-        function!(check_space_before_block_braces, 1),
+        function!(check_space_before_block_braces, 4),
     )?;
     module.define_module_function("check_end_alignment", function!(check_end_alignment, 2))?;
     module.define_module_function(

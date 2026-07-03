@@ -385,7 +385,10 @@ fn run_perrule(sources: &[Vec<u8>], cfg: &BundleConfig, iterations: usize) {
             );
         }),
         e!("space_before_block_braces", |s: &[u8]| {
-            std::hint::black_box(r::space_before_block_braces::check_space_before_block_braces(s));
+            std::hint::black_box(r::space_before_block_braces::check_space_before_block_braces(
+                s,
+                cfg.space_before_block_braces,
+            ));
         }),
         e!("method_length", |s: &[u8]| {
             std::hint::black_box(r::method_length::check_method_length(
