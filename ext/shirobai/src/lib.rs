@@ -1221,7 +1221,8 @@ fn register_bundle_config(
 /// 68 class_length / 69 module_length /
 /// 70 trailing_comma_in_hash_literal / 71 trailing_comma_in_array_literal /
 /// 72 space_inside_hash_literal_braces /
-/// 73 space_inside_array_literal_brackets / 74 space_before_block_braces
+/// 73 space_inside_array_literal_brackets / 74 space_before_block_braces /
+/// 75 if_unless_modifier
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1232,7 +1233,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(75);
+        let ary = ruby.ary_new_capa(76);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -1346,6 +1347,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             r.space_inside_array_literal_brackets,
         ))?;
         ary.push(map_space_before_block_braces(r.space_before_block_braces))?;
+        ary.push(map_if_unless_modifier(r.if_unless_modifier))?;
         Ok(ary)
     })
 }
@@ -1419,6 +1421,68 @@ fn map_leading_empty_lines(
     v.into_iter()
         .map(|o| (o.start, o.end, o.ac_start, o.ac_end))
         .collect()
+}
+
+type IfUnlessModifierOps = Vec<(u8, usize, usize, String)>;
+
+/// `Style/IfUnlessModifier` candidates: `[kind, kw_start, kw_end, node_start,
+/// node_end, flags, comment_start, comment_end, replacement_no_comment,
+/// replacement_with_comment, line_number, ops]`, in walk order.
+///
+/// `kind`: 0 = "use modifier", 1 = "too long". `flags` bits: 1 unless-keyword
+/// / 2 another_modifier_if_on_same_line / 4 has first-line comment / 8 code
+/// after `end` / 16 fits without comment / 32 fits with comment. `ops` are
+/// `[op_kind, start, end, text]` with 0 = replace, 1 = remove (direction 2).
+#[allow(clippy::type_complexity)]
+fn map_if_unless_modifier(
+    v: Vec<shirobai_core::rules::if_unless_modifier::IfUnlessModifierCandidate>,
+) -> Vec<(u8, usize, usize, usize, usize, u8, usize, usize, String, String, usize, IfUnlessModifierOps)> {
+    v.into_iter()
+        .map(|c| {
+            let flags = u8::from(c.is_unless)
+                | (u8::from(c.another_modifier_same_line) << 1)
+                | (u8::from(c.has_comment) << 2)
+                | (u8::from(c.has_code_after_end) << 3)
+                | (u8::from(c.fits_no_comment) << 4)
+                | (u8::from(c.fits_with_comment) << 5);
+            let ops = c
+                .ops
+                .into_iter()
+                .map(|op| (op.kind, op.start, op.end, op.text))
+                .collect();
+            (
+                c.kind,
+                c.keyword_start,
+                c.keyword_end,
+                c.node_start,
+                c.node_end,
+                flags,
+                c.comment_start,
+                c.comment_end,
+                c.replacement_no_comment,
+                c.replacement_with_comment,
+                c.line_number,
+                ops,
+            )
+        })
+        .collect()
+}
+
+/// Standalone `Style/IfUnlessModifier` (fallback when the bundle path is not
+/// usable, e.g. CRLF/BOM sources scanned via `buffer.source`). `nums` is
+/// `[max_line_length (-1 = Layout/LineLength disabled), tab_width]`.
+#[allow(clippy::type_complexity)]
+fn check_if_unless_modifier(
+    source: RString,
+    nums: Vec<i64>,
+) -> Vec<(u8, usize, usize, usize, usize, u8, usize, usize, String, String, usize, IfUnlessModifierOps)> {
+    let cfg = shirobai_core::rules::if_unless_modifier::Config {
+        max_line_length: if nums[0] < 0 { None } else { Some(nums[0]) },
+        tab_width: nums[1],
+    };
+    map_if_unless_modifier(
+        shirobai_core::rules::if_unless_modifier::check_if_unless_modifier(bytes(&source), cfg),
+    )
 }
 
 /// Ruby entry point for `Lint/Debugger`. Takes the source, the flattened
@@ -2890,6 +2954,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_empty_line_after_guard_clause",
         function!(check_empty_line_after_guard_clause, 1),
+    )?;
+    module.define_module_function(
+        "check_if_unless_modifier",
+        function!(check_if_unless_modifier, 2),
     )?;
     module.define_module_function(
         "check_empty_comment",

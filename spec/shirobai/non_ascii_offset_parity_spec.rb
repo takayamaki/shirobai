@@ -357,12 +357,17 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # both sit after the multibyte prefix, so the byte->char conversion runs
     # on every offset Rust returns.
     "Layout/EmptyLines" =>
-      "a = 1\n\n\nb = 2\n"
+      "a = 1\n\n\nb = 2\n",
     # NOTE: `Layout/LeadingEmptyLines` does not appear in this synthetic
     # `prefix + body` sweep — the shared prefix puts a comment on line 1,
     # which IS a token, so the cop never fires once prepended. The cop's
     # byte→char path still gets non-ASCII coverage from the fileutils.rb
     # sweep below (which uses the cop's own multibyte first token).
+    # keyword offense range + node replace range and the Rust-built
+    # replacement text (multibyte body slice), both directions.
+    "Style/IfUnlessModifier" =>
+      "if condition\n  do_stuff(\"あいう\")\nend\n" \
+      "foo_bar(\"えお\") if #{"a" * 100}_condition\n",
   }
 
   cases.each do |cop_name, body|

@@ -480,7 +480,25 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Layout::LeadingEmptyLines,
       Shirobai::Cop::Layout::LeadingEmptyLines,
       "\nclass Foo\nend\n"
-    ]
+    ],
+    # Both directions are correctable in lint mode; the same-line-modifier
+    # correction skip must leave an EMPTY corrector (`:unsupported`), exactly
+    # like stock's `another_modifier_if_on_same_line?` guard.
+    "Style/IfUnlessModifier (to modifier form)" => [
+      RuboCop::Cop::Style::IfUnlessModifier,
+      Shirobai::Cop::Style::IfUnlessModifier,
+      "if condition\n  do_stuff(bar)\nend\n"
+    ],
+    "Style/IfUnlessModifier (too long modifier form)" => [
+      RuboCop::Cop::Style::IfUnlessModifier,
+      Shirobai::Cop::Style::IfUnlessModifier,
+      "do_something(arg) if #{"a" * 100}_condition_name\n"
+    ],
+    "Style/IfUnlessModifier (uncorrected same-line modifiers)" => [
+      RuboCop::Cop::Style::IfUnlessModifier,
+      Shirobai::Cop::Style::IfUnlessModifier,
+      "{ x: (do_something_rather_long(arg) if #{"b" * 80}_cond), y: (2 if b) }\n"
+    ],
   }
 
   cases.each do |name, (stock_klass, shirobai_klass, source)|

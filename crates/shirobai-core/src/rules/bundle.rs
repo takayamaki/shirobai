@@ -24,6 +24,7 @@ use super::{
     end_alignment,
     first_argument_indentation, first_array_element_indentation, first_hash_element_indentation,
     hash_alignment, hash_each_methods, hash_syntax, hash_transform_keys,
+    if_unless_modifier,
     indentation_consistency, indentation_width,
     leading_empty_lines,
     line_end_concatenation, line_length,
@@ -140,6 +141,9 @@ pub fn check_multiline_bundle(
 /// | 95  | space_inside_hash_literal_braces empty no_space (`EnforcedStyleForEmptyBraces == 'no_space'`) |
 /// | 96  | space_inside_array_literal_brackets style (`EnforcedStyle`: 0 no_space, 1 space, 2 compact) |
 /// | 97  | space_inside_array_literal_brackets empty space (`EnforcedStyleForEmptyBrackets == 'space'`) |
+///
+/// | 98  | if_unless_modifier_max (`Style/IfUnlessModifier`'s view of `Layout/LineLength` `Max`; `-1` when that cop is disabled) |
+/// | 99  | if_unless_modifier_tab_width (`LineLengthHelp#tab_indentation_width` for this cop) |
 ///
 /// `Layout/SpaceBeforeBlockBraces` carries no Rust-side config (its records
 /// are style-independent; the wrapper applies the styles), so it does not
@@ -266,13 +270,14 @@ pub struct BundleConfig {
     pub empty_comment: empty_comment::Config,
     pub space_inside_hash_literal_braces: space_inside_hash_literal_braces::Config,
     pub space_inside_array_literal_brackets: space_inside_array_literal_brackets::Config,
+    pub if_unless_modifier: if_unless_modifier::Config,
 }
 
 // `Lint/ParenthesesAsGroupedExpression` carries no config so it doesn't appear
 // in the `nums` / `lists` packing; the bundle still computes its slot in the
 // shared walk (see `check_all_bundle` below).
 
-const NUMS_LEN: usize = 98;
+const NUMS_LEN: usize = 100;
 const LISTS_LEN: usize = 25;
 
 impl BundleConfig {
@@ -485,6 +490,10 @@ impl BundleConfig {
                 },
                 space_empty: nums[97] != 0,
             },
+            if_unless_modifier: if_unless_modifier::Config {
+                max_line_length: if nums[98] < 0 { None } else { Some(nums[98]) },
+                tab_width: nums[99],
+            },
         })
     }
 }
@@ -612,6 +621,7 @@ pub struct BundleResult {
         Vec<ambiguous_block_association::AmbiguousBlockAssociationOffense>,
     pub empty_line_after_guard_clause:
         Vec<empty_line_after_guard_clause::GuardClauseCandidate>,
+    pub if_unless_modifier: Vec<if_unless_modifier::IfUnlessModifierCandidate>,
     pub empty_comment: Vec<empty_comment::EmptyCommentOffense>,
     pub empty_line_after_magic_comment:
         Vec<empty_line_after_magic_comment::MagicCommentCandidate>,
@@ -800,6 +810,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut htk_rule = hash_transform_keys::build_rule(source);
     let mut aba_rule =
         ambiguous_block_association::build_rule(source, cfg.ambiguous_block_association.clone());
+    let mut ium_rule = if_unless_modifier::build_rule(source, cfg.if_unless_modifier);
     // `Layout/EmptyLines` joins the shared walk only when the file actually
     // contains `\n\n\n` (stock's prefilter); otherwise the rule's collected
     // lines are unused and we skip both the walk push and the finalize. The
@@ -868,6 +879,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut uc_rule,
         &mut htk_rule,
         &mut aba_rule,
+        &mut ium_rule,
     ];
     if empty_lines_eligible {
         rules.push(&mut el_rule);
@@ -1054,6 +1066,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         hash_transform_keys,
         ambiguous_block_association,
         empty_line_after_guard_clause,
+        if_unless_modifier: ium_rule.candidates,
         empty_comment,
         empty_line_after_magic_comment,
         empty_lines,
@@ -1144,6 +1157,7 @@ mod tests {
             0, // trailing_comma_in_array_literal: style (no_comma)
             0, 1, // space_inside_hash_literal_braces: style(space) / empty(no_space)
             0, 0, // space_inside_array_literal_brackets: style(no_space) / empty(no_space)
+            120, 2, // if_unless_modifier: max_line_length / tab_width (defaults)
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -3093,6 +3107,50 @@ mod tests {
                 (a.start_offset, a.end_offset, a.column_delta),
                 (b.start_offset, b.end_offset, b.column_delta)
             );
+        }
+    }
+
+    #[test]
+    fn if_unless_modifier_bundle_matches_standalone() {
+        // One "use modifier" candidate (with a first-line comment and a
+        // parenthesizing parent) and one "too long" candidate (with a
+        // comment-move rewrite), so both record shapes are compared.
+        let long = "a".repeat(110);
+        let src = format!(
+            "x = if a # note\n  b\nend\nfoo(arg) if {long}_cond\ny(z) if w # {long}\n"
+        );
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone = super::if_unless_modifier::check_if_unless_modifier(
+            src.as_bytes(),
+            cfg.if_unless_modifier,
+        );
+        assert_eq!(bundle.if_unless_modifier.len(), alone.len());
+        assert_eq!(alone.len(), 3);
+        for (a, b) in bundle.if_unless_modifier.iter().zip(&alone) {
+            assert_eq!(a.kind, b.kind);
+            assert_eq!(
+                (a.keyword_start, a.keyword_end, a.node_start, a.node_end),
+                (b.keyword_start, b.keyword_end, b.node_start, b.node_end)
+            );
+            assert_eq!(a.is_unless, b.is_unless);
+            assert_eq!(a.another_modifier_same_line, b.another_modifier_same_line);
+            assert_eq!(
+                (a.has_comment, a.comment_start, a.comment_end, a.has_code_after_end),
+                (b.has_comment, b.comment_start, b.comment_end, b.has_code_after_end)
+            );
+            assert_eq!(
+                (a.fits_no_comment, a.fits_with_comment),
+                (b.fits_no_comment, b.fits_with_comment)
+            );
+            assert_eq!(a.replacement_no_comment, b.replacement_no_comment);
+            assert_eq!(a.replacement_with_comment, b.replacement_with_comment);
+            assert_eq!(a.line_number, b.line_number);
+            assert_eq!(a.ops.len(), b.ops.len());
+            for (x, y) in a.ops.iter().zip(&b.ops) {
+                assert_eq!((x.kind, x.start, x.end, &x.text), (y.kind, y.start, y.end, &y.text));
+            }
         }
     }
 }

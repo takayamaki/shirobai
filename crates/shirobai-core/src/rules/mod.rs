@@ -33,6 +33,7 @@ pub mod hash_alignment;
 pub mod hash_each_methods;
 pub mod hash_syntax;
 pub mod hash_transform_keys;
+pub mod if_unless_modifier;
 pub mod indentation_consistency;
 pub mod indentation_width;
 pub mod leading_empty_lines;
