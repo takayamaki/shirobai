@@ -34,31 +34,39 @@ shirobaiは日本語話者なら当然わかるでしょう、白バイです。
 
 ## 現状
 
-- **63 cop** を Rust 実装済み（Lint / Layout / Metrics / Naming / Style）。
+- **76 cop** を Rust 実装済み（Lint / Layout / Metrics / Naming / Style）。
 - **drop-in 完全互換**を実コーパスで検証済み。
   検証は `benches/parity_diff.sh` で行う。実装済み全 cop について offense
   の位置・メッセージ・autocorrect 後のバイトすべてが stock RuboCop と一致する。
   PENDING autocorrect は許容しない。完全互換に到達できない cop は ship しない方針。
 - **実プロジェクトでの速度** — 実 CLI、各プロジェクトの `.rubocop.yml`、
-  plugin gem 込み、3 round 中央値:
+  plugin gem 込み、5 round 中央値:
 
-  | コーパス | files | stock | shirobai | 削減 |
-  |---|---|---|---|---|
-  | Mastodon | 3,225 | 92.00s | 73.82s | **-18.18s (-19.8%)** |
-  | Discourse | 10,519 | 218.75s | 199.12s | **-19.62s (-9.0%)** |
-  | Redmine | 1,125 | 44.11s | 34.26s | **-9.85s (-22.3%)** |
+  | コーパス | files | offenses | stock | shirobai | 削減 |
+  |---|---|---|---|---|---|
+  | Mastodon | 3,206 | 0 | 116.25s | 90.57s | **-25.69s (-22.1%)** |
+  | Discourse | 10,229 | 16 | 259.56s | 237.86s | **-21.70s (-8.4%)** |
+  | Redmine | 1,058 | 2 | 56.73s | 43.24s | **-13.49s (-23.8%)** |
+  | fluentd | 456 | 0 | 9.73s | 9.97s | -0.24s (-2.5%) |
 
-  計測環境: Intel Core i9-9900K (8C/16T, 3.60 GHz) / 32 GB RAM /
-  KIOXIA EXCERIA SSD / devcontainer (Docker 29.1) on Ubuntu 24.04 /
-  Ruby 4.0.5 (+PRISM) / Rust 1.96.0
+  計測環境: GitHub Actions `ubuntu-latest`（4-vCPU 共有 runner）、
+  shirobai は [`84b6906`](https://github.com/takayamaki/shirobai/commit/84b6906) 時点。
+  各実行はまず stock と shirobai が **同じ offense 集合** を報告することを検証してから、
+  同じコードを lint する中央値時間を測る。
+  任意のコミットで再実行するには `gh workflow run bench.yml`
+  （`.github/workflows/bench.yml`）。
 
   shirobai が置き換えるのは rubocop gem 本体の cop のみ。
   plugin の cop（rubocop-rails、rubocop-rspec 等）はそのまま動くため、
-  plugin cop の比重が大きいプロジェクトほど削減率は小さくなる。
+  plugin cop の比重が大きいプロジェクトほど削減率は小さくなる
+  （Discourse は plugin 依存が大きい）。
+  fluentd は config でほとんどの default cop が無効化されており、
+  shirobai が置き換える対象がほとんど残らないため、
+  native extension の固定ロードコストが削減分をわずかに上回る。
 
-  RuboCop 自身と fluentd も互換検証には使っているが、config でほとんどの
-  default cop が無効化されている/ファイルが除外されているため、
-  shirobai が置き換える対象がほとんど残らない。
+  RuboCop 自身も互換検証には使っているがベンチには含めていない。
+  config が `rubocop-internal_affairs` / `rubocop-rake` を要求し、
+  かつ rubocop gem 本体の cop がほとんど有効化されていないため。
 
 ## 前提条件
 

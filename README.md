@@ -43,32 +43,40 @@ The image is simple: RuboCop hops on a shiro-bai and gets faster.
 
 ## Current status
 
-- **63 cops** reimplemented in Rust (Lint / Layout / Metrics / Naming / Style).
+- **76 cops** reimplemented in Rust (Lint / Layout / Metrics / Naming / Style).
 - **Full drop-in compatibility** verified on real codebases.
   For every implemented cop, every offense position, message,
   and autocorrected byte matches stock RuboCop.
   I do not ship a cop with pending autocorrect.
   If a cop cannot reach full compatibility, I remove it.
 - **Real-world speedup** — real CLI, each project's own `.rubocop.yml`,
-  all plugin gems installed, 3-round median:
+  all plugin gems installed, 5-round median:
 
-  | Corpus | files | stock | shirobai | saving |
-  |---|---|---|---|---|
-  | Mastodon | 3,225 | 92.00s | 73.82s | **-18.18s (-19.8%)** |
-  | Discourse | 10,519 | 218.75s | 199.12s | **-19.62s (-9.0%)** |
-  | Redmine | 1,125 | 44.11s | 34.26s | **-9.85s (-22.3%)** |
+  | Corpus | files | offenses | stock | shirobai | saving |
+  |---|---|---|---|---|---|
+  | Mastodon | 3,206 | 0 | 116.25s | 90.57s | **-25.69s (-22.1%)** |
+  | Discourse | 10,229 | 16 | 259.56s | 237.86s | **-21.70s (-8.4%)** |
+  | Redmine | 1,058 | 2 | 56.73s | 43.24s | **-13.49s (-23.8%)** |
+  | fluentd | 456 | 0 | 9.73s | 9.97s | -0.24s (-2.5%) |
 
-  Measured on: Intel Core i9-9900K (8C/16T, 3.60 GHz) / 32 GB RAM /
-  KIOXIA EXCERIA SSD / devcontainer (Docker 29.1) on Ubuntu 24.04 /
-  Ruby 4.0.5 (+PRISM) / Rust 1.96.0
+  Measured on GitHub Actions `ubuntu-latest` (4-vCPU shared runner)
+  against shirobai at commit [`84b6906`](https://github.com/takayamaki/shirobai/commit/84b6906).
+  Each run first verifies that stock and shirobai report the **same offense set**
+  on the corpus's own config; the table shows the median time to lint the same code.
+  Rerun on any commit via `gh workflow run bench.yml`
+  (`.github/workflows/bench.yml`).
 
   shirobai only replaces cops from the rubocop gem itself.
   Plugin cops (rubocop-rails, rubocop-rspec, etc.) run unchanged,
-  so projects that spend more time on plugin cops see a lower percentage improvement.
+  so projects that spend more time on plugin cops see a lower percentage improvement
+  (Discourse is a heavy plugin user).
+  fluentd's config disables most default cops, leaving very few rubocop-gem cops
+  for shirobai to replace — the small fixed cost of loading the native extension
+  slightly outweighs the savings there.
 
-  RuboCop itself and fluentd are also used for compatibility verification,
-  but their configs disable most default cops or exclude most files,
-  leaving very few rubocop-gem cops for shirobai to replace.
+  RuboCop itself is also used for compatibility verification but not benchmarked,
+  because its own config needs `rubocop-internal_affairs` / `rubocop-rake`
+  and leaves few rubocop-gem cops enabled.
 
 ## Requirements
 
