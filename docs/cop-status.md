@@ -114,6 +114,40 @@ and RuboCop itself).
 - `Style/TrailingCommaInArrayLiteral`
 - `Style/TrailingCommaInHashLiteral`
 
+## Plugin cops: shirobai-performance (proof of concept)
+
+`gems/shirobai-performance` replaces rubocop-performance (pinned `= 1.26.1`)
+cops with Rust rules that live in the shared shirobai-core extension
+(no second native build). This batch is a proof of concept for the plugin
+plumbing — monorepo gem boundary, load order, packed-config segment with
+dormant slots, and the plugin parity oracle
+(`benches/parity_diff_performance.sh`) — not a speed play: the measured
+per-cop cost pool of the whole Performance department is flat and small
+(restrict_on_send gating makes stock detection cheap).
+
+### Implemented (5 cops)
+
+- `Performance/Detect`
+- `Performance/EndWith`
+- `Performance/StartWith`
+- `Performance/StringInclude`
+- `Performance/TimesMap`
+
+Verified with the same bar as core cops: vendor specs from the
+`vendor/rubocop-performance` submodule, differential edge-case specs,
+lint-mode correctable parity, non-ASCII offset parity, and the plugin
+parity oracle with the real CLI
+(`--plugin rubocop-performance --enable-pending-cops`) at zero diff.
+
+### Known limitation (same family as the README `TargetRubyVersion` note)
+
+`Performance/Detect` follows prism Latest for `it` blocks:
+`foo.select { it.odd? }.first` parses as an it-block, which the stock
+pattern (plain `block` only) does not match, so shirobai does not flag it.
+Stock behaves the same for `TargetRubyVersion >= 3.4`; for targets `<= 3.3`
+stock parses `it` as a plain method call and DOES flag it.
+`Performance/TimesMap` is unaffected (its pattern is `any_block`).
+
 ## Attempted but reverted
 
 These cops were implemented to full drop-in compatibility but reverted because

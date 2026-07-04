@@ -33,6 +33,7 @@ use super::{
     multiline_method_call_brace_layout, nested_parenthesized_calls,
     parentheses_as_grouped_expression,
     percent_literal_delimiters,
+    perf_detect, perf_end_with, perf_start_with, perf_string_include, perf_times_map,
     predicate_prefix, punctuation_spacing, redundant_self, redundant_self_assignment,
     require_parentheses, safe_navigation_chain, self_assignment,
     space_around_keyword, space_around_method_call_operator, space_before_block_braces,
@@ -755,6 +756,13 @@ pub struct BundleResult {
     /// Per-file `found_method` event stream in stock callback order (the
     /// Ruby wrapper replays the cross-file bookkeeping).
     pub duplicate_methods: Vec<duplicate_methods::DupMethodEvent>,
+    /// shirobai-performance plugin slots. Always present in the wire format;
+    /// empty when `BundleConfig::performance` is `None` (plugin not loaded).
+    pub perf_detect: Vec<perf_detect::PerfDetectOffense>,
+    pub perf_string_include: Vec<perf_string_include::PerfStringIncludeOffense>,
+    pub perf_end_with: Vec<perf_end_with::PerfEndWithOffense>,
+    pub perf_start_with: Vec<perf_start_with::PerfStartWithOffense>,
+    pub perf_times_map: Vec<perf_times_map::PerfTimesMapOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -951,6 +959,28 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // shape simple — `el_rule` is consumed only on the eligible path.
     let empty_lines_eligible = empty_lines::contains_newline_triple(source);
     let mut el_rule = empty_lines::build_rule(source);
+    // shirobai-performance plugin rules: built and driven only when the
+    // plugin gem woke the segment up. A core-only install pays nothing here.
+    let mut pd_rule = cfg
+        .performance
+        .as_ref()
+        .map(|p| perf_detect::build_rule(&p.detect_preferred_method));
+    let mut psi_rule = cfg
+        .performance
+        .as_ref()
+        .map(|_| perf_string_include::build_rule());
+    let mut pew_rule = cfg
+        .performance
+        .as_ref()
+        .map(|p| perf_end_with::build_rule(p.end_with_safe_multiline));
+    let mut psw_rule = cfg
+        .performance
+        .as_ref()
+        .map(|p| perf_start_with::build_rule(p.start_with_safe_multiline));
+    let mut ptm_rule = cfg
+        .performance
+        .as_ref()
+        .map(|_| perf_times_map::build_rule());
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -1032,6 +1062,21 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     if let Some(rule) = fae_rule.as_mut() {
         rules.push(rule);
     }
+    if let Some(rule) = pd_rule.as_mut() {
+        rules.push(rule);
+    }
+    if let Some(rule) = psi_rule.as_mut() {
+        rules.push(rule);
+    }
+    if let Some(rule) = pew_rule.as_mut() {
+        rules.push(rule);
+    }
+    if let Some(rule) = psw_rule.as_mut() {
+        rules.push(rule);
+    }
+    if let Some(rule) = ptm_rule.as_mut() {
+        rules.push(rule);
+    }
     super::dispatch::run(source, &mut rules);
 
     let multiline_operation = op_rule.offenses;
@@ -1039,6 +1084,11 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let argument_alignment = aa_rule.map(|r| r.offenses).unwrap_or_default();
     let array_alignment = ara_rule.offenses;
     let first_argument_indentation = fa_rule.map(|r| r.offenses).unwrap_or_default();
+    let perf_detect = pd_rule.map(|r| r.offenses).unwrap_or_default();
+    let perf_string_include = psi_rule.map(|r| r.offenses).unwrap_or_default();
+    let perf_end_with = pew_rule.map(|r| r.offenses).unwrap_or_default();
+    let perf_start_with = psw_rule.map(|r| r.offenses).unwrap_or_default();
+    let perf_times_map = ptm_rule.map(|r| r.offenses).unwrap_or_default();
     let safe_navigation_chain = snc_rule.offenses;
     let indentation_width = iw_rule.offenses;
     let debugger = debugger_rule.offenses;
@@ -1229,6 +1279,11 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         space_before_first_arg,
         duplicate_magic_comment,
         duplicate_methods: dm_rule.events,
+        perf_detect,
+        perf_string_include,
+        perf_end_with,
+        perf_start_with,
+        perf_times_map,
     }
 }
 
@@ -1320,7 +1375,7 @@ mod tests {
             1, // space_before_first_arg: allow_for_alignment
             0, // duplicate_methods: active_support_extensions_enabled
             0, 2, // array_alignment: style(with_first_element) / indent
-            1, // performance_enabled (tests exercise the plugin segment)
+            1, // performance_enabled (tests exercise the plugin rules)
             1, 1, // perf_end_with / perf_start_with SafeMultiline defaults
         ];
         let lists = vec![
@@ -1423,13 +1478,155 @@ mod tests {
     }
 
     #[test]
-    fn dormant_performance_segment_parses_to_none() {
-        // A core-only install packs `performance_enabled = 0`: no
-        // PerformanceConfig is built and no plugin rule will join the walk.
+    fn dormant_performance_segment_keeps_slots_empty() {
+        // A core-only install packs `performance_enabled = 0`: the rules stay
+        // out of the walk and the plugin slots stay empty even on source
+        // that would otherwise flag.
+        let src = "[1, 2].select { |i| i.odd? }.first\n";
         let (mut nums, lists) = default_packed();
         nums[114] = 0;
         let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
         assert!(cfg.performance.is_none());
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        assert!(bundle.perf_detect.is_empty());
+        assert!(bundle.perf_string_include.is_empty());
+    }
+
+    /// `Performance/StringInclude` merged into the shared walk must report
+    /// exactly what its standalone entry point reports.
+    #[test]
+    fn shared_walk_matches_standalone_perf_string_include() {
+        let src = "str.match?(/ab/)\n\
+                   /cd/ =~ other\n\
+                   name !~ /ef/\n\
+                   skip.match?(/a.b/)\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::perf_string_include::check_perf_string_include(src.as_bytes());
+        assert_eq!(alone.len(), 3);
+        assert_eq!(bundle.perf_string_include.len(), alone.len());
+        for (a, b) in bundle.perf_string_include.iter().zip(&alone) {
+            assert_eq!(
+                (a.start, a.end, a.negation, a.recv_start, a.recv_end),
+                (b.start, b.end, b.negation, b.recv_start, b.recv_end)
+            );
+            assert_eq!(a.dot, b.dot);
+            assert_eq!(a.content, b.content);
+        }
+    }
+
+    /// `Performance/Detect` merged into the shared walk must report exactly
+    /// what its standalone entry point reports, over a source exercising the
+    /// block, block-pass and index forms plus accepted shapes.
+    #[test]
+    fn shared_walk_matches_standalone_perf_detect() {
+        let src = "a.select { |i| i.odd? }.first\n\
+                   b.filter { |i| i.odd? }[-1]\n\
+                   c.find_all(&:odd?).last\n\
+                   d.lazy.select { |i| i.odd? }.first\n\
+                   e.select { }.first\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::perf_detect::check_perf_detect(src.as_bytes(), "find");
+        assert_eq!(alone.len(), 3);
+        assert_eq!(bundle.perf_detect.len(), alone.len());
+        for (a, b) in bundle.perf_detect.iter().zip(&alone) {
+            assert_eq!(
+                (a.sel_start, a.sel_end, a.recv_end, a.outer_end),
+                (b.sel_start, b.sel_end, b.recv_end, b.outer_end)
+            );
+            assert_eq!(a.message, b.message);
+            assert_eq!(a.replacement, b.replacement);
+        }
+    }
+
+    /// `Performance/EndWith` merged into the shared walk must report exactly
+    /// what its standalone entry point reports, including the SafeMultiline
+    /// `$`-anchor arm (nums[115]).
+    #[test]
+    fn shared_walk_matches_standalone_perf_end_with() {
+        let src = "str.match?(/bc\\z/)\n\
+                   /cd\\z/ =~ other\n\
+                   name.match?(/ef$/)\n\
+                   skip.match?(/bc/)\n";
+        for safe_multiline in [true, false] {
+            let (mut nums, lists) = default_packed();
+            nums[115] = i64::from(safe_multiline);
+            let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+            let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+            let alone =
+                super::perf_end_with::check_perf_end_with(src.as_bytes(), safe_multiline);
+            assert_eq!(alone.len(), if safe_multiline { 2 } else { 3 });
+            assert_eq!(bundle.perf_end_with.len(), alone.len());
+            for (a, b) in bundle.perf_end_with.iter().zip(&alone) {
+                assert_eq!(
+                    (a.start, a.end, a.recv_start, a.recv_end),
+                    (b.start, b.end, b.recv_start, b.recv_end)
+                );
+                assert_eq!(a.dot, b.dot);
+                assert_eq!(a.content, b.content);
+            }
+        }
+    }
+
+    /// `Performance/StartWith` merged into the shared walk must report
+    /// exactly what its standalone entry point reports, including the
+    /// SafeMultiline `^`-anchor arm (nums[116]).
+    #[test]
+    fn shared_walk_matches_standalone_perf_start_with() {
+        let src = "str.match?(/\\Abc/)\n\
+                   /\\Acd/ =~ other\n\
+                   name.match?(/^ef/)\n\
+                   skip.match?(/bc/)\n";
+        for safe_multiline in [true, false] {
+            let (mut nums, lists) = default_packed();
+            nums[116] = i64::from(safe_multiline);
+            let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+            let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+            let alone =
+                super::perf_start_with::check_perf_start_with(src.as_bytes(), safe_multiline);
+            assert_eq!(alone.len(), if safe_multiline { 2 } else { 3 });
+            assert_eq!(bundle.perf_start_with.len(), alone.len());
+            for (a, b) in bundle.perf_start_with.iter().zip(&alone) {
+                assert_eq!(
+                    (a.start, a.end, a.recv_start, a.recv_end),
+                    (b.start, b.end, b.recv_start, b.recv_end)
+                );
+                assert_eq!(a.dot, b.dot);
+                assert_eq!(a.content, b.content);
+            }
+        }
+    }
+
+    /// `Performance/TimesMap` merged into the shared walk must report exactly
+    /// what its standalone entry point reports, over the block, block-pass
+    /// and non-literal-count forms plus an accepted shape.
+    #[test]
+    fn shared_walk_matches_standalone_perf_times_map() {
+        let src = "5.times.map { |i| i.to_s }\n\
+                   n.times.collect(&:to_s)\n\
+                   foo&.times.map { |i| i }\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::perf_times_map::check_perf_times_map(src.as_bytes());
+        assert_eq!(alone.len(), 2);
+        assert_eq!(bundle.perf_times_map.len(), alone.len());
+        for (a, b) in bundle.perf_times_map.iter().zip(&alone) {
+            assert_eq!(
+                (a.start, a.end, a.replace_start, a.replace_end),
+                (b.start, b.end, b.replace_start, b.replace_end)
+            );
+            assert_eq!(a.message, b.message);
+            assert_eq!(a.replacement, b.replacement);
+        }
     }
 
     #[test]

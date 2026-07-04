@@ -105,7 +105,15 @@ module Shirobai
       space_before_first_arg: 84,
       duplicate_magic_comment: 85,
       duplicate_methods: 86,
-      array_alignment: 87
+      array_alignment: 87,
+      # shirobai-performance plugin slots. Always present in the wire format;
+      # the Rust side leaves them empty unless the plugin gem registered its
+      # packed segment (`Dispatch.performance_packer`).
+      perf_detect: 88,
+      perf_string_include: 89,
+      perf_end_with: 90,
+      perf_start_with: 91,
+      perf_times_map: 92
     }.freeze
 
     # Dormant shirobai-performance segment: `enabled = 0` plus placeholder
@@ -122,7 +130,6 @@ module Shirobai
       # their dormant tokens (token memoization is per Config identity),
       # so requiring the plugin mid-run is not supported.
       attr_accessor :performance_packer
-
       # Returns the raw Rust result for `cop_key` on this source.
       def offenses_for(processed_source, config, cop_key)
         src = processed_source.raw_source
