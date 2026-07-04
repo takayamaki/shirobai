@@ -74,6 +74,23 @@ pub fn with_parsed_and_comments<R>(
     })
 }
 
+/// The byte offset where the `__END__` data segment starts (the `__END__`
+/// line itself), if the source has one. Reuses the shared parse.
+pub fn data_start(source: &[u8]) -> Option<usize> {
+    CACHE.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        let hit = slot
+            .as_ref()
+            .is_some_and(|parsed| parsed.borrow_owner().as_slice() == source);
+        if !hit {
+            *slot = Some(OwnedParse::new(source.to_vec(), |owner| parse(owner)));
+        }
+        slot.as_ref().unwrap().with_dependent(|_owner, result| {
+            result.data_loc().map(|l| l.start_offset())
+        })
+    })
+}
+
 /// Collect the `(start_offset, end_offset)` byte ranges of every comment in the
 /// (cached) parse of `source`. Reuses the shared parse instead of re-parsing,
 /// so cops that need comment positions do not pay for a second full parse.

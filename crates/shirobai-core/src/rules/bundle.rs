@@ -10,11 +10,12 @@ use super::multiline_method_call_indentation::{self as mc, MethodCallIndentOffen
 use super::multiline_operation_indentation::{self as op, OperationIndentOffense};
 use super::{
     abc_size, access_modifier_indentation, ambiguous_block_association, argument_alignment,
-    assignment_indentation,
+    array_alignment, assignment_indentation,
     block_delimiters, block_length, block_nesting,
     class_length,
     closing_parenthesis_indentation, colon_method_call, complexity, debugger, def_end_alignment,
     dot_position,
+    duplicate_magic_comment, duplicate_methods,
     empty_comment,
     empty_line_after_guard_clause,
     empty_line_after_magic_comment,
@@ -32,11 +33,12 @@ use super::{
     multiline_method_call_brace_layout, nested_parenthesized_calls,
     parentheses_as_grouped_expression,
     percent_literal_delimiters,
-    predicate_prefix, redundant_self, redundant_self_assignment,
+    predicate_prefix, punctuation_spacing, redundant_self, redundant_self_assignment,
     require_parentheses, safe_navigation_chain, self_assignment,
     space_around_keyword, space_around_method_call_operator, space_before_block_braces,
+    space_before_first_arg,
     space_inside_array_literal_brackets, space_inside_block_braces,
-    space_inside_hash_literal_braces,
+    space_inside_hash_literal_braces, space_inside_parens, space_inside_reference_brackets,
     stabby_lambda_parentheses,
     string_literals,
     string_literals_in_interpolation,
@@ -147,6 +149,17 @@ pub fn check_multiline_bundle(
 /// | 100 | space_before_block_braces style (`EnforcedStyle`: 0 space, 1 no_space) |
 /// | 101 | space_before_block_braces empty style (`EnforcedStyleForEmptyBraces` resolved: 0 space, 1 no_space, 2 invalid — `nil` follows `EnforcedStyle`) |
 /// | 102 | space_before_block_braces bd_line_count_based (`Style/BlockDelimiters` `EnforcedStyle == 'line_count_based'`) |
+/// | 103 | space_before_comma lcurly_space (`Layout/SpaceBeforeComma`'s view of `Layout/SpaceInsideBlockBraces` `EnforcedStyle == 'space'`) |
+/// | 104 | space_after_comma rcurly_no_space (`Layout/SpaceAfterComma`'s view of `Layout/SpaceInsideHashLiteralBraces` `EnforcedStyle == 'no_space'`) |
+/// | 105 | space_before_semicolon lcurly_space (`Layout/SpaceBeforeSemicolon`'s view of `Layout/SpaceInsideBlockBraces` `EnforcedStyle == 'space'`) |
+/// | 106 | space_after_semicolon rcurly_no_space (`Layout/SpaceAfterSemicolon`'s view of `Layout/SpaceInsideBlockBraces` `EnforcedStyle == 'no_space'`) |
+/// | 107 | space_inside_parens style (`EnforcedStyle`: 0 no_space, 1 space, 2 compact) |
+/// | 108 | space_inside_reference_brackets style (`EnforcedStyle`: 0 no_space, 1 space) |
+/// | 109 | space_inside_reference_brackets empty space (`EnforcedStyleForEmptyBrackets == 'space'`) |
+/// | 110 | space_before_first_arg allow_for_alignment (`AllowForAlignment`) |
+/// | 111 | duplicate_methods_active_support (`AllCops/ActiveSupportExtensionsEnabled`; `Lint/DuplicateMagicComment` is config-less) |
+/// | 112 | array_alignment style (`EnforcedStyle`: 0 = with_first_element, 1 = with_fixed_indentation) |
+/// | 113 | array_alignment indentation width (`IndentationWidth` falling back to `Layout/IndentationWidth.Width` falling back to 2) |
 ///
 /// `lists` (`Vec<String>`), 20 entries:
 ///
@@ -211,6 +224,8 @@ pub struct BundleConfig {
     pub argument_alignment_style: u8,
     pub argument_alignment_indent: usize,
     pub argument_alignment_incompatible: bool,
+    pub array_alignment_style: u8,
+    pub array_alignment_indent: usize,
     pub first_argument_style: u8,
     pub first_argument_indent: usize,
     pub first_argument_enforce_fixed_no_line_break: bool,
@@ -271,13 +286,18 @@ pub struct BundleConfig {
     pub space_inside_array_literal_brackets: space_inside_array_literal_brackets::Config,
     pub if_unless_modifier: if_unless_modifier::Config,
     pub space_before_block_braces: space_before_block_braces::Config,
+    pub punctuation_spacing: punctuation_spacing::Config,
+    pub space_inside_parens: space_inside_parens::Config,
+    pub space_inside_reference_brackets: space_inside_reference_brackets::Config,
+    pub space_before_first_arg: space_before_first_arg::Config,
+    pub duplicate_methods: duplicate_methods::Config,
 }
 
 // `Lint/ParenthesesAsGroupedExpression` carries no config so it doesn't appear
 // in the `nums` / `lists` packing; the bundle still computes its slot in the
 // shared walk (see `check_all_bundle` below).
 
-const NUMS_LEN: usize = 103;
+const NUMS_LEN: usize = 114;
 const LISTS_LEN: usize = 25;
 
 impl BundleConfig {
@@ -326,6 +346,8 @@ impl BundleConfig {
             argument_alignment_style: nums[21] as u8,
             argument_alignment_indent: nums[22] as usize,
             argument_alignment_incompatible: nums[23] != 0,
+            array_alignment_style: nums[112] as u8,
+            array_alignment_indent: nums[113] as usize,
             first_argument_style: nums[24] as u8,
             first_argument_indent: nums[25] as usize,
             first_argument_enforce_fixed_no_line_break: nums[26] != 0,
@@ -507,6 +529,33 @@ impl BundleConfig {
                 },
                 bd_line_count_based: nums[102] != 0,
             },
+            punctuation_spacing: punctuation_spacing::Config {
+                before_comma_lcurly_space: nums[103] != 0,
+                after_comma_rcurly_no_space: nums[104] != 0,
+                before_semi_lcurly_space: nums[105] != 0,
+                after_semi_rcurly_no_space: nums[106] != 0,
+            },
+            space_inside_parens: space_inside_parens::Config {
+                style: match nums[107] {
+                    1 => space_inside_parens::Style::Space,
+                    2 => space_inside_parens::Style::Compact,
+                    _ => space_inside_parens::Style::NoSpace,
+                },
+            },
+            space_inside_reference_brackets: space_inside_reference_brackets::Config {
+                style: if nums[108] != 0 {
+                    space_inside_reference_brackets::Style::Space
+                } else {
+                    space_inside_reference_brackets::Style::NoSpace
+                },
+                space_empty: nums[109] != 0,
+            },
+            space_before_first_arg: space_before_first_arg::Config {
+                allow_for_alignment: nums[110] != 0,
+            },
+            duplicate_methods: duplicate_methods::Config {
+                active_support_extensions_enabled: nums[111] != 0,
+            },
         })
     }
 }
@@ -567,6 +616,7 @@ pub struct BundleResult {
     pub line_length_breakables: Vec<line_length_breakable::Breakable>,
     pub line_end_concatenation: Vec<line_end_concatenation::LineEndConcatOffense>,
     pub argument_alignment: Vec<argument_alignment::ArgAlignOffense>,
+    pub array_alignment: Vec<array_alignment::ArrayAlignOffense>,
     pub first_argument_indentation: Vec<first_argument_indentation::FirstArgIndentOffense>,
     pub redundant_self: Vec<redundant_self::RedundantSelfOffense>,
     pub indentation_width: Vec<indentation_width::IndentationOffense>,
@@ -646,6 +696,17 @@ pub struct BundleResult {
     pub space_inside_array_literal_brackets:
         space_inside_array_literal_brackets::ArrayBracketsResult,
     pub space_before_block_braces: space_before_block_braces::SpaceBeforeBlockBracesResult,
+    /// The whole punctuation-spacing family (six cops, six wire slots).
+    pub punctuation_spacing: punctuation_spacing::PunctuationSpacingOffenses,
+    pub space_inside_parens: Vec<space_inside_parens::SpaceInsideParensOffense>,
+    pub space_inside_reference_brackets: space_inside_reference_brackets::ReferenceBracketsResult,
+    pub space_before_first_arg: Vec<space_before_first_arg::SpaceBeforeFirstArgOffense>,
+    /// 1-based lines of duplicate magic comments (encoding bucket then
+    /// frozen-string-literal bucket, document order within each).
+    pub duplicate_magic_comment: Vec<duplicate_magic_comment::DuplicateLine>,
+    /// Per-file `found_method` event stream in stock callback order (the
+    /// Ruby wrapper replays the cross-file bookkeeping).
+    pub duplicate_methods: Vec<duplicate_methods::DupMethodEvent>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -677,6 +738,11 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         cfg.argument_alignment_style,
         cfg.argument_alignment_indent,
         cfg.argument_alignment_incompatible,
+    );
+    let mut ara_rule = array_alignment::build_rule(
+        source,
+        cfg.array_alignment_style,
+        cfg.array_alignment_indent,
     );
     let mut fa_rule = first_argument_indentation::build_rule(
         source,
@@ -780,6 +846,11 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     );
     let mut sbbb_rule =
         space_before_block_braces::build_rule(source, cfg.space_before_block_braces);
+    let mut ps_rule = punctuation_spacing::build_rule(source, cfg.punctuation_spacing);
+    let mut sip_rule = space_inside_parens::build_rule(source, cfg.space_inside_parens);
+    let mut sirb_rule =
+        space_inside_reference_brackets::build_rule(source, cfg.space_inside_reference_brackets);
+    let mut sbfa_rule = space_before_first_arg::build_rule(source, cfg.space_before_first_arg);
     let mut ml_rule = method_length::build_rule(
         source,
         cfg.method_length_max,
@@ -824,6 +895,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut aba_rule =
         ambiguous_block_association::build_rule(source, cfg.ambiguous_block_association.clone());
     let mut ium_rule = if_unless_modifier::build_rule(source, cfg.if_unless_modifier);
+    let mut dm_rule = duplicate_methods::build_rule(source, &cfg.duplicate_methods);
     // `Layout/EmptyLines` joins the shared walk only when the file actually
     // contains `\n\n\n` (stock's prefilter); otherwise the rule's collected
     // lines are unused and we skip both the walk push and the finalize. The
@@ -874,6 +946,10 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut sihlb_rule,
         &mut sialb_rule,
         &mut sbbb_rule,
+        &mut ps_rule,
+        &mut sip_rule,
+        &mut sirb_rule,
+        &mut sbfa_rule,
         &mut ml_rule,
         &mut cl_rule,
         &mut mol_rule,
@@ -893,6 +969,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut htk_rule,
         &mut aba_rule,
         &mut ium_rule,
+        &mut dm_rule,
+        &mut ara_rule,
     ];
     if empty_lines_eligible {
         rules.push(&mut el_rule);
@@ -911,6 +989,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let multiline_operation = op_rule.offenses;
     let multiline_method_call = mc_rule.offenses;
     let argument_alignment = aa_rule.map(|r| r.offenses).unwrap_or_default();
+    let array_alignment = ara_rule.offenses;
     let first_argument_indentation = fa_rule.map(|r| r.offenses).unwrap_or_default();
     let safe_navigation_chain = snc_rule.offenses;
     let indentation_width = iw_rule.offenses;
@@ -953,6 +1032,10 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let space_inside_hash_literal_braces = sihlb_rule.into_offenses();
     let space_inside_array_literal_brackets = sialb_rule.into_result();
     let space_before_block_braces = sbbb_rule.into_result();
+    let punctuation_spacing = ps_rule.into_offenses();
+    let space_inside_parens = sip_rule.into_offenses();
+    let space_inside_reference_brackets = sirb_rule.result;
+    let space_before_first_arg = sbfa_rule.into_offenses();
     let method_length = ml_rule.out;
     let class_length = cl_rule.out;
     let module_length = mol_rule.out;
@@ -987,6 +1070,10 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // from the cached parse, no AST walk.
     let leading_empty_lines =
         leading_empty_lines::check_leading_empty_lines(source);
+    // `Lint/DuplicateMagicComment` is a leading-line scan (comments + the
+    // first non-comment token position from the cached parse), no AST walk.
+    let duplicate_magic_comment =
+        duplicate_magic_comment::check_duplicate_magic_comment(source);
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -1030,6 +1117,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         line_length_breakables,
         line_end_concatenation,
         argument_alignment,
+        array_alignment,
         first_argument_indentation,
         redundant_self,
         indentation_width,
@@ -1087,6 +1175,12 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         space_inside_hash_literal_braces,
         space_inside_array_literal_brackets,
         space_before_block_braces,
+        punctuation_spacing,
+        space_inside_parens,
+        space_inside_reference_brackets,
+        space_before_first_arg,
+        duplicate_magic_comment,
+        duplicate_methods: dm_rule.events,
     }
 }
 
@@ -1172,6 +1266,12 @@ mod tests {
             0, 0, // space_inside_array_literal_brackets: style(no_space) / empty(no_space)
             120, 2, // if_unless_modifier: max_line_length / tab_width (defaults)
             0, 0, 1, // space_before_block_braces: style(space) / empty(space) / bd(line_count_based)
+            1, 0, 1, 0, // punctuation_spacing: bc lcurly_space / ac rcurly_no_space / bs lcurly_space / as rcurly_no_space
+            0, // space_inside_parens: style (no_space)
+            0, 0, // space_inside_reference_brackets: style(no_space) / empty(no_space)
+            1, // space_before_first_arg: allow_for_alignment
+            0, // duplicate_methods: active_support_extensions_enabled
+            0, 2, // array_alignment: style(with_first_element) / indent
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -1363,6 +1463,98 @@ mod tests {
                 (b.start_offset, b.end_offset, b.column_delta, &b.message)
             );
         }
+    }
+
+    /// The punctuation-spacing family merged into the shared walk must report
+    /// exactly what the standalone entry point reports, over a source that
+    /// triggers all six cops (space before/after comma and semicolon, tight
+    /// colons, adjacent comment) plus masked look-alikes (string commas,
+    /// block-brace semicolon skip).
+    #[test]
+    fn shared_walk_matches_standalone_punctuation_spacing() {
+        let src = "f(a ,b)\n\
+                   x = 1 ;y = 2\n\
+                   h = {a:1, b: \"x,y\"}\n\
+                   loop { ; h }\n\
+                   z = 1# c\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone = super::punctuation_spacing::check_punctuation_spacing(
+            src.as_bytes(),
+            cfg.punctuation_spacing,
+        );
+        assert!(!alone.space_before_comma.is_empty());
+        assert!(!alone.space_after_comma.is_empty());
+        assert!(!alone.space_before_semicolon.is_empty());
+        assert!(!alone.space_after_semicolon.is_empty());
+        assert!(!alone.space_after_colon.is_empty());
+        assert!(!alone.space_before_comment.is_empty());
+        let b = &bundle.punctuation_spacing;
+        assert_eq!(b.space_before_comma, alone.space_before_comma);
+        assert_eq!(b.space_after_comma, alone.space_after_comma);
+        assert_eq!(b.space_before_semicolon, alone.space_before_semicolon);
+        assert_eq!(b.space_after_semicolon, alone.space_after_semicolon);
+        assert_eq!(b.space_after_colon, alone.space_after_colon);
+        assert_eq!(b.space_before_comment, alone.space_before_comment);
+    }
+
+    /// The Cluster B space cops merged into the shared walk must report
+    /// exactly what their standalone entry points report, over a source that
+    /// triggers all three (spaced parens, spaced reference brackets, a
+    /// two-space first argument).
+    #[test]
+    fn shared_walk_matches_standalone_cluster_b_space_cops() {
+        let src = "f( 3 )\nh[ :k ]\nsomething  x\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let sip_alone = super::space_inside_parens::check_space_inside_parens(
+            src.as_bytes(),
+            cfg.space_inside_parens,
+        );
+        assert!(!sip_alone.is_empty());
+        assert_eq!(bundle.space_inside_parens.len(), sip_alone.len());
+        for (a, b) in bundle.space_inside_parens.iter().zip(&sip_alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.message.code()),
+                (b.start_offset, b.end_offset, b.message.code())
+            );
+        }
+
+        let sirb_alone =
+            super::space_inside_reference_brackets::check_space_inside_reference_brackets(
+                src.as_bytes(),
+                cfg.space_inside_reference_brackets,
+            );
+        assert!(!sirb_alone.offenses.is_empty());
+        assert_eq!(
+            bundle.space_inside_reference_brackets.offenses.len(),
+            sirb_alone.offenses.len()
+        );
+        for (a, b) in bundle
+            .space_inside_reference_brackets
+            .offenses
+            .iter()
+            .zip(&sirb_alone.offenses)
+        {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.message.code(), a.node),
+                (b.start_offset, b.end_offset, b.message.code(), b.node)
+            );
+        }
+        assert_eq!(
+            bundle.space_inside_reference_brackets.node_ops,
+            sirb_alone.node_ops
+        );
+
+        let sbfa_alone = super::space_before_first_arg::check_space_before_first_arg(
+            src.as_bytes(),
+            cfg.space_before_first_arg,
+        );
+        assert!(!sbfa_alone.is_empty());
+        assert_eq!(bundle.space_before_first_arg, sbfa_alone);
     }
 
     /// The ancestor-stack cops merged into the shared walk (`Lint/Debugger`,
@@ -1735,6 +1927,50 @@ mod tests {
             assert_eq!(
                 (a.start_offset, a.end_offset, a.column_delta, &a.message),
                 (b.start_offset, b.end_offset, b.column_delta, &b.message)
+            );
+        }
+    }
+
+    /// `Layout/ArrayAlignment` merged into the shared walk must report
+    /// exactly what its standalone entry point reports, over a source
+    /// exercising the parent-intercept paths: a bracketed literal, an
+    /// implicit assignment array, a skipped masgn RHS, a rescue exception
+    /// list and a nested array losing autocorrect via `within?`.
+    #[test]
+    fn shared_walk_matches_standalone_array_alignment() {
+        let src = "array = [a,\n\
+                   \x20  b,\n\
+                   \x20 c]\n\
+                   imp = 1,\n\
+                   \x20 2\n\
+                   m, n = 1,\n\
+                   \x20       2\n\
+                   begin\n\
+                   \x20 x\n\
+                   rescue FooError,\n\
+                   \x20   BarError\n\
+                   \x20 y\n\
+                   end\n\
+                   nested = [[1,\n\
+                   \x20  2],\n\
+                   \x20 [3,\n\
+                   4]]\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let ara_alone = super::array_alignment::check_array_alignment(
+            src.as_bytes(),
+            cfg.array_alignment_style,
+            cfg.array_alignment_indent,
+        );
+        assert!(ara_alone.len() >= 6);
+        assert!(ara_alone.iter().any(|o| !o.autocorrect));
+        assert_eq!(bundle.array_alignment.len(), ara_alone.len());
+        for (a, b) in bundle.array_alignment.iter().zip(&ara_alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.column_delta, a.autocorrect),
+                (b.start_offset, b.end_offset, b.column_delta, b.autocorrect)
             );
         }
     }
@@ -3078,6 +3314,45 @@ mod tests {
         assert!(bundle.argument_alignment.is_empty());
         assert!(bundle.first_argument_indentation.is_empty());
         assert!(bundle.first_array_element_indentation.is_empty());
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_duplicate_magic_comment() {
+        let src = "# encoding: utf-8\n# encoding: ascii\n# frozen_string_literal: true\n# frozen_string_literal: true\nx = 1\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone =
+            super::duplicate_magic_comment::check_duplicate_magic_comment(src.as_bytes());
+        assert!(!alone.is_empty());
+        assert_eq!(bundle.duplicate_magic_comment, alone);
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_duplicate_methods() {
+        // Exercises defs, sclass, attr, alias and an anonymous class block.
+        let src = "class A\n  def foo; end\n  def foo; end\n  attr_reader :bar\n  alias baz qux\n  class << self\n    def s; end\n  end\nend\nClass.new do\n  def anon; end\nend.tap { 1 }\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone = super::duplicate_methods::check_duplicate_methods(
+            src.as_bytes(),
+            &cfg.duplicate_methods,
+        );
+        assert!(!alone.is_empty());
+        assert_eq!(bundle.duplicate_methods.len(), alone.len());
+        for (a, b) in bundle.duplicate_methods.iter().zip(&alone) {
+            assert_eq!(a.key, b.key);
+            assert_eq!(a.name, b.name);
+            assert_eq!(
+                (a.sexp_start, a.sexp_end, a.scope_line),
+                (b.sexp_start, b.sexp_end, b.scope_line)
+            );
+            assert_eq!(
+                (a.off_start, a.off_end, a.line, a.rescue_scope),
+                (b.off_start, b.off_end, b.line, b.rescue_scope)
+            );
+        }
     }
 
     #[test]

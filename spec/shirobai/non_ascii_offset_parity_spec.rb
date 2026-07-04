@@ -80,6 +80,9 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
   cases = {
     # start/fin + AlignmentCorrector on the offense range.
     "Layout/ArgumentAlignment" => "foo(a,\n  b)\n",
+    # start/fin (the misaligned element node range) + the node-resolved
+    # AlignmentCorrector realignment by column_delta.
+    "Layout/ArrayAlignment" => "x = [a,\n  b]\n",
     # start/fin (the hanging `)`) + AlignmentCorrector.
     "Layout/ClosingParenthesisIndentation" => "some_method(a\n)\n",
     # dot range + remove range + insert position.
@@ -368,6 +371,50 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     "Style/IfUnlessModifier" =>
       "if condition\n  do_stuff(\"あいう\")\nend\n" \
       "foo_bar(\"えお\") if #{"a" * 100}_condition\n",
+    # The whitespace-run offense range (also the removal corrector range)
+    # sits after a multibyte argument on the same line, so both offsets are
+    # shifted ahead of the char offsets and must be converted.
+    "Layout/SpaceBeforeComma" =>
+      "f(\"日本語\" , b)\n",
+    # The comma offense range (also the replace anchor) sits after a
+    # multibyte argument on the same line.
+    "Layout/SpaceAfterComma" =>
+      "f(\"日本語\",:b)\n",
+    # The whitespace-run offense range sits after a multibyte string on the
+    # same line.
+    "Layout/SpaceBeforeSemicolon" =>
+      "x = \"あ\" ;y = 1\n",
+    # The semicolon offense range (also the replace anchor) sits after a
+    # multibyte string on the same line.
+    "Layout/SpaceAfterSemicolon" =>
+      "x = \"あ\";y = 1\n",
+    # The second pair's colon offense range (also the insert_after anchor)
+    # sits after a multibyte hash value on the same line.
+    "Layout/SpaceAfterColon" =>
+      "h = { a: \"日本語\", b:1 }\n",
+    # The comment offense range (also the insert_before anchor) sits right
+    # after a multibyte string on the same line.
+    "Layout/SpaceBeforeComment" =>
+      "x = \"あ\"# comment\n",
+    # Both paren-gap offense ranges (also the removal corrector ranges) sit
+    # after a multibyte argument on the same line.
+    "Layout/SpaceInsideParens" =>
+      "f( \"日本語\" )\n",
+    # Both bracket-gap offense ranges (and the node's removal ops) sit
+    # around a multibyte key on the same line.
+    "Layout/SpaceInsideReferenceBrackets" =>
+      "hash[ \"日本語\" ]\n",
+    # The whitespace-run offense range (also the replace anchor) sits after
+    # a multibyte receiver-and-method chain; the argument is multibyte too,
+    # so nothing on the comment line aligns with it.
+    "Layout/SpaceBeforeFirstArg" =>
+      "何か.foo  \"引数\"\n",
+    # Offense range and message locations flow through SourceOffsets; the
+    # multibyte defs also exercise the sexp-fallback node lookup by char
+    # begin_pos.
+    "Lint/DuplicateMethods" =>
+      "class A\n  def foo; end\n  def foo; end\nend\n" \
+      "def B.zzz\n  \"あいう\"\nend\ndef B.zzz\n  \"あいう\"\nend\n",
   }
 
   cases.each do |cop_name, body|
@@ -391,6 +438,28 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
         "(test)"
       )
       offenses = expect_parity("Naming/MethodName", "#{prefix}def fooBar; end\n", forbidden_config)
+      expect(offenses).not_to be_empty, "fixture produced no stock offense; fix the source"
+    end
+  end
+
+  # `Lint/DuplicateMagicComment` is `Enabled: pending`, so the Team-based
+  # runs above would drop it on BOTH sides under the default config
+  # (vacuously green); force-enable it. The wrapper passes line numbers
+  # only (no byte offsets), but the multibyte leading comment still guards
+  # the line accounting.
+  describe "Lint/DuplicateMagicComment (pending cop, force-enabled)" do
+    it "matches stock offenses and autocorrect output after a multibyte comment" do
+      enabled_config = RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new(
+          { "Lint/DuplicateMagicComment" => { "Enabled" => true } }, "(test)"
+        ),
+        "(test)"
+      )
+      offenses = expect_parity(
+        "Lint/DuplicateMagicComment",
+        "#{prefix}# encoding: utf-8\n# encoding: utf-8\nx = \"あ\"\n",
+        enabled_config
+      )
       expect(offenses).not_to be_empty, "fixture produced no stock offense; fix the source"
     end
   end

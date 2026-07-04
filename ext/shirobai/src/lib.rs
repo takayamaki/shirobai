@@ -302,6 +302,14 @@ fn map_argument_alignment(
         .collect()
 }
 
+fn map_array_alignment(
+    v: Vec<shirobai_core::rules::array_alignment::ArrayAlignOffense>,
+) -> Vec<(usize, usize, isize, bool)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.column_delta, o.autocorrect))
+        .collect()
+}
+
 #[allow(clippy::type_complexity)]
 fn map_first_argument_indentation(
     v: Vec<shirobai_core::rules::first_argument_indentation::FirstArgIndentOffense>,
@@ -1198,7 +1206,7 @@ fn register_bundle_config(
 
 /// Ruby entry point for the all-cop bundle: computes every cop's result for
 /// `source` in one call, using the config registered under `token`. Returns a
-/// fixed-order 30-slot Array; each slot carries that cop's existing tuple-array
+/// fixed-order 88-slot Array; each slot carries that cop's existing tuple-array
 /// shape (identical to the standalone entry point's return value). The slot
 /// order is mirrored by `Shirobai::Dispatch::SLOTS` on the Ruby side:
 ///
@@ -1236,7 +1244,13 @@ fn register_bundle_config(
 /// 70 trailing_comma_in_hash_literal / 71 trailing_comma_in_array_literal /
 /// 72 space_inside_hash_literal_braces /
 /// 73 space_inside_array_literal_brackets / 74 space_before_block_braces /
-/// 75 if_unless_modifier
+/// 75 if_unless_modifier / 76 space_before_comma / 77 space_after_comma /
+/// 78 space_before_semicolon / 79 space_after_semicolon /
+/// 80 space_after_colon / 81 space_before_comment /
+/// 82 space_inside_parens / 83 space_inside_reference_brackets /
+/// 84 space_before_first_arg /
+/// 85 duplicate_magic_comment / 86 duplicate_methods /
+/// 87 array_alignment
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1247,7 +1261,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(76);
+        let ary = ruby.ary_new_capa(88);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -1362,6 +1376,23 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ))?;
         ary.push(map_space_before_block_braces(r.space_before_block_braces))?;
         ary.push(map_if_unless_modifier(r.if_unless_modifier))?;
+        // The punctuation-spacing family: each slot is `[[start, end], ...]`
+        // byte ranges (see `check_space_before_comma` and friends).
+        let ps = r.punctuation_spacing;
+        ary.push(ps.space_before_comma)?;
+        ary.push(ps.space_after_comma)?;
+        ary.push(ps.space_before_semicolon)?;
+        ary.push(ps.space_after_semicolon)?;
+        ary.push(ps.space_after_colon)?;
+        ary.push(ps.space_before_comment)?;
+        ary.push(map_space_inside_parens(r.space_inside_parens))?;
+        ary.push(map_space_inside_reference_brackets(
+            r.space_inside_reference_brackets,
+        ))?;
+        ary.push(r.space_before_first_arg)?;
+        ary.push(r.duplicate_magic_comment)?;
+        ary.push(map_duplicate_methods(r.duplicate_methods))?;
+        ary.push(map_array_alignment(r.array_alignment))?;
         Ok(ary)
     })
 }
@@ -1858,6 +1889,22 @@ fn check_argument_alignment(
             incompatible,
         ),
     )
+}
+
+/// Ruby entry point for `Layout/ArrayAlignment`. Takes the source, the
+/// enforced style (0=with_first_element, 1=with_fixed_indentation) and the
+/// configured indentation width.
+/// Returns `[[start, end, column_delta, autocorrect], ...]`.
+fn check_array_alignment(
+    source: RString,
+    style: u8,
+    indent_width: usize,
+) -> Vec<(usize, usize, isize, bool)> {
+    map_array_alignment(shirobai_core::rules::array_alignment::check_array_alignment(
+        bytes(&source),
+        style,
+        indent_width,
+    ))
 }
 
 /// Ruby entry point for `Layout/FirstArgumentIndentation`. Takes the source,
@@ -2411,6 +2458,54 @@ fn check_empty_line_after_magic_comment(
     )
 }
 
+/// `Lint/DuplicateMethods`: `[[name, key, sexp_start, sexp_end, scope_line,
+/// off_start, off_end, line, rescue_scope], ...]` — one tuple per stock
+/// `found_method` call, in callback order. `sexp_start/end >= 0` marks the
+/// parser-sexp key fallback (byte range of the defs node); `scope_line >= 0`
+/// asks the wrapper to append the `"@#{smart_path}:#{line}"` scope id.
+/// `rescue_scope`: 0 none / 1 rescue / 2 ensure. The wrapper replays stock's
+/// cross-file `@definitions` / `@scopes` bookkeeping over this stream.
+type DupMethodTuple = (String, String, i64, i64, i64, usize, usize, usize, u8);
+
+fn map_duplicate_methods(
+    v: Vec<shirobai_core::rules::duplicate_methods::DupMethodEvent>,
+) -> Vec<DupMethodTuple> {
+    v.into_iter()
+        .map(|e| {
+            (
+                e.name,
+                e.key,
+                e.sexp_start,
+                e.sexp_end,
+                e.scope_line,
+                e.off_start,
+                e.off_end,
+                e.line,
+                e.rescue_scope,
+            )
+        })
+        .collect()
+}
+
+/// Ruby entry point for `Lint/DuplicateMagicComment` (standalone fallback,
+/// config-less). Returns the 1-based lines of duplicate magic comments
+/// (encoding bucket first, then frozen-string-literal).
+fn check_duplicate_magic_comment(source: RString) -> Vec<usize> {
+    shirobai_core::rules::duplicate_magic_comment::check_duplicate_magic_comment(bytes(&source))
+}
+
+/// Ruby entry point for `Lint/DuplicateMethods` (standalone fallback).
+/// `active_support` mirrors `AllCops/ActiveSupportExtensionsEnabled`.
+/// Returns the shape documented on `map_duplicate_methods`.
+fn check_duplicate_methods(source: RString, active_support: bool) -> Vec<DupMethodTuple> {
+    map_duplicate_methods(shirobai_core::rules::duplicate_methods::check_duplicate_methods(
+        bytes(&source),
+        &shirobai_core::rules::duplicate_methods::Config {
+            active_support_extensions_enabled: active_support,
+        },
+    ))
+}
+
 /// Ruby entry point for `Layout/EmptyLines` (standalone fallback,
 /// config-less). Returns the shape documented on `map_empty_lines`.
 fn check_empty_lines(source: RString) -> Vec<(usize, usize)> {
@@ -2503,6 +2598,164 @@ fn check_space_inside_hash_literal_braces(
         bytes(&source),
         cfg,
     ))
+}
+
+/// Ruby entry point for `Layout/SpaceBeforeComma` (the bundle is the usual
+/// path). `lcurly_space` is `Layout/SpaceInsideBlockBraces`'s
+/// `EnforcedStyle == 'space'`. Each offense is the `(start, end)` byte range
+/// of the whitespace run before the comma (the corrector removes it).
+fn check_space_before_comma(source: RString, lcurly_space: bool) -> Vec<(usize, usize)> {
+    use shirobai_core::rules::punctuation_spacing as ps;
+    let cfg = ps::Config {
+        before_comma_lcurly_space: lcurly_space,
+        ..Default::default()
+    };
+    ps::check_punctuation_spacing(bytes(&source), cfg).space_before_comma
+}
+
+/// Ruby entry point for `Layout/SpaceAfterComma` (the bundle is the usual
+/// path). `rcurly_no_space` is `Layout/SpaceInsideHashLiteralBraces`'s
+/// `EnforcedStyle == 'no_space'`. Each offense is the `(start, end)` byte
+/// range of the comma itself (the corrector replaces it with `", "`).
+fn check_space_after_comma(source: RString, rcurly_no_space: bool) -> Vec<(usize, usize)> {
+    use shirobai_core::rules::punctuation_spacing as ps;
+    let cfg = ps::Config {
+        after_comma_rcurly_no_space: rcurly_no_space,
+        ..Default::default()
+    };
+    ps::check_punctuation_spacing(bytes(&source), cfg).space_after_comma
+}
+
+/// Ruby entry point for `Layout/SpaceBeforeSemicolon` (the bundle is the
+/// usual path). Same shape as `check_space_before_comma`.
+fn check_space_before_semicolon(source: RString, lcurly_space: bool) -> Vec<(usize, usize)> {
+    use shirobai_core::rules::punctuation_spacing as ps;
+    let cfg = ps::Config {
+        before_semi_lcurly_space: lcurly_space,
+        ..Default::default()
+    };
+    ps::check_punctuation_spacing(bytes(&source), cfg).space_before_semicolon
+}
+
+/// Ruby entry point for `Layout/SpaceAfterSemicolon` (the bundle is the
+/// usual path). `rcurly_no_space` is `Layout/SpaceInsideBlockBraces`'s
+/// `EnforcedStyle == 'no_space'`. Same shape as `check_space_after_comma`.
+fn check_space_after_semicolon(source: RString, rcurly_no_space: bool) -> Vec<(usize, usize)> {
+    use shirobai_core::rules::punctuation_spacing as ps;
+    let cfg = ps::Config {
+        after_semi_rcurly_no_space: rcurly_no_space,
+        ..Default::default()
+    };
+    ps::check_punctuation_spacing(bytes(&source), cfg).space_after_semicolon
+}
+
+/// Ruby entry point for `Layout/SpaceAfterColon` (the bundle is the usual
+/// path). Each offense is the `(start, end)` byte range of the colon (the
+/// corrector appends a space after it).
+fn check_space_after_colon(source: RString) -> Vec<(usize, usize)> {
+    use shirobai_core::rules::punctuation_spacing as ps;
+    ps::check_punctuation_spacing(bytes(&source), ps::Config::default()).space_after_colon
+}
+
+/// Ruby entry point for `Layout/SpaceBeforeComment` (the bundle is the usual
+/// path). Each offense is the `(start, end)` byte range of the comment (the
+/// corrector prepends a space before it).
+fn check_space_before_comment(source: RString) -> Vec<(usize, usize)> {
+    use shirobai_core::rules::punctuation_spacing as ps;
+    ps::check_punctuation_spacing(bytes(&source), ps::Config::default()).space_before_comment
+}
+
+/// `Layout/SpaceInsideParens`: each offense is `[start, end, code]` with
+/// code 0 = "Space inside parentheses detected." (remove the range) and
+/// 1 = "No space inside parentheses detected." (insert a space before it).
+fn map_space_inside_parens(
+    v: Vec<shirobai_core::rules::space_inside_parens::SpaceInsideParensOffense>,
+) -> Vec<(usize, usize, u8)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.message.code()))
+        .collect()
+}
+
+/// Ruby entry point for `Layout/SpaceInsideParens` (the bundle is the usual
+/// path). `style` is 0 = no_space, 1 = space, 2 = compact.
+fn check_space_inside_parens(source: RString, style: u8) -> Vec<(usize, usize, u8)> {
+    use shirobai_core::rules::space_inside_parens as sip;
+    let cfg = sip::Config {
+        style: match style {
+            1 => sip::Style::Space,
+            2 => sip::Style::Compact,
+            _ => sip::Style::NoSpace,
+        },
+    };
+    map_space_inside_parens(sip::check_space_inside_parens(bytes(&source), cfg))
+}
+
+/// `Layout/SpaceInsideReferenceBrackets`: `[offenses, node_ops]` in the same
+/// shape as `Layout/SpaceInsideArrayLiteralBrackets` — each offense is
+/// `[start, end, message_code, node, suppress]` and `node_ops[node]` is the
+/// node's corrector program (`[op, start, end]`, op 0 = remove,
+/// 1 = insert_after " ", 2 = insert_before " ").
+#[allow(clippy::type_complexity)]
+fn map_space_inside_reference_brackets(
+    r: shirobai_core::rules::space_inside_reference_brackets::ReferenceBracketsResult,
+) -> (
+    Vec<(usize, usize, u8, usize, bool)>,
+    Vec<Vec<(u8, usize, usize)>>,
+) {
+    (
+        r.offenses
+            .into_iter()
+            .map(|o| {
+                (
+                    o.start_offset,
+                    o.end_offset,
+                    o.message.code(),
+                    o.node,
+                    o.suppress_when_disable_uncorrectable,
+                )
+            })
+            .collect(),
+        r.node_ops,
+    )
+}
+
+/// Ruby entry point for `Layout/SpaceInsideReferenceBrackets` (the bundle is
+/// the usual path). `style` is 0 = no_space, 1 = space; `space_empty` is
+/// `EnforcedStyleForEmptyBrackets == 'space'`.
+#[allow(clippy::type_complexity)]
+fn check_space_inside_reference_brackets(
+    source: RString,
+    style: u8,
+    space_empty: bool,
+) -> (
+    Vec<(usize, usize, u8, usize, bool)>,
+    Vec<Vec<(u8, usize, usize)>>,
+) {
+    use shirobai_core::rules::space_inside_reference_brackets as sirb;
+    let cfg = sirb::Config {
+        style: if style != 0 {
+            sirb::Style::Space
+        } else {
+            sirb::Style::NoSpace
+        },
+        space_empty,
+    };
+    map_space_inside_reference_brackets(sirb::check_space_inside_reference_brackets(
+        bytes(&source),
+        cfg,
+    ))
+}
+
+/// Ruby entry point for `Layout/SpaceBeforeFirstArg` (the bundle is the
+/// usual path). Each offense is the `(start, end)` byte range of the
+/// whitespace run before the first argument (the corrector replaces it with
+/// one space).
+fn check_space_before_first_arg(source: RString, allow_for_alignment: bool) -> Vec<(usize, usize)> {
+    use shirobai_core::rules::space_before_first_arg as sbfa;
+    let cfg = sbfa::Config {
+        allow_for_alignment,
+    };
+    sbfa::check_space_before_first_arg(bytes(&source), cfg)
 }
 
 /// Ruby entry point for `Layout/SpaceInsideArrayLiteralBrackets` (the bundle
@@ -2965,6 +3218,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         "check_argument_alignment",
         function!(check_argument_alignment, 4),
     )?;
+    module.define_module_function(
+        "check_array_alignment",
+        function!(check_array_alignment, 3),
+    )?;
     module.define_module_function("check_redundant_self", function!(check_redundant_self, 2))?;
     module.define_module_function(
         "check_predicate_prefix",
@@ -3003,6 +3260,14 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         function!(check_empty_line_after_magic_comment, 1),
     )?;
     module.define_module_function(
+        "check_duplicate_magic_comment",
+        function!(check_duplicate_magic_comment, 1),
+    )?;
+    module.define_module_function(
+        "check_duplicate_methods",
+        function!(check_duplicate_methods, 2),
+    )?;
+    module.define_module_function(
         "check_empty_lines",
         function!(check_empty_lines, 1),
     )?;
@@ -3025,6 +3290,42 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_space_inside_hash_literal_braces",
         function!(check_space_inside_hash_literal_braces, 3),
+    )?;
+    module.define_module_function(
+        "check_space_before_comma",
+        function!(check_space_before_comma, 2),
+    )?;
+    module.define_module_function(
+        "check_space_after_comma",
+        function!(check_space_after_comma, 2),
+    )?;
+    module.define_module_function(
+        "check_space_before_semicolon",
+        function!(check_space_before_semicolon, 2),
+    )?;
+    module.define_module_function(
+        "check_space_after_semicolon",
+        function!(check_space_after_semicolon, 2),
+    )?;
+    module.define_module_function(
+        "check_space_after_colon",
+        function!(check_space_after_colon, 1),
+    )?;
+    module.define_module_function(
+        "check_space_before_comment",
+        function!(check_space_before_comment, 1),
+    )?;
+    module.define_module_function(
+        "check_space_inside_parens",
+        function!(check_space_inside_parens, 2),
+    )?;
+    module.define_module_function(
+        "check_space_inside_reference_brackets",
+        function!(check_space_inside_reference_brackets, 3),
+    )?;
+    module.define_module_function(
+        "check_space_before_first_arg",
+        function!(check_space_before_first_arg, 2),
     )?;
     module.define_module_function(
         "check_space_inside_array_literal_brackets",

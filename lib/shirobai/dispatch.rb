@@ -93,7 +93,19 @@ module Shirobai
       space_inside_hash_literal_braces: 72,
       space_inside_array_literal_brackets: 73,
       space_before_block_braces: 74,
-      if_unless_modifier: 75
+      if_unless_modifier: 75,
+      space_before_comma: 76,
+      space_after_comma: 77,
+      space_before_semicolon: 78,
+      space_after_semicolon: 79,
+      space_after_colon: 80,
+      space_before_comment: 81,
+      space_inside_parens: 82,
+      space_inside_reference_brackets: 83,
+      space_before_first_arg: 84,
+      duplicate_magic_comment: 85,
+      duplicate_methods: 86,
+      array_alignment: 87
     }.freeze
 
     class << self
@@ -139,6 +151,7 @@ module Shirobai
         op = Cop::Layout::MultilineOperationIndentation.bundle_args(config)
         mc = Cop::Layout::MultilineMethodCallIndentation.bundle_args(config)
         aa = Cop::Layout::ArgumentAlignment.bundle_args(config)
+        ara = Cop::Layout::ArrayAlignment.bundle_args(config)
         fai = Cop::Layout::FirstArgumentIndentation.bundle_args(config)
         iw = Cop::Layout::IndentationWidth.bundle_args(config)
         rs = Cop::Style::RedundantSelf.bundle_args(config)
@@ -201,6 +214,22 @@ module Shirobai
         sialb = Cop::Layout::SpaceInsideArrayLiteralBrackets.bundle_args(config)
         sbbb = Cop::Layout::SpaceBeforeBlockBraces.bundle_args(config)
         ium = Cop::Style::IfUnlessModifier.bundle_args(config)
+        sbcm = Cop::Layout::SpaceBeforeComma.bundle_args(config)
+        sacm = Cop::Layout::SpaceAfterComma.bundle_args(config)
+        sbsm = Cop::Layout::SpaceBeforeSemicolon.bundle_args(config)
+        sasm = Cop::Layout::SpaceAfterSemicolon.bundle_args(config)
+        # Layout/SpaceAfterColon and Layout/SpaceBeforeComment are config-less;
+        # their `bundle_args` returns `[]` and contributes nothing to
+        # `nums` / `lists`.
+        _ = Cop::Layout::SpaceAfterColon.bundle_args(config)
+        _ = Cop::Layout::SpaceBeforeComment.bundle_args(config)
+        sipn = Cop::Layout::SpaceInsideParens.bundle_args(config)
+        sirb = Cop::Layout::SpaceInsideReferenceBrackets.bundle_args(config)
+        sbfa = Cop::Layout::SpaceBeforeFirstArg.bundle_args(config)
+        # Lint/DuplicateMagicComment is config-less; its `bundle_args` returns
+        # `[]` and contributes nothing to `nums` / `lists`.
+        _ = Cop::Lint::DuplicateMagicComment.bundle_args(config)
+        dm = Cop::Lint::DuplicateMethods.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -249,7 +278,16 @@ module Shirobai
           *sihlb[0], # SpaceInsideHashLiteralBraces style / empty no_space (2 nums)
           *sialb[0], # SpaceInsideArrayLiteralBrackets style / empty space (2 nums)
           *ium, # IfUnlessModifier max_line_length (-1 = disabled) / tab_width (2 nums)
-          *sbbb[0] # SpaceBeforeBlockBraces style / empty style / bd conflict flag (3 nums)
+          *sbbb[0], # SpaceBeforeBlockBraces style / empty style / bd conflict flag (3 nums)
+          *sbcm[0], # SpaceBeforeComma lcurly_space (1 num)
+          *sacm[0], # SpaceAfterComma rcurly_no_space (1 num)
+          *sbsm[0], # SpaceBeforeSemicolon lcurly_space (1 num)
+          *sasm[0], # SpaceAfterSemicolon rcurly_no_space (1 num)
+          *sipn[0], # SpaceInsideParens style (1 num)
+          *sirb[0], # SpaceInsideReferenceBrackets style / empty space (2 nums)
+          *sbfa[0], # SpaceBeforeFirstArg allow_for_alignment (1 num)
+          num(dm[0]), # DuplicateMethods ActiveSupportExtensionsEnabled
+          *ara # ArrayAlignment style / indent (2 nums)
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0], aba[0],

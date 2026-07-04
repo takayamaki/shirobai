@@ -219,6 +219,15 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Layout::HashAlignment,
       "h = {\n  a: 0,\n   bb: 1\n}\n"
     ],
+    # Two correctable element offenses plus one `within?`-suppressed offense
+    # (the `4` sits inside the realigned `[3,\n 4]` range): stock keeps the
+    # nested one `:unsupported` while the others stay correctable. Both
+    # statuses must match.
+    "Layout/ArrayAlignment" => [
+      RuboCop::Cop::Layout::ArrayAlignment,
+      Shirobai::Cop::Layout::ArrayAlignment,
+      "x = [[1,\n   2],\n  [3,\n 4]]\n"
+    ],
     "Style/HashSyntax" => [
       RuboCop::Cop::Style::HashSyntax,
       Shirobai::Cop::Style::HashSyntax,
@@ -498,6 +507,84 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Style::IfUnlessModifier,
       Shirobai::Cop::Style::IfUnlessModifier,
       "{ x: (do_something_rather_long(arg) if #{"b" * 80}_cond), y: (2 if b) }\n"
+    ],
+    # A space before a comma: the offense (the whitespace run) carries a
+    # removal corrector (correctable). Guards that the wrapper attaches the
+    # corrector block in lint mode like stock.
+    "Layout/SpaceBeforeComma" => [
+      RuboCop::Cop::Layout::SpaceBeforeComma,
+      Shirobai::Cop::Layout::SpaceBeforeComma,
+      "f(a , b)\n"
+    ],
+    # A comma with no space after it: the offense (the comma) carries a
+    # replace corrector (correctable).
+    "Layout/SpaceAfterComma" => [
+      RuboCop::Cop::Layout::SpaceAfterComma,
+      Shirobai::Cop::Layout::SpaceAfterComma,
+      "f(a,b)\n"
+    ],
+    # A space before a semicolon: removal corrector (correctable).
+    "Layout/SpaceBeforeSemicolon" => [
+      RuboCop::Cop::Layout::SpaceBeforeSemicolon,
+      Shirobai::Cop::Layout::SpaceBeforeSemicolon,
+      "x = 1 ;\n"
+    ],
+    # A semicolon with no space after it: replace corrector (correctable).
+    "Layout/SpaceAfterSemicolon" => [
+      RuboCop::Cop::Layout::SpaceAfterSemicolon,
+      Shirobai::Cop::Layout::SpaceAfterSemicolon,
+      "x = 1;y = 2\n"
+    ],
+    # A hash label colon with no space after it: insert_after corrector
+    # (correctable).
+    "Layout/SpaceAfterColon" => [
+      RuboCop::Cop::Layout::SpaceAfterColon,
+      Shirobai::Cop::Layout::SpaceAfterColon,
+      "h = {a:1}\n"
+    ],
+    # An end-of-line comment glued to the code: insert_before corrector
+    # (correctable).
+    "Layout/SpaceBeforeComment" => [
+      RuboCop::Cop::Layout::SpaceBeforeComment,
+      Shirobai::Cop::Layout::SpaceBeforeComment,
+      "x = 1# c\n"
+    ],
+    # Spaces inside parens under the default no_space style: both gaps carry
+    # removal correctors (correctable).
+    "Layout/SpaceInsideParens" => [
+      RuboCop::Cop::Layout::SpaceInsideParens,
+      Shirobai::Cop::Layout::SpaceInsideParens,
+      "f( 3 )\n"
+    ],
+    # Spaces inside reference brackets under the default no_space style:
+    # stock corrects the whole node on the FIRST offense (ignore_node), so
+    # the first offense is correctable and the second one's corrector block
+    # stays empty. Guards the per-node grouping.
+    "Layout/SpaceInsideReferenceBrackets" => [
+      RuboCop::Cop::Layout::SpaceInsideReferenceBrackets,
+      Shirobai::Cop::Layout::SpaceInsideReferenceBrackets,
+      "hash[ :key ]\n"
+    ],
+    # A two-space first argument with nothing to align to: replace corrector
+    # (correctable).
+    "Layout/SpaceBeforeFirstArg" => [
+      RuboCop::Cop::Layout::SpaceBeforeFirstArg,
+      Shirobai::Cop::Layout::SpaceBeforeFirstArg,
+      "something  x\n"
+    ],
+    # Whole-line removal corrector; the pending status does not matter here
+    # (a bare Commissioner ignores enablement).
+    "Lint/DuplicateMagicComment" => [
+      RuboCop::Cop::Lint::DuplicateMagicComment,
+      Shirobai::Cop::Lint::DuplicateMagicComment,
+      "# encoding: utf-8\n# encoding: ascii\nx = 1\n"
+    ],
+    # No autocorrect at all: the offense must stay non-correctable
+    # (:unsupported) on both sides.
+    "Lint/DuplicateMethods" => [
+      RuboCop::Cop::Lint::DuplicateMethods,
+      Shirobai::Cop::Lint::DuplicateMethods,
+      "def foo; end\ndef foo; end\n"
     ],
   }
 
