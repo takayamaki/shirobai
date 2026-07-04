@@ -34,7 +34,7 @@ shirobaiは日本語話者なら当然わかるでしょう、白バイです。
 
 ## 現状
 
-- **76 cop** を Rust 実装済み（Lint / Layout / Metrics / Naming / Style）。
+- **88 cop** を Rust 実装済み（Lint / Layout / Metrics / Naming / Style）。
 - **drop-in 完全互換**を実コーパスで検証済み。
   検証は `benches/parity_diff.sh` で行う。実装済み全 cop について offense
   の位置・メッセージ・autocorrect 後のバイトすべてが stock RuboCop と一致する。

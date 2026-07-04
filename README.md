@@ -43,7 +43,7 @@ The image is simple: RuboCop hops on a shiro-bai and gets faster.
 
 ## Current status
 
-- **76 cops** reimplemented in Rust (Lint / Layout / Metrics / Naming / Style).
+- **88 cops** reimplemented in Rust (Lint / Layout / Metrics / Naming / Style).
 - **Full drop-in compatibility** verified on real codebases.
   For every implemented cop, every offense position, message,
   and autocorrected byte matches stock RuboCop.
