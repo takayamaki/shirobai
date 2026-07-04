@@ -4,6 +4,11 @@ set -euo pipefail
 # Clone test corpora into .tmp/ for parity verification.
 # Each corpus is pinned to a specific commit and cloned at depth 1.
 # rubocop_source is a symlink to vendor/rubocop (tracked in git).
+#
+# Usage: bin/setup-corpora [name...]
+# With no arguments all corpora are cloned.
+# With names (mastodon discourse redmine fluentd) only those are cloned —
+# CI uses this to fetch one corpus per job.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -26,7 +31,16 @@ COMMITS[redmine]=74dc20d73692b3e96a133bbd11c395c323f18c44
 REPOS[fluentd]=https://github.com/fluent/fluentd.git
 COMMITS[fluentd]=3b34a7b9a066a347d19e976b238be1ce9ea877fa
 
-for name in mastodon discourse redmine fluentd; do
+names=("$@")
+if [ ${#names[@]} -eq 0 ]; then
+  names=(mastodon discourse redmine fluentd)
+fi
+
+for name in "${names[@]}"; do
+  if [[ ! -v "REPOS[$name]" ]]; then
+    echo "error: unknown corpus '$name' (known: ${!REPOS[*]})" >&2
+    exit 1
+  fi
   dest="$TMP/$name"
   repo="${REPOS[$name]}"
   commit="${COMMITS[$name]}"
