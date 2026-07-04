@@ -57,7 +57,7 @@ The image is simple: RuboCop hops on a shiro-bai and gets faster.
   | Mastodon | 3,206 | 0 | 116.25s | 90.57s | **-25.69s (-22.1%)** |
   | Discourse | 10,229 | 16 | 259.56s | 237.86s | **-21.70s (-8.4%)** |
   | Redmine | 1,058 | 2 | 56.73s | 43.24s | **-13.49s (-23.8%)** |
-  | fluentd | 456 | 0 | 9.73s | 9.97s | -0.24s (-2.5%) |
+  | fluentd | 456 | 0 | 9.73s | 9.97s | +0.24s (+2.5%) |
 
   Measured on GitHub Actions `ubuntu-latest` (4-vCPU shared runner)
   against shirobai at commit [`84b6906`](https://github.com/takayamaki/shirobai/commit/84b6906).
