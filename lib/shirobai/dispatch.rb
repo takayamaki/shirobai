@@ -104,7 +104,8 @@ module Shirobai
       space_inside_reference_brackets: 83,
       space_before_first_arg: 84,
       duplicate_magic_comment: 85,
-      duplicate_methods: 86
+      duplicate_methods: 86,
+      array_alignment: 87
     }.freeze
 
     class << self
@@ -150,6 +151,7 @@ module Shirobai
         op = Cop::Layout::MultilineOperationIndentation.bundle_args(config)
         mc = Cop::Layout::MultilineMethodCallIndentation.bundle_args(config)
         aa = Cop::Layout::ArgumentAlignment.bundle_args(config)
+        ara = Cop::Layout::ArrayAlignment.bundle_args(config)
         fai = Cop::Layout::FirstArgumentIndentation.bundle_args(config)
         iw = Cop::Layout::IndentationWidth.bundle_args(config)
         rs = Cop::Style::RedundantSelf.bundle_args(config)
@@ -284,7 +286,8 @@ module Shirobai
           *sipn[0], # SpaceInsideParens style (1 num)
           *sirb[0], # SpaceInsideReferenceBrackets style / empty space (2 nums)
           *sbfa[0], # SpaceBeforeFirstArg allow_for_alignment (1 num)
-          num(dm[0]) # DuplicateMethods ActiveSupportExtensionsEnabled
+          num(dm[0]), # DuplicateMethods ActiveSupportExtensionsEnabled
+          *ara # ArrayAlignment style / indent (2 nums)
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0], aba[0],

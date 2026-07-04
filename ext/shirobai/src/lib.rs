@@ -302,6 +302,14 @@ fn map_argument_alignment(
         .collect()
 }
 
+fn map_array_alignment(
+    v: Vec<shirobai_core::rules::array_alignment::ArrayAlignOffense>,
+) -> Vec<(usize, usize, isize, bool)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.column_delta, o.autocorrect))
+        .collect()
+}
+
 #[allow(clippy::type_complexity)]
 fn map_first_argument_indentation(
     v: Vec<shirobai_core::rules::first_argument_indentation::FirstArgIndentOffense>,
@@ -1198,7 +1206,7 @@ fn register_bundle_config(
 
 /// Ruby entry point for the all-cop bundle: computes every cop's result for
 /// `source` in one call, using the config registered under `token`. Returns a
-/// fixed-order 30-slot Array; each slot carries that cop's existing tuple-array
+/// fixed-order 88-slot Array; each slot carries that cop's existing tuple-array
 /// shape (identical to the standalone entry point's return value). The slot
 /// order is mirrored by `Shirobai::Dispatch::SLOTS` on the Ruby side:
 ///
@@ -1241,7 +1249,8 @@ fn register_bundle_config(
 /// 80 space_after_colon / 81 space_before_comment /
 /// 82 space_inside_parens / 83 space_inside_reference_brackets /
 /// 84 space_before_first_arg /
-/// 85 duplicate_magic_comment / 86 duplicate_methods
+/// 85 duplicate_magic_comment / 86 duplicate_methods /
+/// 87 array_alignment
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1252,7 +1261,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(87);
+        let ary = ruby.ary_new_capa(88);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -1383,6 +1392,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(r.space_before_first_arg)?;
         ary.push(r.duplicate_magic_comment)?;
         ary.push(map_duplicate_methods(r.duplicate_methods))?;
+        ary.push(map_array_alignment(r.array_alignment))?;
         Ok(ary)
     })
 }
@@ -1879,6 +1889,22 @@ fn check_argument_alignment(
             incompatible,
         ),
     )
+}
+
+/// Ruby entry point for `Layout/ArrayAlignment`. Takes the source, the
+/// enforced style (0=with_first_element, 1=with_fixed_indentation) and the
+/// configured indentation width.
+/// Returns `[[start, end, column_delta, autocorrect], ...]`.
+fn check_array_alignment(
+    source: RString,
+    style: u8,
+    indent_width: usize,
+) -> Vec<(usize, usize, isize, bool)> {
+    map_array_alignment(shirobai_core::rules::array_alignment::check_array_alignment(
+        bytes(&source),
+        style,
+        indent_width,
+    ))
 }
 
 /// Ruby entry point for `Layout/FirstArgumentIndentation`. Takes the source,
@@ -3191,6 +3217,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_argument_alignment",
         function!(check_argument_alignment, 4),
+    )?;
+    module.define_module_function(
+        "check_array_alignment",
+        function!(check_array_alignment, 3),
     )?;
     module.define_module_function("check_redundant_self", function!(check_redundant_self, 2))?;
     module.define_module_function(

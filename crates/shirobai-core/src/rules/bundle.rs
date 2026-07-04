@@ -10,7 +10,7 @@ use super::multiline_method_call_indentation::{self as mc, MethodCallIndentOffen
 use super::multiline_operation_indentation::{self as op, OperationIndentOffense};
 use super::{
     abc_size, access_modifier_indentation, ambiguous_block_association, argument_alignment,
-    assignment_indentation,
+    array_alignment, assignment_indentation,
     block_delimiters, block_length, block_nesting,
     class_length,
     closing_parenthesis_indentation, colon_method_call, complexity, debugger, def_end_alignment,
@@ -158,6 +158,8 @@ pub fn check_multiline_bundle(
 /// | 109 | space_inside_reference_brackets empty space (`EnforcedStyleForEmptyBrackets == 'space'`) |
 /// | 110 | space_before_first_arg allow_for_alignment (`AllowForAlignment`) |
 /// | 111 | duplicate_methods_active_support (`AllCops/ActiveSupportExtensionsEnabled`; `Lint/DuplicateMagicComment` is config-less) |
+/// | 112 | array_alignment style (`EnforcedStyle`: 0 = with_first_element, 1 = with_fixed_indentation) |
+/// | 113 | array_alignment indentation width (`IndentationWidth` falling back to `Layout/IndentationWidth.Width` falling back to 2) |
 ///
 /// `lists` (`Vec<String>`), 20 entries:
 ///
@@ -222,6 +224,8 @@ pub struct BundleConfig {
     pub argument_alignment_style: u8,
     pub argument_alignment_indent: usize,
     pub argument_alignment_incompatible: bool,
+    pub array_alignment_style: u8,
+    pub array_alignment_indent: usize,
     pub first_argument_style: u8,
     pub first_argument_indent: usize,
     pub first_argument_enforce_fixed_no_line_break: bool,
@@ -293,7 +297,7 @@ pub struct BundleConfig {
 // in the `nums` / `lists` packing; the bundle still computes its slot in the
 // shared walk (see `check_all_bundle` below).
 
-const NUMS_LEN: usize = 112;
+const NUMS_LEN: usize = 114;
 const LISTS_LEN: usize = 25;
 
 impl BundleConfig {
@@ -342,6 +346,8 @@ impl BundleConfig {
             argument_alignment_style: nums[21] as u8,
             argument_alignment_indent: nums[22] as usize,
             argument_alignment_incompatible: nums[23] != 0,
+            array_alignment_style: nums[112] as u8,
+            array_alignment_indent: nums[113] as usize,
             first_argument_style: nums[24] as u8,
             first_argument_indent: nums[25] as usize,
             first_argument_enforce_fixed_no_line_break: nums[26] != 0,
@@ -610,6 +616,7 @@ pub struct BundleResult {
     pub line_length_breakables: Vec<line_length_breakable::Breakable>,
     pub line_end_concatenation: Vec<line_end_concatenation::LineEndConcatOffense>,
     pub argument_alignment: Vec<argument_alignment::ArgAlignOffense>,
+    pub array_alignment: Vec<array_alignment::ArrayAlignOffense>,
     pub first_argument_indentation: Vec<first_argument_indentation::FirstArgIndentOffense>,
     pub redundant_self: Vec<redundant_self::RedundantSelfOffense>,
     pub indentation_width: Vec<indentation_width::IndentationOffense>,
@@ -731,6 +738,11 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         cfg.argument_alignment_style,
         cfg.argument_alignment_indent,
         cfg.argument_alignment_incompatible,
+    );
+    let mut ara_rule = array_alignment::build_rule(
+        source,
+        cfg.array_alignment_style,
+        cfg.array_alignment_indent,
     );
     let mut fa_rule = first_argument_indentation::build_rule(
         source,
@@ -958,6 +970,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut aba_rule,
         &mut ium_rule,
         &mut dm_rule,
+        &mut ara_rule,
     ];
     if empty_lines_eligible {
         rules.push(&mut el_rule);
@@ -976,6 +989,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let multiline_operation = op_rule.offenses;
     let multiline_method_call = mc_rule.offenses;
     let argument_alignment = aa_rule.map(|r| r.offenses).unwrap_or_default();
+    let array_alignment = ara_rule.offenses;
     let first_argument_indentation = fa_rule.map(|r| r.offenses).unwrap_or_default();
     let safe_navigation_chain = snc_rule.offenses;
     let indentation_width = iw_rule.offenses;
@@ -1103,6 +1117,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         line_length_breakables,
         line_end_concatenation,
         argument_alignment,
+        array_alignment,
         first_argument_indentation,
         redundant_self,
         indentation_width,
@@ -1256,6 +1271,7 @@ mod tests {
             0, 0, // space_inside_reference_brackets: style(no_space) / empty(no_space)
             1, // space_before_first_arg: allow_for_alignment
             0, // duplicate_methods: active_support_extensions_enabled
+            0, 2, // array_alignment: style(with_first_element) / indent
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -1911,6 +1927,50 @@ mod tests {
             assert_eq!(
                 (a.start_offset, a.end_offset, a.column_delta, &a.message),
                 (b.start_offset, b.end_offset, b.column_delta, &b.message)
+            );
+        }
+    }
+
+    /// `Layout/ArrayAlignment` merged into the shared walk must report
+    /// exactly what its standalone entry point reports, over a source
+    /// exercising the parent-intercept paths: a bracketed literal, an
+    /// implicit assignment array, a skipped masgn RHS, a rescue exception
+    /// list and a nested array losing autocorrect via `within?`.
+    #[test]
+    fn shared_walk_matches_standalone_array_alignment() {
+        let src = "array = [a,\n\
+                   \x20  b,\n\
+                   \x20 c]\n\
+                   imp = 1,\n\
+                   \x20 2\n\
+                   m, n = 1,\n\
+                   \x20       2\n\
+                   begin\n\
+                   \x20 x\n\
+                   rescue FooError,\n\
+                   \x20   BarError\n\
+                   \x20 y\n\
+                   end\n\
+                   nested = [[1,\n\
+                   \x20  2],\n\
+                   \x20 [3,\n\
+                   4]]\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let ara_alone = super::array_alignment::check_array_alignment(
+            src.as_bytes(),
+            cfg.array_alignment_style,
+            cfg.array_alignment_indent,
+        );
+        assert!(ara_alone.len() >= 6);
+        assert!(ara_alone.iter().any(|o| !o.autocorrect));
+        assert_eq!(bundle.array_alignment.len(), ara_alone.len());
+        for (a, b) in bundle.array_alignment.iter().zip(&ara_alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.column_delta, a.autocorrect),
+                (b.start_offset, b.end_offset, b.column_delta, b.autocorrect)
             );
         }
     }

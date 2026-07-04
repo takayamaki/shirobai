@@ -80,6 +80,9 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
   cases = {
     # start/fin + AlignmentCorrector on the offense range.
     "Layout/ArgumentAlignment" => "foo(a,\n  b)\n",
+    # start/fin (the misaligned element node range) + the node-resolved
+    # AlignmentCorrector realignment by column_delta.
+    "Layout/ArrayAlignment" => "x = [a,\n  b]\n",
     # start/fin (the hanging `)`) + AlignmentCorrector.
     "Layout/ClosingParenthesisIndentation" => "some_method(a\n)\n",
     # dot range + remove range + insert position.

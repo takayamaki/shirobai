@@ -219,6 +219,15 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Layout::HashAlignment,
       "h = {\n  a: 0,\n   bb: 1\n}\n"
     ],
+    # Two correctable element offenses plus one `within?`-suppressed offense
+    # (the `4` sits inside the realigned `[3,\n 4]` range): stock keeps the
+    # nested one `:unsupported` while the others stay correctable. Both
+    # statuses must match.
+    "Layout/ArrayAlignment" => [
+      RuboCop::Cop::Layout::ArrayAlignment,
+      Shirobai::Cop::Layout::ArrayAlignment,
+      "x = [[1,\n   2],\n  [3,\n 4]]\n"
+    ],
     "Style/HashSyntax" => [
       RuboCop::Cop::Style::HashSyntax,
       Shirobai::Cop::Style::HashSyntax,
