@@ -1240,7 +1240,8 @@ fn register_bundle_config(
 /// 78 space_before_semicolon / 79 space_after_semicolon /
 /// 80 space_after_colon / 81 space_before_comment /
 /// 82 space_inside_parens / 83 space_inside_reference_brackets /
-/// 84 space_before_first_arg
+/// 84 space_before_first_arg /
+/// 85 duplicate_magic_comment / 86 duplicate_methods
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1251,7 +1252,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(85);
+        let ary = ruby.ary_new_capa(87);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -1380,6 +1381,8 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             r.space_inside_reference_brackets,
         ))?;
         ary.push(r.space_before_first_arg)?;
+        ary.push(r.duplicate_magic_comment)?;
+        ary.push(map_duplicate_methods(r.duplicate_methods))?;
         Ok(ary)
     })
 }
@@ -2429,6 +2432,54 @@ fn check_empty_line_after_magic_comment(
     )
 }
 
+/// `Lint/DuplicateMethods`: `[[name, key, sexp_start, sexp_end, scope_line,
+/// off_start, off_end, line, rescue_scope], ...]` — one tuple per stock
+/// `found_method` call, in callback order. `sexp_start/end >= 0` marks the
+/// parser-sexp key fallback (byte range of the defs node); `scope_line >= 0`
+/// asks the wrapper to append the `"@#{smart_path}:#{line}"` scope id.
+/// `rescue_scope`: 0 none / 1 rescue / 2 ensure. The wrapper replays stock's
+/// cross-file `@definitions` / `@scopes` bookkeeping over this stream.
+type DupMethodTuple = (String, String, i64, i64, i64, usize, usize, usize, u8);
+
+fn map_duplicate_methods(
+    v: Vec<shirobai_core::rules::duplicate_methods::DupMethodEvent>,
+) -> Vec<DupMethodTuple> {
+    v.into_iter()
+        .map(|e| {
+            (
+                e.name,
+                e.key,
+                e.sexp_start,
+                e.sexp_end,
+                e.scope_line,
+                e.off_start,
+                e.off_end,
+                e.line,
+                e.rescue_scope,
+            )
+        })
+        .collect()
+}
+
+/// Ruby entry point for `Lint/DuplicateMagicComment` (standalone fallback,
+/// config-less). Returns the 1-based lines of duplicate magic comments
+/// (encoding bucket first, then frozen-string-literal).
+fn check_duplicate_magic_comment(source: RString) -> Vec<usize> {
+    shirobai_core::rules::duplicate_magic_comment::check_duplicate_magic_comment(bytes(&source))
+}
+
+/// Ruby entry point for `Lint/DuplicateMethods` (standalone fallback).
+/// `active_support` mirrors `AllCops/ActiveSupportExtensionsEnabled`.
+/// Returns the shape documented on `map_duplicate_methods`.
+fn check_duplicate_methods(source: RString, active_support: bool) -> Vec<DupMethodTuple> {
+    map_duplicate_methods(shirobai_core::rules::duplicate_methods::check_duplicate_methods(
+        bytes(&source),
+        &shirobai_core::rules::duplicate_methods::Config {
+            active_support_extensions_enabled: active_support,
+        },
+    ))
+}
+
 /// Ruby entry point for `Layout/EmptyLines` (standalone fallback,
 /// config-less). Returns the shape documented on `map_empty_lines`.
 fn check_empty_lines(source: RString) -> Vec<(usize, usize)> {
@@ -3177,6 +3228,14 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_empty_line_after_magic_comment",
         function!(check_empty_line_after_magic_comment, 1),
+    )?;
+    module.define_module_function(
+        "check_duplicate_magic_comment",
+        function!(check_duplicate_magic_comment, 1),
+    )?;
+    module.define_module_function(
+        "check_duplicate_methods",
+        function!(check_duplicate_methods, 2),
     )?;
     module.define_module_function(
         "check_empty_lines",

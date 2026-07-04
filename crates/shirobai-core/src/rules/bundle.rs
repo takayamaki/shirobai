@@ -15,6 +15,7 @@ use super::{
     class_length,
     closing_parenthesis_indentation, colon_method_call, complexity, debugger, def_end_alignment,
     dot_position,
+    duplicate_magic_comment, duplicate_methods,
     empty_comment,
     empty_line_after_guard_clause,
     empty_line_after_magic_comment,
@@ -156,6 +157,7 @@ pub fn check_multiline_bundle(
 /// | 108 | space_inside_reference_brackets style (`EnforcedStyle`: 0 no_space, 1 space) |
 /// | 109 | space_inside_reference_brackets empty space (`EnforcedStyleForEmptyBrackets == 'space'`) |
 /// | 110 | space_before_first_arg allow_for_alignment (`AllowForAlignment`) |
+/// | 111 | duplicate_methods_active_support (`AllCops/ActiveSupportExtensionsEnabled`; `Lint/DuplicateMagicComment` is config-less) |
 ///
 /// `lists` (`Vec<String>`), 20 entries:
 ///
@@ -284,13 +286,14 @@ pub struct BundleConfig {
     pub space_inside_parens: space_inside_parens::Config,
     pub space_inside_reference_brackets: space_inside_reference_brackets::Config,
     pub space_before_first_arg: space_before_first_arg::Config,
+    pub duplicate_methods: duplicate_methods::Config,
 }
 
 // `Lint/ParenthesesAsGroupedExpression` carries no config so it doesn't appear
 // in the `nums` / `lists` packing; the bundle still computes its slot in the
 // shared walk (see `check_all_bundle` below).
 
-const NUMS_LEN: usize = 111;
+const NUMS_LEN: usize = 112;
 const LISTS_LEN: usize = 25;
 
 impl BundleConfig {
@@ -544,6 +547,9 @@ impl BundleConfig {
             space_before_first_arg: space_before_first_arg::Config {
                 allow_for_alignment: nums[110] != 0,
             },
+            duplicate_methods: duplicate_methods::Config {
+                active_support_extensions_enabled: nums[111] != 0,
+            },
         })
     }
 }
@@ -688,6 +694,12 @@ pub struct BundleResult {
     pub space_inside_parens: Vec<space_inside_parens::SpaceInsideParensOffense>,
     pub space_inside_reference_brackets: space_inside_reference_brackets::ReferenceBracketsResult,
     pub space_before_first_arg: Vec<space_before_first_arg::SpaceBeforeFirstArgOffense>,
+    /// 1-based lines of duplicate magic comments (encoding bucket then
+    /// frozen-string-literal bucket, document order within each).
+    pub duplicate_magic_comment: Vec<duplicate_magic_comment::DuplicateLine>,
+    /// Per-file `found_method` event stream in stock callback order (the
+    /// Ruby wrapper replays the cross-file bookkeeping).
+    pub duplicate_methods: Vec<duplicate_methods::DupMethodEvent>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -871,6 +883,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut aba_rule =
         ambiguous_block_association::build_rule(source, cfg.ambiguous_block_association.clone());
     let mut ium_rule = if_unless_modifier::build_rule(source, cfg.if_unless_modifier);
+    let mut dm_rule = duplicate_methods::build_rule(source, &cfg.duplicate_methods);
     // `Layout/EmptyLines` joins the shared walk only when the file actually
     // contains `\n\n\n` (stock's prefilter); otherwise the rule's collected
     // lines are unused and we skip both the walk push and the finalize. The
@@ -944,6 +957,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut htk_rule,
         &mut aba_rule,
         &mut ium_rule,
+        &mut dm_rule,
     ];
     if empty_lines_eligible {
         rules.push(&mut el_rule);
@@ -1042,6 +1056,10 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // from the cached parse, no AST walk.
     let leading_empty_lines =
         leading_empty_lines::check_leading_empty_lines(source);
+    // `Lint/DuplicateMagicComment` is a leading-line scan (comments + the
+    // first non-comment token position from the cached parse), no AST walk.
+    let duplicate_magic_comment =
+        duplicate_magic_comment::check_duplicate_magic_comment(source);
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -1146,6 +1164,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         space_inside_parens,
         space_inside_reference_brackets,
         space_before_first_arg,
+        duplicate_magic_comment,
+        duplicate_methods: dm_rule.events,
     }
 }
 
@@ -1235,6 +1255,7 @@ mod tests {
             0, // space_inside_parens: style (no_space)
             0, 0, // space_inside_reference_brackets: style(no_space) / empty(no_space)
             1, // space_before_first_arg: allow_for_alignment
+            0, // duplicate_methods: active_support_extensions_enabled
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -3233,6 +3254,45 @@ mod tests {
         assert!(bundle.argument_alignment.is_empty());
         assert!(bundle.first_argument_indentation.is_empty());
         assert!(bundle.first_array_element_indentation.is_empty());
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_duplicate_magic_comment() {
+        let src = "# encoding: utf-8\n# encoding: ascii\n# frozen_string_literal: true\n# frozen_string_literal: true\nx = 1\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone =
+            super::duplicate_magic_comment::check_duplicate_magic_comment(src.as_bytes());
+        assert!(!alone.is_empty());
+        assert_eq!(bundle.duplicate_magic_comment, alone);
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_duplicate_methods() {
+        // Exercises defs, sclass, attr, alias and an anonymous class block.
+        let src = "class A\n  def foo; end\n  def foo; end\n  attr_reader :bar\n  alias baz qux\n  class << self\n    def s; end\n  end\nend\nClass.new do\n  def anon; end\nend.tap { 1 }\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone = super::duplicate_methods::check_duplicate_methods(
+            src.as_bytes(),
+            &cfg.duplicate_methods,
+        );
+        assert!(!alone.is_empty());
+        assert_eq!(bundle.duplicate_methods.len(), alone.len());
+        for (a, b) in bundle.duplicate_methods.iter().zip(&alone) {
+            assert_eq!(a.key, b.key);
+            assert_eq!(a.name, b.name);
+            assert_eq!(
+                (a.sexp_start, a.sexp_end, a.scope_line),
+                (b.sexp_start, b.sexp_end, b.scope_line)
+            );
+            assert_eq!(
+                (a.off_start, a.off_end, a.line, a.rescue_scope),
+                (b.off_start, b.off_end, b.line, b.rescue_scope)
+            );
+        }
     }
 
     #[test]

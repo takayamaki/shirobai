@@ -101,10 +101,17 @@ I prefer a failed install over a silent difference.
 ### Known limitation: `AllCops/TargetRubyVersion`
 
 shirobai always parses with prism's Latest grammar.
-In practice, the only cop affected is **Layout/SpaceAroundKeyword**
-when detecting the Ruby 2.7 `expr in pat` one-line pattern match.
+In practice, only three cops are affected:
+
+- **Layout/SpaceAroundKeyword** when detecting the Ruby 2.7
+  `expr in pat` one-line pattern match.
+- **Lint/DuplicateMagicComment** when a file has an INDENTED `__END__`
+  line (parsers before 3.4 stop reading there; prism reads on).
+- **Lint/DuplicateMethods** when a method is defined inside a block
+  that uses the bare `it` parameter (an `it` block only exists in 3.4+).
+
 All other implemented cops work the same regardless of TargetRubyVersion.
-If you need strict target-version behavior for that one cop,
+If you need strict target-version behavior for these cops,
 you can disable shirobai's replacement in your config; the stock cop will run instead.
 
 ## Installation

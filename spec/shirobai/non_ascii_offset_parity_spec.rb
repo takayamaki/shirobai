@@ -406,6 +406,12 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # so nothing on the comment line aligns with it.
     "Layout/SpaceBeforeFirstArg" =>
       "何か.foo  \"引数\"\n",
+    # Offense range and message locations flow through SourceOffsets; the
+    # multibyte defs also exercise the sexp-fallback node lookup by char
+    # begin_pos.
+    "Lint/DuplicateMethods" =>
+      "class A\n  def foo; end\n  def foo; end\nend\n" \
+      "def B.zzz\n  \"あいう\"\nend\ndef B.zzz\n  \"あいう\"\nend\n",
   }
 
   cases.each do |cop_name, body|
@@ -429,6 +435,28 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
         "(test)"
       )
       offenses = expect_parity("Naming/MethodName", "#{prefix}def fooBar; end\n", forbidden_config)
+      expect(offenses).not_to be_empty, "fixture produced no stock offense; fix the source"
+    end
+  end
+
+  # `Lint/DuplicateMagicComment` is `Enabled: pending`, so the Team-based
+  # runs above would drop it on BOTH sides under the default config
+  # (vacuously green); force-enable it. The wrapper passes line numbers
+  # only (no byte offsets), but the multibyte leading comment still guards
+  # the line accounting.
+  describe "Lint/DuplicateMagicComment (pending cop, force-enabled)" do
+    it "matches stock offenses and autocorrect output after a multibyte comment" do
+      enabled_config = RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new(
+          { "Lint/DuplicateMagicComment" => { "Enabled" => true } }, "(test)"
+        ),
+        "(test)"
+      )
+      offenses = expect_parity(
+        "Lint/DuplicateMagicComment",
+        "#{prefix}# encoding: utf-8\n# encoding: utf-8\nx = \"あ\"\n",
+        enabled_config
+      )
       expect(offenses).not_to be_empty, "fixture produced no stock offense; fix the source"
     end
   end

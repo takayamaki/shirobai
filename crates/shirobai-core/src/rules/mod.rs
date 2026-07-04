@@ -17,6 +17,8 @@ pub mod debugger;
 pub mod def_end_alignment;
 pub mod dispatch;
 pub mod dot_position;
+pub mod duplicate_magic_comment;
+pub mod duplicate_methods;
 pub mod empty_comment;
 pub mod empty_line_after_guard_clause;
 pub mod empty_line_after_magic_comment;

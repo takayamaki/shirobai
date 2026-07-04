@@ -563,6 +563,20 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Layout::SpaceBeforeFirstArg,
       "something  x\n"
     ],
+    # Whole-line removal corrector; the pending status does not matter here
+    # (a bare Commissioner ignores enablement).
+    "Lint/DuplicateMagicComment" => [
+      RuboCop::Cop::Lint::DuplicateMagicComment,
+      Shirobai::Cop::Lint::DuplicateMagicComment,
+      "# encoding: utf-8\n# encoding: ascii\nx = 1\n"
+    ],
+    # No autocorrect at all: the offense must stay non-correctable
+    # (:unsupported) on both sides.
+    "Lint/DuplicateMethods" => [
+      RuboCop::Cop::Lint::DuplicateMethods,
+      Shirobai::Cop::Lint::DuplicateMethods,
+      "def foo; end\ndef foo; end\n"
+    ],
   }
 
   cases.each do |name, (stock_klass, shirobai_klass, source)|
