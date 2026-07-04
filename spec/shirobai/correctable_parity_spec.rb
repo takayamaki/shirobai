@@ -499,6 +499,47 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Style::IfUnlessModifier,
       "{ x: (do_something_rather_long(arg) if #{"b" * 80}_cond), y: (2 if b) }\n"
     ],
+    # A space before a comma: the offense (the whitespace run) carries a
+    # removal corrector (correctable). Guards that the wrapper attaches the
+    # corrector block in lint mode like stock.
+    "Layout/SpaceBeforeComma" => [
+      RuboCop::Cop::Layout::SpaceBeforeComma,
+      Shirobai::Cop::Layout::SpaceBeforeComma,
+      "f(a , b)\n"
+    ],
+    # A comma with no space after it: the offense (the comma) carries a
+    # replace corrector (correctable).
+    "Layout/SpaceAfterComma" => [
+      RuboCop::Cop::Layout::SpaceAfterComma,
+      Shirobai::Cop::Layout::SpaceAfterComma,
+      "f(a,b)\n"
+    ],
+    # A space before a semicolon: removal corrector (correctable).
+    "Layout/SpaceBeforeSemicolon" => [
+      RuboCop::Cop::Layout::SpaceBeforeSemicolon,
+      Shirobai::Cop::Layout::SpaceBeforeSemicolon,
+      "x = 1 ;\n"
+    ],
+    # A semicolon with no space after it: replace corrector (correctable).
+    "Layout/SpaceAfterSemicolon" => [
+      RuboCop::Cop::Layout::SpaceAfterSemicolon,
+      Shirobai::Cop::Layout::SpaceAfterSemicolon,
+      "x = 1;y = 2\n"
+    ],
+    # A hash label colon with no space after it: insert_after corrector
+    # (correctable).
+    "Layout/SpaceAfterColon" => [
+      RuboCop::Cop::Layout::SpaceAfterColon,
+      Shirobai::Cop::Layout::SpaceAfterColon,
+      "h = {a:1}\n"
+    ],
+    # An end-of-line comment glued to the code: insert_before corrector
+    # (correctable).
+    "Layout/SpaceBeforeComment" => [
+      RuboCop::Cop::Layout::SpaceBeforeComment,
+      Shirobai::Cop::Layout::SpaceBeforeComment,
+      "x = 1# c\n"
+    ],
   }
 
   cases.each do |name, (stock_klass, shirobai_klass, source)|

@@ -52,6 +52,7 @@ pub mod parentheses_as_grouped_expression;
 pub mod parse_cache;
 pub mod percent_literal_delimiters;
 pub mod predicate_prefix;
+pub mod punctuation_spacing;
 pub mod redundant_self;
 pub mod redundant_self_assignment;
 pub mod require_parentheses;

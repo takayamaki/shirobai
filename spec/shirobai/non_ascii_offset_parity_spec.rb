@@ -368,6 +368,31 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     "Style/IfUnlessModifier" =>
       "if condition\n  do_stuff(\"あいう\")\nend\n" \
       "foo_bar(\"えお\") if #{"a" * 100}_condition\n",
+    # The whitespace-run offense range (also the removal corrector range)
+    # sits after a multibyte argument on the same line, so both offsets are
+    # shifted ahead of the char offsets and must be converted.
+    "Layout/SpaceBeforeComma" =>
+      "f(\"日本語\" , b)\n",
+    # The comma offense range (also the replace anchor) sits after a
+    # multibyte argument on the same line.
+    "Layout/SpaceAfterComma" =>
+      "f(\"日本語\",:b)\n",
+    # The whitespace-run offense range sits after a multibyte string on the
+    # same line.
+    "Layout/SpaceBeforeSemicolon" =>
+      "x = \"あ\" ;y = 1\n",
+    # The semicolon offense range (also the replace anchor) sits after a
+    # multibyte string on the same line.
+    "Layout/SpaceAfterSemicolon" =>
+      "x = \"あ\";y = 1\n",
+    # The second pair's colon offense range (also the insert_after anchor)
+    # sits after a multibyte hash value on the same line.
+    "Layout/SpaceAfterColon" =>
+      "h = { a: \"日本語\", b:1 }\n",
+    # The comment offense range (also the insert_before anchor) sits right
+    # after a multibyte string on the same line.
+    "Layout/SpaceBeforeComment" =>
+      "x = \"あ\"# comment\n",
   }
 
   cases.each do |cop_name, body|

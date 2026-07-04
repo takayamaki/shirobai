@@ -4,14 +4,14 @@ This document tracks which RuboCop cops shirobai has reimplemented in Rust,
 and which cops were attempted but reverted because they did not meet the
 project's drop-in compatibility and speed requirements together.
 
-## Implemented (76 cops)
+## Implemented (82 cops)
 
 shirobai replaces these cops with Rust implementations.
 Every offense position, message, and autocorrected byte matches stock RuboCop
 on all five verification corpora (Mastodon, Discourse, Redmine, fluentd,
 and RuboCop itself).
 
-### Layout (39)
+### Layout (45)
 
 - `Layout/AccessModifierIndentation`
 - `Layout/ArgumentAlignment`
@@ -45,9 +45,15 @@ and RuboCop itself).
 - `Layout/MultilineMethodCallBraceLayout`
 - `Layout/MultilineMethodCallIndentation`
 - `Layout/MultilineOperationIndentation`
+- `Layout/SpaceAfterColon`
+- `Layout/SpaceAfterComma`
+- `Layout/SpaceAfterSemicolon`
 - `Layout/SpaceAroundKeyword`
 - `Layout/SpaceAroundMethodCallOperator`
 - `Layout/SpaceBeforeBlockBraces`
+- `Layout/SpaceBeforeComma`
+- `Layout/SpaceBeforeComment`
+- `Layout/SpaceBeforeSemicolon`
 - `Layout/SpaceInsideArrayLiteralBrackets`
 - `Layout/SpaceInsideBlockBraces`
 - `Layout/SpaceInsideHashLiteralBraces`
@@ -173,6 +179,14 @@ path), `Layout/SpaceBeforeFirstArg`.
   though detection and autocorrect matched stock byte-for-byte. Recovering
   the saving requires a parse-and-lex single-pass overhaul of the parsing
   layer, which is a much larger investment than the cluster itself.
+- **Re-landed later (2026-07)**: `Layout/SpaceBeforeComma` and
+  `Layout/SpaceAfterComma` shipped in the punctuation-spacing cluster
+  without any token stream. These cops only read the tokens directly next
+  to a `,` / `;` byte, so the token facts reduce to byte adjacency plus an
+  opaque-region mask (strings / comments / heredoc bodies / gvar names /
+  `__END__` data) collected on the shared walk — no lex tax. The four
+  remaining cops above genuinely iterate the whole token stream and stay
+  reverted.
 
 ### `Style/RedundantBegin`
 

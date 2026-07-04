@@ -1236,7 +1236,9 @@ fn register_bundle_config(
 /// 70 trailing_comma_in_hash_literal / 71 trailing_comma_in_array_literal /
 /// 72 space_inside_hash_literal_braces /
 /// 73 space_inside_array_literal_brackets / 74 space_before_block_braces /
-/// 75 if_unless_modifier
+/// 75 if_unless_modifier / 76 space_before_comma / 77 space_after_comma /
+/// 78 space_before_semicolon / 79 space_after_semicolon /
+/// 80 space_after_colon / 81 space_before_comment
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1247,7 +1249,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(76);
+        let ary = ruby.ary_new_capa(82);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -1362,6 +1364,15 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ))?;
         ary.push(map_space_before_block_braces(r.space_before_block_braces))?;
         ary.push(map_if_unless_modifier(r.if_unless_modifier))?;
+        // The punctuation-spacing family: each slot is `[[start, end], ...]`
+        // byte ranges (see `check_space_before_comma` and friends).
+        let ps = r.punctuation_spacing;
+        ary.push(ps.space_before_comma)?;
+        ary.push(ps.space_after_comma)?;
+        ary.push(ps.space_before_semicolon)?;
+        ary.push(ps.space_after_semicolon)?;
+        ary.push(ps.space_after_colon)?;
+        ary.push(ps.space_before_comment)?;
         Ok(ary)
     })
 }
@@ -2505,6 +2516,71 @@ fn check_space_inside_hash_literal_braces(
     ))
 }
 
+/// Ruby entry point for `Layout/SpaceBeforeComma` (the bundle is the usual
+/// path). `lcurly_space` is `Layout/SpaceInsideBlockBraces`'s
+/// `EnforcedStyle == 'space'`. Each offense is the `(start, end)` byte range
+/// of the whitespace run before the comma (the corrector removes it).
+fn check_space_before_comma(source: RString, lcurly_space: bool) -> Vec<(usize, usize)> {
+    use shirobai_core::rules::punctuation_spacing as ps;
+    let cfg = ps::Config {
+        before_comma_lcurly_space: lcurly_space,
+        ..Default::default()
+    };
+    ps::check_punctuation_spacing(bytes(&source), cfg).space_before_comma
+}
+
+/// Ruby entry point for `Layout/SpaceAfterComma` (the bundle is the usual
+/// path). `rcurly_no_space` is `Layout/SpaceInsideHashLiteralBraces`'s
+/// `EnforcedStyle == 'no_space'`. Each offense is the `(start, end)` byte
+/// range of the comma itself (the corrector replaces it with `", "`).
+fn check_space_after_comma(source: RString, rcurly_no_space: bool) -> Vec<(usize, usize)> {
+    use shirobai_core::rules::punctuation_spacing as ps;
+    let cfg = ps::Config {
+        after_comma_rcurly_no_space: rcurly_no_space,
+        ..Default::default()
+    };
+    ps::check_punctuation_spacing(bytes(&source), cfg).space_after_comma
+}
+
+/// Ruby entry point for `Layout/SpaceBeforeSemicolon` (the bundle is the
+/// usual path). Same shape as `check_space_before_comma`.
+fn check_space_before_semicolon(source: RString, lcurly_space: bool) -> Vec<(usize, usize)> {
+    use shirobai_core::rules::punctuation_spacing as ps;
+    let cfg = ps::Config {
+        before_semi_lcurly_space: lcurly_space,
+        ..Default::default()
+    };
+    ps::check_punctuation_spacing(bytes(&source), cfg).space_before_semicolon
+}
+
+/// Ruby entry point for `Layout/SpaceAfterSemicolon` (the bundle is the
+/// usual path). `rcurly_no_space` is `Layout/SpaceInsideBlockBraces`'s
+/// `EnforcedStyle == 'no_space'`. Same shape as `check_space_after_comma`.
+fn check_space_after_semicolon(source: RString, rcurly_no_space: bool) -> Vec<(usize, usize)> {
+    use shirobai_core::rules::punctuation_spacing as ps;
+    let cfg = ps::Config {
+        after_semi_rcurly_no_space: rcurly_no_space,
+        ..Default::default()
+    };
+    ps::check_punctuation_spacing(bytes(&source), cfg).space_after_semicolon
+}
+
+/// Ruby entry point for `Layout/SpaceAfterColon` (the bundle is the usual
+/// path). Each offense is the `(start, end)` byte range of the colon (the
+/// corrector appends a space after it).
+fn check_space_after_colon(source: RString) -> Vec<(usize, usize)> {
+    use shirobai_core::rules::punctuation_spacing as ps;
+    ps::check_punctuation_spacing(bytes(&source), ps::Config::default()).space_after_colon
+}
+
+/// Ruby entry point for `Layout/SpaceBeforeComment` (the bundle is the usual
+/// path). Each offense is the `(start, end)` byte range of the comment (the
+/// corrector prepends a space before it).
+fn check_space_before_comment(source: RString) -> Vec<(usize, usize)> {
+    use shirobai_core::rules::punctuation_spacing as ps;
+    ps::check_punctuation_spacing(bytes(&source), ps::Config::default()).space_before_comment
+}
+
 /// Ruby entry point for `Layout/SpaceInsideArrayLiteralBrackets` (the bundle
 /// is the usual path). `style` is 0 = no_space, 1 = space, 2 = compact;
 /// `space_empty` is `EnforcedStyleForEmptyBrackets == 'space'`. Returns the
@@ -3025,6 +3101,30 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_space_inside_hash_literal_braces",
         function!(check_space_inside_hash_literal_braces, 3),
+    )?;
+    module.define_module_function(
+        "check_space_before_comma",
+        function!(check_space_before_comma, 2),
+    )?;
+    module.define_module_function(
+        "check_space_after_comma",
+        function!(check_space_after_comma, 2),
+    )?;
+    module.define_module_function(
+        "check_space_before_semicolon",
+        function!(check_space_before_semicolon, 2),
+    )?;
+    module.define_module_function(
+        "check_space_after_semicolon",
+        function!(check_space_after_semicolon, 2),
+    )?;
+    module.define_module_function(
+        "check_space_after_colon",
+        function!(check_space_after_colon, 1),
+    )?;
+    module.define_module_function(
+        "check_space_before_comment",
+        function!(check_space_before_comment, 1),
     )?;
     module.define_module_function(
         "check_space_inside_array_literal_brackets",

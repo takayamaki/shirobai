@@ -32,7 +32,7 @@ use super::{
     multiline_method_call_brace_layout, nested_parenthesized_calls,
     parentheses_as_grouped_expression,
     percent_literal_delimiters,
-    predicate_prefix, redundant_self, redundant_self_assignment,
+    predicate_prefix, punctuation_spacing, redundant_self, redundant_self_assignment,
     require_parentheses, safe_navigation_chain, self_assignment,
     space_around_keyword, space_around_method_call_operator, space_before_block_braces,
     space_inside_array_literal_brackets, space_inside_block_braces,
@@ -147,6 +147,10 @@ pub fn check_multiline_bundle(
 /// | 100 | space_before_block_braces style (`EnforcedStyle`: 0 space, 1 no_space) |
 /// | 101 | space_before_block_braces empty style (`EnforcedStyleForEmptyBraces` resolved: 0 space, 1 no_space, 2 invalid — `nil` follows `EnforcedStyle`) |
 /// | 102 | space_before_block_braces bd_line_count_based (`Style/BlockDelimiters` `EnforcedStyle == 'line_count_based'`) |
+/// | 103 | space_before_comma lcurly_space (`Layout/SpaceBeforeComma`'s view of `Layout/SpaceInsideBlockBraces` `EnforcedStyle == 'space'`) |
+/// | 104 | space_after_comma rcurly_no_space (`Layout/SpaceAfterComma`'s view of `Layout/SpaceInsideHashLiteralBraces` `EnforcedStyle == 'no_space'`) |
+/// | 105 | space_before_semicolon lcurly_space (`Layout/SpaceBeforeSemicolon`'s view of `Layout/SpaceInsideBlockBraces` `EnforcedStyle == 'space'`) |
+/// | 106 | space_after_semicolon rcurly_no_space (`Layout/SpaceAfterSemicolon`'s view of `Layout/SpaceInsideBlockBraces` `EnforcedStyle == 'no_space'`) |
 ///
 /// `lists` (`Vec<String>`), 20 entries:
 ///
@@ -271,13 +275,14 @@ pub struct BundleConfig {
     pub space_inside_array_literal_brackets: space_inside_array_literal_brackets::Config,
     pub if_unless_modifier: if_unless_modifier::Config,
     pub space_before_block_braces: space_before_block_braces::Config,
+    pub punctuation_spacing: punctuation_spacing::Config,
 }
 
 // `Lint/ParenthesesAsGroupedExpression` carries no config so it doesn't appear
 // in the `nums` / `lists` packing; the bundle still computes its slot in the
 // shared walk (see `check_all_bundle` below).
 
-const NUMS_LEN: usize = 103;
+const NUMS_LEN: usize = 107;
 const LISTS_LEN: usize = 25;
 
 impl BundleConfig {
@@ -507,6 +512,12 @@ impl BundleConfig {
                 },
                 bd_line_count_based: nums[102] != 0,
             },
+            punctuation_spacing: punctuation_spacing::Config {
+                before_comma_lcurly_space: nums[103] != 0,
+                after_comma_rcurly_no_space: nums[104] != 0,
+                before_semi_lcurly_space: nums[105] != 0,
+                after_semi_rcurly_no_space: nums[106] != 0,
+            },
         })
     }
 }
@@ -646,6 +657,8 @@ pub struct BundleResult {
     pub space_inside_array_literal_brackets:
         space_inside_array_literal_brackets::ArrayBracketsResult,
     pub space_before_block_braces: space_before_block_braces::SpaceBeforeBlockBracesResult,
+    /// The whole punctuation-spacing family (six cops, six wire slots).
+    pub punctuation_spacing: punctuation_spacing::PunctuationSpacingOffenses,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -780,6 +793,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     );
     let mut sbbb_rule =
         space_before_block_braces::build_rule(source, cfg.space_before_block_braces);
+    let mut ps_rule = punctuation_spacing::build_rule(source, cfg.punctuation_spacing);
     let mut ml_rule = method_length::build_rule(
         source,
         cfg.method_length_max,
@@ -874,6 +888,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut sihlb_rule,
         &mut sialb_rule,
         &mut sbbb_rule,
+        &mut ps_rule,
         &mut ml_rule,
         &mut cl_rule,
         &mut mol_rule,
@@ -953,6 +968,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let space_inside_hash_literal_braces = sihlb_rule.into_offenses();
     let space_inside_array_literal_brackets = sialb_rule.into_result();
     let space_before_block_braces = sbbb_rule.into_result();
+    let punctuation_spacing = ps_rule.into_offenses();
     let method_length = ml_rule.out;
     let class_length = cl_rule.out;
     let module_length = mol_rule.out;
@@ -1087,6 +1103,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         space_inside_hash_literal_braces,
         space_inside_array_literal_brackets,
         space_before_block_braces,
+        punctuation_spacing,
     }
 }
 
@@ -1172,6 +1189,7 @@ mod tests {
             0, 0, // space_inside_array_literal_brackets: style(no_space) / empty(no_space)
             120, 2, // if_unless_modifier: max_line_length / tab_width (defaults)
             0, 0, 1, // space_before_block_braces: style(space) / empty(space) / bd(line_count_based)
+            1, 0, 1, 0, // punctuation_spacing: bc lcurly_space / ac rcurly_no_space / bs lcurly_space / as rcurly_no_space
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -1363,6 +1381,40 @@ mod tests {
                 (b.start_offset, b.end_offset, b.column_delta, &b.message)
             );
         }
+    }
+
+    /// The punctuation-spacing family merged into the shared walk must report
+    /// exactly what the standalone entry point reports, over a source that
+    /// triggers all six cops (space before/after comma and semicolon, tight
+    /// colons, adjacent comment) plus masked look-alikes (string commas,
+    /// block-brace semicolon skip).
+    #[test]
+    fn shared_walk_matches_standalone_punctuation_spacing() {
+        let src = "f(a ,b)\n\
+                   x = 1 ;y = 2\n\
+                   h = {a:1, b: \"x,y\"}\n\
+                   loop { ; h }\n\
+                   z = 1# c\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone = super::punctuation_spacing::check_punctuation_spacing(
+            src.as_bytes(),
+            cfg.punctuation_spacing,
+        );
+        assert!(!alone.space_before_comma.is_empty());
+        assert!(!alone.space_after_comma.is_empty());
+        assert!(!alone.space_before_semicolon.is_empty());
+        assert!(!alone.space_after_semicolon.is_empty());
+        assert!(!alone.space_after_colon.is_empty());
+        assert!(!alone.space_before_comment.is_empty());
+        let b = &bundle.punctuation_spacing;
+        assert_eq!(b.space_before_comma, alone.space_before_comma);
+        assert_eq!(b.space_after_comma, alone.space_after_comma);
+        assert_eq!(b.space_before_semicolon, alone.space_before_semicolon);
+        assert_eq!(b.space_after_semicolon, alone.space_after_semicolon);
+        assert_eq!(b.space_after_colon, alone.space_after_colon);
+        assert_eq!(b.space_before_comment, alone.space_before_comment);
     }
 
     /// The ancestor-stack cops merged into the shared walk (`Lint/Debugger`,
