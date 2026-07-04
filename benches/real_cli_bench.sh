@@ -35,8 +35,12 @@ run_rubocop() {
     gemfile="$benchdir/Gemfile.realconfig.shirobai"
     extra_args="--require shirobai"
   fi
-  BUNDLE_GEMFILE="$gemfile" bundle exec rubocop \
-    $extra_args --cache false --no-server "$@" "$corpus"
+  # Run from inside the corpus, like a user of that project would.
+  # Relative Exclude patterns in default configs (rubocop core and
+  # plugins, e.g. rubocop-rails's bin/*) anchor to the working
+  # directory, so running from outside lints files users never lint.
+  (cd "$corpus" && BUNDLE_GEMFILE="$gemfile" bundle exec rubocop \
+    $extra_args --cache false --no-server "$@")
 }
 
 offenses="" files=""

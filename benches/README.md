@@ -25,6 +25,10 @@ Benchmarks and the parity oracle.
 - `real_cli_bench.sh` — Real-CLI benchmark with the corpus's own config
   and all plugin gems (the README speed table comes from this).
   Usage: `real_cli_bench.sh .tmp/mastodon 3`
+  Runs rubocop from **inside** the corpus directory: relative Exclude
+  patterns in default configs (e.g. rubocop-rails's `bin/*`) anchor to
+  the working directory, so running from outside would lint files that
+  users of that project never lint.
   - `VERIFY=1` runs each mode once with JSON output first and fails
     when the offense sets differ. These runs also warm the file cache.
   - `SUMMARY_FILE=<path>` appends a markdown summary
