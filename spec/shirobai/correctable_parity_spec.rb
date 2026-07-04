@@ -540,6 +540,29 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Layout::SpaceBeforeComment,
       "x = 1# c\n"
     ],
+    # Spaces inside parens under the default no_space style: both gaps carry
+    # removal correctors (correctable).
+    "Layout/SpaceInsideParens" => [
+      RuboCop::Cop::Layout::SpaceInsideParens,
+      Shirobai::Cop::Layout::SpaceInsideParens,
+      "f( 3 )\n"
+    ],
+    # Spaces inside reference brackets under the default no_space style:
+    # stock corrects the whole node on the FIRST offense (ignore_node), so
+    # the first offense is correctable and the second one's corrector block
+    # stays empty. Guards the per-node grouping.
+    "Layout/SpaceInsideReferenceBrackets" => [
+      RuboCop::Cop::Layout::SpaceInsideReferenceBrackets,
+      Shirobai::Cop::Layout::SpaceInsideReferenceBrackets,
+      "hash[ :key ]\n"
+    ],
+    # A two-space first argument with nothing to align to: replace corrector
+    # (correctable).
+    "Layout/SpaceBeforeFirstArg" => [
+      RuboCop::Cop::Layout::SpaceBeforeFirstArg,
+      Shirobai::Cop::Layout::SpaceBeforeFirstArg,
+      "something  x\n"
+    ],
   }
 
   cases.each do |name, (stock_klass, shirobai_klass, source)|

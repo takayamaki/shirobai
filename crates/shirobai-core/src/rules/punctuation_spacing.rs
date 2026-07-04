@@ -137,7 +137,7 @@ impl<'a> Visitor<'a> {
             config,
             comments,
             data_start,
-            mut masks,
+            masks,
             lcurly_opens,
             dends,
             space_after_colon,
@@ -156,12 +156,7 @@ impl<'a> Visitor<'a> {
         }
 
         // Merge every opaque region: walk-collected masks + comments + data.
-        masks.extend_from_slice(&comments);
-        if let Some(ds) = data_start {
-            masks.push((ds, source.len()));
-        }
-        masks.sort_unstable();
-        masks.retain(|r| r.0 < r.1);
+        let masks = super::opaque_mask::merge(masks, &comments, data_start, source.len());
 
         let scan_end = data_start.unwrap_or(source.len()).min(source.len());
         let mut mask_i = 0;
@@ -244,28 +239,6 @@ impl<'a> Visitor<'a> {
     fn check_colon(&mut self, colon_end: usize) {
         if !self.source.get(colon_end).is_some_and(|&b| is_ruby_space(b)) {
             self.space_after_colon.push((colon_end - 1, colon_end));
-        }
-    }
-
-    fn mask_loc(&mut self, loc: &ruby_prism::Location<'_>) {
-        self.masks.push((loc.start_offset(), loc.end_offset()));
-    }
-
-    /// Opening / content / closing of a string-ish literal. Heredocs keep
-    /// their body and terminator in `content_loc` / `closing_loc` away from
-    /// the opener, so the three parts are pushed separately.
-    fn mask_string_parts(
-        &mut self,
-        opening: Option<ruby_prism::Location<'_>>,
-        content: ruby_prism::Location<'_>,
-        closing: Option<ruby_prism::Location<'_>>,
-    ) {
-        if let Some(o) = opening {
-            self.mask_loc(&o);
-        }
-        self.mask_loc(&content);
-        if let Some(c) = closing {
-            self.mask_loc(&c);
         }
     }
 
@@ -391,105 +364,31 @@ impl super::dispatch::Rule for Visitor<'_> {
                 let closing = emb.closing_loc();
                 self.dends.insert(closing.start_offset());
             }
-            // Interpolated literals: the delimiters are opaque (a quoted
-            // heredoc terminator can contain `,` / `;`); the string parts and
-            // embedded statements are visited on their own.
-            Node::InterpolatedStringNode { .. } => {
-                let n = node.as_interpolated_string_node().unwrap();
-                if let Some(o) = n.opening_loc() {
-                    self.mask_loc(&o);
-                }
-                if let Some(c) = n.closing_loc() {
-                    self.mask_loc(&c);
-                }
-            }
-            Node::InterpolatedXStringNode { .. } => {
-                let n = node.as_interpolated_x_string_node().unwrap();
-                self.mask_loc(&n.opening_loc());
-                self.mask_loc(&n.closing_loc());
-            }
-            Node::InterpolatedRegularExpressionNode { .. } => {
-                let n = node.as_interpolated_regular_expression_node().unwrap();
-                self.mask_loc(&n.opening_loc());
-                self.mask_loc(&n.closing_loc());
-            }
-            Node::InterpolatedMatchLastLineNode { .. } => {
-                let n = node.as_interpolated_match_last_line_node().unwrap();
-                self.mask_loc(&n.opening_loc());
-                self.mask_loc(&n.closing_loc());
-            }
-            Node::InterpolatedSymbolNode { .. } => {
-                let n = node.as_interpolated_symbol_node().unwrap();
-                if let Some(o) = n.opening_loc() {
-                    self.mask_loc(&o);
-                }
-                if let Some(c) = n.closing_loc() {
-                    self.mask_loc(&c);
-                }
-            }
-            // Global variable assignment names (`$, = …`); the read / target
-            // forms are leaves.
-            Node::GlobalVariableWriteNode { .. } => {
-                let n = node.as_global_variable_write_node().unwrap();
-                self.mask_loc(&n.name_loc());
-            }
-            Node::GlobalVariableOrWriteNode { .. } => {
-                let n = node.as_global_variable_or_write_node().unwrap();
-                self.mask_loc(&n.name_loc());
-            }
-            Node::GlobalVariableAndWriteNode { .. } => {
-                let n = node.as_global_variable_and_write_node().unwrap();
-                self.mask_loc(&n.name_loc());
-            }
-            Node::GlobalVariableOperatorWriteNode { .. } => {
-                let n = node.as_global_variable_operator_write_node().unwrap();
-                self.mask_loc(&n.name_loc());
-            }
-            _ => {}
+            // Interpolated literal delimiters and gvar-write names are
+            // opaque; see `opaque_mask`.
+            _ => super::opaque_mask::collect_enter(node, &mut self.masks),
         }
     }
 
     fn leave(&mut self) {}
 
     fn enter_leaf(&mut self, node: &Node<'_>) {
-        match node {
-            Node::StringNode { .. } => {
-                let n = node.as_string_node().unwrap();
-                self.mask_string_parts(n.opening_loc(), n.content_loc(), n.closing_loc());
-            }
-            Node::XStringNode { .. } => {
-                let n = node.as_x_string_node().unwrap();
-                self.mask_string_parts(
-                    Some(n.opening_loc()),
-                    n.content_loc(),
-                    Some(n.closing_loc()),
-                );
-            }
-            // Symbols (quoted / `%s` forms can contain `,` / `;`), regexps
-            // and gvar names are contiguous: mask the whole node.
-            Node::SymbolNode { .. }
-            | Node::RegularExpressionNode { .. }
-            | Node::MatchLastLineNode { .. }
-            | Node::GlobalVariableReadNode { .. }
-            | Node::GlobalVariableTargetNode { .. } => {
-                let loc = node.location();
-                self.masks.push((loc.start_offset(), loc.end_offset()));
-            }
-            _ => {}
-        }
+        super::opaque_mask::collect_leaf(node, &mut self.masks);
     }
 
     fn interest(&self) -> super::dispatch::Interest {
         // `enter` is a pure kind match over: AssocNode / kwoptarg /
-        // PreExecution / PostExecution / EmbeddedStatements / interpolated
-        // literals / gvar writes plus the block-ish openers; `enter_leaf`
-        // masks the leaf literals. `leave` and the rescue hooks are unused.
+        // PreExecution / PostExecution / EmbeddedStatements / the block-ish
+        // openers, plus the opaque-mask branch nodes (interpolated literals,
+        // percent arrays, gvar writes); `enter_leaf` masks the leaf
+        // literals. `leave` and the rescue hooks are unused.
         super::dispatch::Interest(
             super::dispatch::Interest::LEAF
                 | super::dispatch::Interest::ENTER_BLOCK
                 | super::dispatch::Interest::ENTER_LAMBDA
                 | super::dispatch::Interest::ENTER_SUPER
                 | super::dispatch::Interest::ENTER_ISTRING
+                | super::dispatch::Interest::ENTER_LITERAL
                 | super::dispatch::Interest::ENTER_WRITE
                 | super::dispatch::Interest::ENTER_OTHER,
         )
@@ -564,6 +463,17 @@ mod tests {
         let r = run("f(a,# c\n  b)\n");
         assert_eq!(r.space_after_comma, vec![(3, 4)]);
         assert_eq!(r.space_before_comment, vec![(4, 7)]);
+    }
+
+    #[test]
+    fn percent_array_comma_delimiters_are_not_tokens() {
+        // `%w,a b,`: the opener `%w,` and closer `,` are string delimiters.
+        let r = run("x = %w,a b,\n");
+        assert!(r.space_after_comma.is_empty());
+        assert!(r.space_before_comma.is_empty());
+        let r = run("x = %i;a b;\n");
+        assert!(r.space_after_semicolon.is_empty());
+        assert!(r.space_before_semicolon.is_empty());
     }
 
     #[test]

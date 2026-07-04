@@ -393,6 +393,19 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # after a multibyte string on the same line.
     "Layout/SpaceBeforeComment" =>
       "x = \"あ\"# comment\n",
+    # Both paren-gap offense ranges (also the removal corrector ranges) sit
+    # after a multibyte argument on the same line.
+    "Layout/SpaceInsideParens" =>
+      "f( \"日本語\" )\n",
+    # Both bracket-gap offense ranges (and the node's removal ops) sit
+    # around a multibyte key on the same line.
+    "Layout/SpaceInsideReferenceBrackets" =>
+      "hash[ \"日本語\" ]\n",
+    # The whitespace-run offense range (also the replace anchor) sits after
+    # a multibyte receiver-and-method chain; the argument is multibyte too,
+    # so nothing on the comment line aligns with it.
+    "Layout/SpaceBeforeFirstArg" =>
+      "何か.foo  \"引数\"\n",
   }
 
   cases.each do |cop_name, body|

@@ -4,14 +4,14 @@ This document tracks which RuboCop cops shirobai has reimplemented in Rust,
 and which cops were attempted but reverted because they did not meet the
 project's drop-in compatibility and speed requirements together.
 
-## Implemented (82 cops)
+## Implemented (85 cops)
 
 shirobai replaces these cops with Rust implementations.
 Every offense position, message, and autocorrected byte matches stock RuboCop
 on all five verification corpora (Mastodon, Discourse, Redmine, fluentd,
 and RuboCop itself).
 
-### Layout (45)
+### Layout (48)
 
 - `Layout/AccessModifierIndentation`
 - `Layout/ArgumentAlignment`
@@ -53,10 +53,13 @@ and RuboCop itself).
 - `Layout/SpaceBeforeBlockBraces`
 - `Layout/SpaceBeforeComma`
 - `Layout/SpaceBeforeComment`
+- `Layout/SpaceBeforeFirstArg`
 - `Layout/SpaceBeforeSemicolon`
 - `Layout/SpaceInsideArrayLiteralBrackets`
 - `Layout/SpaceInsideBlockBraces`
 - `Layout/SpaceInsideHashLiteralBraces`
+- `Layout/SpaceInsideParens`
+- `Layout/SpaceInsideReferenceBrackets`
 - `Layout/TrailingEmptyLines`
 
 ### Lint (9)
@@ -187,6 +190,19 @@ path), `Layout/SpaceBeforeFirstArg`.
   `__END__` data) collected on the shared walk — no lex tax. The four
   remaining cops above genuinely iterate the whole token stream and stay
   reverted.
+- **Re-landed later (2026-07, cluster B)**: `Layout/SpaceInsideParens` and
+  `Layout/SpaceBeforeFirstArg` shipped with the same reclassification.
+  `SpaceInsideParens` reads the neighbors of every unmasked `(` / `)` byte;
+  its one real token fact — the `tLPAREN_ARG` positions, which are not
+  `left_parens?` — comes from the AST (a space-separated parenthesized
+  first argument of a parenless call, plus the `yield` / `super` /
+  `defined?` / `not` keyword forms). `SpaceBeforeFirstArg`'s
+  `AllowForAlignment` scan is line-text-shaped except for one rare branch
+  (a `:sym=`-shaped argument aligned with the first assignment token on a
+  nearby line), reconstructed with a longest-match operator scan over
+  unmasked bytes. Only `Layout/ExtraSpacing` and
+  `Layout/SpaceAroundOperators` still iterate the whole token stream and
+  stay reverted.
 
 ### `Style/RedundantBegin`
 

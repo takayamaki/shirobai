@@ -80,6 +80,11 @@ RSpec.describe Shirobai::Cop::Layout::SpaceAfterComma do
     expect_autocorrect_parity(stock_klass, shirobai_klass, src, cfg)
   end
 
+  it "ignores percent-array comma delimiters" do
+    src = "x = %w,a b,\ny = %i,c d,\n"
+    expect_lint_parity(stock_klass, shirobai_klass, src, cfg, expect_offenses: false)
+  end
+
   it "ignores comma bytes in the __END__ data segment" do
     src = "x = 1\n__END__\na,b\n"
     expect_lint_parity(stock_klass, shirobai_klass, src, cfg, expect_offenses: false)

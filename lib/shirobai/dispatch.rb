@@ -99,7 +99,10 @@ module Shirobai
       space_before_semicolon: 78,
       space_after_semicolon: 79,
       space_after_colon: 80,
-      space_before_comment: 81
+      space_before_comment: 81,
+      space_inside_parens: 82,
+      space_inside_reference_brackets: 83,
+      space_before_first_arg: 84
     }.freeze
 
     class << self
@@ -216,6 +219,9 @@ module Shirobai
         # `nums` / `lists`.
         _ = Cop::Layout::SpaceAfterColon.bundle_args(config)
         _ = Cop::Layout::SpaceBeforeComment.bundle_args(config)
+        sipn = Cop::Layout::SpaceInsideParens.bundle_args(config)
+        sirb = Cop::Layout::SpaceInsideReferenceBrackets.bundle_args(config)
+        sbfa = Cop::Layout::SpaceBeforeFirstArg.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -268,7 +274,10 @@ module Shirobai
           *sbcm[0], # SpaceBeforeComma lcurly_space (1 num)
           *sacm[0], # SpaceAfterComma rcurly_no_space (1 num)
           *sbsm[0], # SpaceBeforeSemicolon lcurly_space (1 num)
-          *sasm[0] # SpaceAfterSemicolon rcurly_no_space (1 num)
+          *sasm[0], # SpaceAfterSemicolon rcurly_no_space (1 num)
+          *sipn[0], # SpaceInsideParens style (1 num)
+          *sirb[0], # SpaceInsideReferenceBrackets style / empty space (2 nums)
+          *sbfa[0] # SpaceBeforeFirstArg allow_for_alignment (1 num)
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0], aba[0],

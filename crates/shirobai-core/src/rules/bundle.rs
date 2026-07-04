@@ -35,8 +35,9 @@ use super::{
     predicate_prefix, punctuation_spacing, redundant_self, redundant_self_assignment,
     require_parentheses, safe_navigation_chain, self_assignment,
     space_around_keyword, space_around_method_call_operator, space_before_block_braces,
+    space_before_first_arg,
     space_inside_array_literal_brackets, space_inside_block_braces,
-    space_inside_hash_literal_braces,
+    space_inside_hash_literal_braces, space_inside_parens, space_inside_reference_brackets,
     stabby_lambda_parentheses,
     string_literals,
     string_literals_in_interpolation,
@@ -151,6 +152,10 @@ pub fn check_multiline_bundle(
 /// | 104 | space_after_comma rcurly_no_space (`Layout/SpaceAfterComma`'s view of `Layout/SpaceInsideHashLiteralBraces` `EnforcedStyle == 'no_space'`) |
 /// | 105 | space_before_semicolon lcurly_space (`Layout/SpaceBeforeSemicolon`'s view of `Layout/SpaceInsideBlockBraces` `EnforcedStyle == 'space'`) |
 /// | 106 | space_after_semicolon rcurly_no_space (`Layout/SpaceAfterSemicolon`'s view of `Layout/SpaceInsideBlockBraces` `EnforcedStyle == 'no_space'`) |
+/// | 107 | space_inside_parens style (`EnforcedStyle`: 0 no_space, 1 space, 2 compact) |
+/// | 108 | space_inside_reference_brackets style (`EnforcedStyle`: 0 no_space, 1 space) |
+/// | 109 | space_inside_reference_brackets empty space (`EnforcedStyleForEmptyBrackets == 'space'`) |
+/// | 110 | space_before_first_arg allow_for_alignment (`AllowForAlignment`) |
 ///
 /// `lists` (`Vec<String>`), 20 entries:
 ///
@@ -276,13 +281,16 @@ pub struct BundleConfig {
     pub if_unless_modifier: if_unless_modifier::Config,
     pub space_before_block_braces: space_before_block_braces::Config,
     pub punctuation_spacing: punctuation_spacing::Config,
+    pub space_inside_parens: space_inside_parens::Config,
+    pub space_inside_reference_brackets: space_inside_reference_brackets::Config,
+    pub space_before_first_arg: space_before_first_arg::Config,
 }
 
 // `Lint/ParenthesesAsGroupedExpression` carries no config so it doesn't appear
 // in the `nums` / `lists` packing; the bundle still computes its slot in the
 // shared walk (see `check_all_bundle` below).
 
-const NUMS_LEN: usize = 107;
+const NUMS_LEN: usize = 111;
 const LISTS_LEN: usize = 25;
 
 impl BundleConfig {
@@ -518,6 +526,24 @@ impl BundleConfig {
                 before_semi_lcurly_space: nums[105] != 0,
                 after_semi_rcurly_no_space: nums[106] != 0,
             },
+            space_inside_parens: space_inside_parens::Config {
+                style: match nums[107] {
+                    1 => space_inside_parens::Style::Space,
+                    2 => space_inside_parens::Style::Compact,
+                    _ => space_inside_parens::Style::NoSpace,
+                },
+            },
+            space_inside_reference_brackets: space_inside_reference_brackets::Config {
+                style: if nums[108] != 0 {
+                    space_inside_reference_brackets::Style::Space
+                } else {
+                    space_inside_reference_brackets::Style::NoSpace
+                },
+                space_empty: nums[109] != 0,
+            },
+            space_before_first_arg: space_before_first_arg::Config {
+                allow_for_alignment: nums[110] != 0,
+            },
         })
     }
 }
@@ -659,6 +685,9 @@ pub struct BundleResult {
     pub space_before_block_braces: space_before_block_braces::SpaceBeforeBlockBracesResult,
     /// The whole punctuation-spacing family (six cops, six wire slots).
     pub punctuation_spacing: punctuation_spacing::PunctuationSpacingOffenses,
+    pub space_inside_parens: Vec<space_inside_parens::SpaceInsideParensOffense>,
+    pub space_inside_reference_brackets: space_inside_reference_brackets::ReferenceBracketsResult,
+    pub space_before_first_arg: Vec<space_before_first_arg::SpaceBeforeFirstArgOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -794,6 +823,10 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut sbbb_rule =
         space_before_block_braces::build_rule(source, cfg.space_before_block_braces);
     let mut ps_rule = punctuation_spacing::build_rule(source, cfg.punctuation_spacing);
+    let mut sip_rule = space_inside_parens::build_rule(source, cfg.space_inside_parens);
+    let mut sirb_rule =
+        space_inside_reference_brackets::build_rule(source, cfg.space_inside_reference_brackets);
+    let mut sbfa_rule = space_before_first_arg::build_rule(source, cfg.space_before_first_arg);
     let mut ml_rule = method_length::build_rule(
         source,
         cfg.method_length_max,
@@ -889,6 +922,9 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut sialb_rule,
         &mut sbbb_rule,
         &mut ps_rule,
+        &mut sip_rule,
+        &mut sirb_rule,
+        &mut sbfa_rule,
         &mut ml_rule,
         &mut cl_rule,
         &mut mol_rule,
@@ -969,6 +1005,9 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let space_inside_array_literal_brackets = sialb_rule.into_result();
     let space_before_block_braces = sbbb_rule.into_result();
     let punctuation_spacing = ps_rule.into_offenses();
+    let space_inside_parens = sip_rule.into_offenses();
+    let space_inside_reference_brackets = sirb_rule.result;
+    let space_before_first_arg = sbfa_rule.into_offenses();
     let method_length = ml_rule.out;
     let class_length = cl_rule.out;
     let module_length = mol_rule.out;
@@ -1104,6 +1143,9 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         space_inside_array_literal_brackets,
         space_before_block_braces,
         punctuation_spacing,
+        space_inside_parens,
+        space_inside_reference_brackets,
+        space_before_first_arg,
     }
 }
 
@@ -1190,6 +1232,9 @@ mod tests {
             120, 2, // if_unless_modifier: max_line_length / tab_width (defaults)
             0, 0, 1, // space_before_block_braces: style(space) / empty(space) / bd(line_count_based)
             1, 0, 1, 0, // punctuation_spacing: bc lcurly_space / ac rcurly_no_space / bs lcurly_space / as rcurly_no_space
+            0, // space_inside_parens: style (no_space)
+            0, 0, // space_inside_reference_brackets: style(no_space) / empty(no_space)
+            1, // space_before_first_arg: allow_for_alignment
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -1415,6 +1460,64 @@ mod tests {
         assert_eq!(b.space_after_semicolon, alone.space_after_semicolon);
         assert_eq!(b.space_after_colon, alone.space_after_colon);
         assert_eq!(b.space_before_comment, alone.space_before_comment);
+    }
+
+    /// The Cluster B space cops merged into the shared walk must report
+    /// exactly what their standalone entry points report, over a source that
+    /// triggers all three (spaced parens, spaced reference brackets, a
+    /// two-space first argument).
+    #[test]
+    fn shared_walk_matches_standalone_cluster_b_space_cops() {
+        let src = "f( 3 )\nh[ :k ]\nsomething  x\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let sip_alone = super::space_inside_parens::check_space_inside_parens(
+            src.as_bytes(),
+            cfg.space_inside_parens,
+        );
+        assert!(!sip_alone.is_empty());
+        assert_eq!(bundle.space_inside_parens.len(), sip_alone.len());
+        for (a, b) in bundle.space_inside_parens.iter().zip(&sip_alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.message.code()),
+                (b.start_offset, b.end_offset, b.message.code())
+            );
+        }
+
+        let sirb_alone =
+            super::space_inside_reference_brackets::check_space_inside_reference_brackets(
+                src.as_bytes(),
+                cfg.space_inside_reference_brackets,
+            );
+        assert!(!sirb_alone.offenses.is_empty());
+        assert_eq!(
+            bundle.space_inside_reference_brackets.offenses.len(),
+            sirb_alone.offenses.len()
+        );
+        for (a, b) in bundle
+            .space_inside_reference_brackets
+            .offenses
+            .iter()
+            .zip(&sirb_alone.offenses)
+        {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.message.code(), a.node),
+                (b.start_offset, b.end_offset, b.message.code(), b.node)
+            );
+        }
+        assert_eq!(
+            bundle.space_inside_reference_brackets.node_ops,
+            sirb_alone.node_ops
+        );
+
+        let sbfa_alone = super::space_before_first_arg::check_space_before_first_arg(
+            src.as_bytes(),
+            cfg.space_before_first_arg,
+        );
+        assert!(!sbfa_alone.is_empty());
+        assert_eq!(bundle.space_before_first_arg, sbfa_alone);
     }
 
     /// The ancestor-stack cops merged into the shared walk (`Lint/Debugger`,

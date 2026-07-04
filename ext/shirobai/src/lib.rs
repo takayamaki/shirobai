@@ -1238,7 +1238,9 @@ fn register_bundle_config(
 /// 73 space_inside_array_literal_brackets / 74 space_before_block_braces /
 /// 75 if_unless_modifier / 76 space_before_comma / 77 space_after_comma /
 /// 78 space_before_semicolon / 79 space_after_semicolon /
-/// 80 space_after_colon / 81 space_before_comment
+/// 80 space_after_colon / 81 space_before_comment /
+/// 82 space_inside_parens / 83 space_inside_reference_brackets /
+/// 84 space_before_first_arg
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1249,7 +1251,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(82);
+        let ary = ruby.ary_new_capa(85);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -1373,6 +1375,11 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(ps.space_after_semicolon)?;
         ary.push(ps.space_after_colon)?;
         ary.push(ps.space_before_comment)?;
+        ary.push(map_space_inside_parens(r.space_inside_parens))?;
+        ary.push(map_space_inside_reference_brackets(
+            r.space_inside_reference_brackets,
+        ))?;
+        ary.push(r.space_before_first_arg)?;
         Ok(ary)
     })
 }
@@ -2581,6 +2588,99 @@ fn check_space_before_comment(source: RString) -> Vec<(usize, usize)> {
     ps::check_punctuation_spacing(bytes(&source), ps::Config::default()).space_before_comment
 }
 
+/// `Layout/SpaceInsideParens`: each offense is `[start, end, code]` with
+/// code 0 = "Space inside parentheses detected." (remove the range) and
+/// 1 = "No space inside parentheses detected." (insert a space before it).
+fn map_space_inside_parens(
+    v: Vec<shirobai_core::rules::space_inside_parens::SpaceInsideParensOffense>,
+) -> Vec<(usize, usize, u8)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.message.code()))
+        .collect()
+}
+
+/// Ruby entry point for `Layout/SpaceInsideParens` (the bundle is the usual
+/// path). `style` is 0 = no_space, 1 = space, 2 = compact.
+fn check_space_inside_parens(source: RString, style: u8) -> Vec<(usize, usize, u8)> {
+    use shirobai_core::rules::space_inside_parens as sip;
+    let cfg = sip::Config {
+        style: match style {
+            1 => sip::Style::Space,
+            2 => sip::Style::Compact,
+            _ => sip::Style::NoSpace,
+        },
+    };
+    map_space_inside_parens(sip::check_space_inside_parens(bytes(&source), cfg))
+}
+
+/// `Layout/SpaceInsideReferenceBrackets`: `[offenses, node_ops]` in the same
+/// shape as `Layout/SpaceInsideArrayLiteralBrackets` — each offense is
+/// `[start, end, message_code, node, suppress]` and `node_ops[node]` is the
+/// node's corrector program (`[op, start, end]`, op 0 = remove,
+/// 1 = insert_after " ", 2 = insert_before " ").
+#[allow(clippy::type_complexity)]
+fn map_space_inside_reference_brackets(
+    r: shirobai_core::rules::space_inside_reference_brackets::ReferenceBracketsResult,
+) -> (
+    Vec<(usize, usize, u8, usize, bool)>,
+    Vec<Vec<(u8, usize, usize)>>,
+) {
+    (
+        r.offenses
+            .into_iter()
+            .map(|o| {
+                (
+                    o.start_offset,
+                    o.end_offset,
+                    o.message.code(),
+                    o.node,
+                    o.suppress_when_disable_uncorrectable,
+                )
+            })
+            .collect(),
+        r.node_ops,
+    )
+}
+
+/// Ruby entry point for `Layout/SpaceInsideReferenceBrackets` (the bundle is
+/// the usual path). `style` is 0 = no_space, 1 = space; `space_empty` is
+/// `EnforcedStyleForEmptyBrackets == 'space'`.
+#[allow(clippy::type_complexity)]
+fn check_space_inside_reference_brackets(
+    source: RString,
+    style: u8,
+    space_empty: bool,
+) -> (
+    Vec<(usize, usize, u8, usize, bool)>,
+    Vec<Vec<(u8, usize, usize)>>,
+) {
+    use shirobai_core::rules::space_inside_reference_brackets as sirb;
+    let cfg = sirb::Config {
+        style: if style != 0 {
+            sirb::Style::Space
+        } else {
+            sirb::Style::NoSpace
+        },
+        space_empty,
+    };
+    map_space_inside_reference_brackets(sirb::check_space_inside_reference_brackets(
+        bytes(&source),
+        cfg,
+    ))
+}
+
+/// Ruby entry point for `Layout/SpaceBeforeFirstArg` (the bundle is the
+/// usual path). Each offense is the `(start, end)` byte range of the
+/// whitespace run before the first argument (the corrector replaces it with
+/// one space).
+fn check_space_before_first_arg(source: RString, allow_for_alignment: bool) -> Vec<(usize, usize)> {
+    use shirobai_core::rules::space_before_first_arg as sbfa;
+    let cfg = sbfa::Config {
+        allow_for_alignment,
+    };
+    sbfa::check_space_before_first_arg(bytes(&source), cfg)
+}
+
 /// Ruby entry point for `Layout/SpaceInsideArrayLiteralBrackets` (the bundle
 /// is the usual path). `style` is 0 = no_space, 1 = space, 2 = compact;
 /// `space_empty` is `EnforcedStyleForEmptyBrackets == 'space'`. Returns the
@@ -3125,6 +3225,18 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_space_before_comment",
         function!(check_space_before_comment, 1),
+    )?;
+    module.define_module_function(
+        "check_space_inside_parens",
+        function!(check_space_inside_parens, 2),
+    )?;
+    module.define_module_function(
+        "check_space_inside_reference_brackets",
+        function!(check_space_inside_reference_brackets, 3),
+    )?;
+    module.define_module_function(
+        "check_space_before_first_arg",
+        function!(check_space_before_first_arg, 2),
     )?;
     module.define_module_function(
         "check_space_inside_array_literal_brackets",
