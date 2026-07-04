@@ -33,7 +33,9 @@ jobs:
           corpora=$(echo "$CORPORA" | jq -cR 'split(" ") | map(select(length > 0))')
           echo "corpora=$corpora" >> "$GITHUB_OUTPUT"
         env:
-          CORPORA: ${{ inputs.corpora }}
+          # The fallback covers events without inputs (e.g. a temporary
+          # push trigger) and an explicitly empty input.
+          CORPORA: ${{ inputs.corpora || 'mastodon discourse redmine fluentd' }}
 
   bench:
     needs: plan
@@ -75,4 +77,4 @@ jobs:
       - name: Bench (${{ matrix.corpus }})
         run: |
           VERIFY=1 SUMMARY_FILE="$GITHUB_STEP_SUMMARY" \
-            benches/real_cli_bench.sh ".tmp/${{ matrix.corpus }}" "${{ inputs.rounds }}"
+            benches/real_cli_bench.sh ".tmp/${{ matrix.corpus }}" "${{ inputs.rounds || '3' }}"
