@@ -1,0 +1,78 @@
+name: Bench
+
+# Manual real-CLI benchmark: stock vs shirobai on real corpora,
+# each with its own .rubocop.yml and all plugin gems installed.
+# Before timing, both sides run once with JSON output and the offense
+# sets must match — the run proves "same offenses, less time".
+#
+# Trigger from CLI:
+#   gh workflow run bench.yml
+#   gh workflow run bench.yml -f corpora="redmine fluentd" -f rounds=5
+#   gh workflow run bench.yml --ref <branch>
+
+on:
+  workflow_dispatch:
+    inputs:
+      corpora:
+        description: "Space-separated corpora (mastodon discourse redmine fluentd)"
+        required: false
+        default: "mastodon discourse redmine fluentd"
+      rounds:
+        description: "Timed rounds per mode"
+        required: false
+        default: "3"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      corpora: ${{ steps.set.outputs.corpora }}
+    steps:
+      - id: set
+        run: |
+          corpora=$(echo "$CORPORA" | jq -cR 'split(" ") | map(select(length > 0))')
+          echo "corpora=$corpora" >> "$GITHUB_OUTPUT"
+        env:
+          CORPORA: ${{ inputs.corpora }}
+
+  bench:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        corpus: ${{ fromJSON(needs.plan.outputs.corpora) }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: true
+
+      - uses: ruby/setup-ruby@89f90524b88a01fe6e0b732220432cc6142926af # v1.313.0
+        with:
+          ruby-version: "4.0"
+          bundler-cache: true
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2.9.1
+        with:
+          shared-key: bench
+
+      - name: Build native extension
+        run: bundle exec rake compile
+
+      - name: Install bench Gemfiles
+        run: |
+          BUNDLE_GEMFILE=benches/Gemfile.realconfig.stock bundle install --jobs 4
+          BUNDLE_GEMFILE=benches/Gemfile.realconfig.shirobai bundle install --jobs 4
+
+      - name: Clone corpus
+        run: bin/setup-corpora ${{ matrix.corpus }}
+
+      - name: Bench (${{ matrix.corpus }})
+        run: |
+          VERIFY=1 SUMMARY_FILE="$GITHUB_STEP_SUMMARY" \
+            benches/real_cli_bench.sh ".tmp/${{ matrix.corpus }}" "${{ inputs.rounds }}"
