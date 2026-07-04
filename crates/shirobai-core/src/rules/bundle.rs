@@ -160,6 +160,9 @@ pub fn check_multiline_bundle(
 /// | 111 | duplicate_methods_active_support (`AllCops/ActiveSupportExtensionsEnabled`; `Lint/DuplicateMagicComment` is config-less) |
 /// | 112 | array_alignment style (`EnforcedStyle`: 0 = with_first_element, 1 = with_fixed_indentation) |
 /// | 113 | array_alignment indentation width (`IndentationWidth` falling back to `Layout/IndentationWidth.Width` falling back to 2) |
+/// | 114 | performance_enabled — the shirobai-performance plugin gem's wake-up flag. `0` (core-only install) keeps every Performance rule out of the walk and its slots empty |
+/// | 115 | perf_end_with_safe_multiline (`Performance/EndWith` `SafeMultiline`) |
+/// | 116 | perf_start_with_safe_multiline (`Performance/StartWith` `SafeMultiline`) |
 ///
 /// `lists` (`Vec<String>`), 20 entries:
 ///
@@ -190,6 +193,13 @@ pub fn check_multiline_bundle(
 /// | 22  | ambiguous_block_association_allowed_methods (`Lint/AmbiguousBlockAssociation` `AllowedMethods`, regexp entries dropped by the Ruby wrapper which falls back to standalone when any regexp is present) |
 /// | 23  | class_length_count_as_one (`Metrics/ClassLength` `CountAsOne`) |
 /// | 24  | module_length_count_as_one (`Metrics/ModuleLength` `CountAsOne`) |
+/// | 25  | perf_detect_preferred_method (`Performance/Detect`'s view of `Style/CollectionMethods` `PreferredMethods['detect']`, one entry; empty means `detect`) |
+///
+/// Entries 114-116 / 25 form the **shirobai-performance segment**. The core
+/// gem packs the dormant defaults (`[0, 0, 0]` / `[[]]`) when the plugin gem
+/// is not loaded; the plugin gem registers a packer on
+/// `Shirobai::Dispatch.performance_packer` that fills real values and flips
+/// `performance_enabled`.
 ///
 /// `Layout/IndentationWidth`'s `allowed_lines` and `prior_ranges` are fixed to
 /// empty in the bundle: the non-empty cases (configured `AllowedPatterns`,
@@ -291,14 +301,32 @@ pub struct BundleConfig {
     pub space_inside_reference_brackets: space_inside_reference_brackets::Config,
     pub space_before_first_arg: space_before_first_arg::Config,
     pub duplicate_methods: duplicate_methods::Config,
+    /// `Some` only when the shirobai-performance plugin gem is loaded on the
+    /// Ruby side (`performance_enabled` num is 1). `None` keeps the
+    /// Performance rules out of the shared walk entirely — their slots are
+    /// pushed as empty arrays that no wrapper cop ever reads.
+    pub performance: Option<PerformanceConfig>,
+}
+
+/// Packed configuration for the shirobai-performance plugin cops.
+#[derive(Debug, Clone)]
+pub struct PerformanceConfig {
+    /// `Performance/Detect`'s preferred replacement method
+    /// (`Style/CollectionMethods` `PreferredMethods['detect']`, `detect` when
+    /// unset — `find` under RuboCop's default configuration).
+    pub detect_preferred_method: String,
+    /// `Performance/EndWith` `SafeMultiline`.
+    pub end_with_safe_multiline: bool,
+    /// `Performance/StartWith` `SafeMultiline`.
+    pub start_with_safe_multiline: bool,
 }
 
 // `Lint/ParenthesesAsGroupedExpression` carries no config so it doesn't appear
 // in the `nums` / `lists` packing; the bundle still computes its slot in the
 // shared walk (see `check_all_bundle` below).
 
-const NUMS_LEN: usize = 114;
-const LISTS_LEN: usize = 25;
+const NUMS_LEN: usize = 117;
+const LISTS_LEN: usize = 26;
 
 impl BundleConfig {
     /// Build a config from the flat wire format (see the struct docs for the
@@ -555,6 +583,26 @@ impl BundleConfig {
             },
             duplicate_methods: duplicate_methods::Config {
                 active_support_extensions_enabled: nums[111] != 0,
+            },
+            // The shirobai-performance segment. Written last on purpose:
+            // struct literal order is evaluation order and this consumes the
+            // final list (25) after every earlier `next_list()`.
+            performance: {
+                let preferred_list = next_list();
+                if nums[114] != 0 {
+                    let preferred = preferred_list
+                        .into_iter()
+                        .next()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| "detect".to_string());
+                    Some(PerformanceConfig {
+                        detect_preferred_method: preferred,
+                        end_with_safe_multiline: nums[115] != 0,
+                        start_with_safe_multiline: nums[116] != 0,
+                    })
+                } else {
+                    None
+                }
             },
         })
     }
@@ -1272,6 +1320,8 @@ mod tests {
             1, // space_before_first_arg: allow_for_alignment
             0, // duplicate_methods: active_support_extensions_enabled
             0, 2, // array_alignment: style(with_first_element) / indent
+            1, // performance_enabled (tests exercise the plugin segment)
+            1, 1, // perf_end_with / perf_start_with SafeMultiline defaults
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -1320,6 +1370,9 @@ mod tests {
             vec![],
             vec![], // class_length: count_as_one
             vec![], // module_length: count_as_one
+            // perf_detect: preferred method (RuboCop default configuration
+            // resolves `PreferredMethods['detect']` to `find`).
+            vec!["find".to_string()],
         ];
         (nums, lists)
     }
@@ -1357,6 +1410,26 @@ mod tests {
             vec!["define_method", "define_singleton_method"]
         );
         assert_eq!(cfg.hash_each_allowed_receivers, vec!["Thread.current"]);
+    }
+
+    #[test]
+    fn from_packed_reads_performance_segment() {
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let perf = cfg.performance.expect("enabled in default_packed");
+        assert_eq!(perf.detect_preferred_method, "find");
+        assert!(perf.end_with_safe_multiline);
+        assert!(perf.start_with_safe_multiline);
+    }
+
+    #[test]
+    fn dormant_performance_segment_parses_to_none() {
+        // A core-only install packs `performance_enabled = 0`: no
+        // PerformanceConfig is built and no plugin rule will join the walk.
+        let (mut nums, lists) = default_packed();
+        nums[114] = 0;
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        assert!(cfg.performance.is_none());
     }
 
     #[test]

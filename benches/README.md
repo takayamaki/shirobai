@@ -14,6 +14,11 @@ Benchmarks and the parity oracle.
   Runs the real `rubocop` CLI twice (stock vs shirobai) on a corpus
   and diffs per-cop / per-offense output plus autocorrected bytes.
   Zero diff is the only acceptable result before merging.
+- `parity_diff_performance.sh` — The same oracle for the
+  shirobai-performance plugin gem: both sides run with
+  `--plugin rubocop-performance --enable-pending-cops`
+  (Gemfile.stock.performance vs Gemfile.with_shirobai.performance).
+  Zero diff required on the same corpora.
 - `e2e_bench.rb` — In-process speed measurement harness.
   Accepts a corpus path and loads its `.rubocop.yml`
   (skips require/inherit_gem so plugin gems are not needed).

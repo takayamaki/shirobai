@@ -1,0 +1,7 @@
+# frozen_string_literal: true
+
+# Stock side of the plugin parity oracle (benches/parity_diff_performance.sh).
+source "https://rubygems.org"
+
+gem "rubocop", "= 1.88.0"
+gem "rubocop-performance", "= 1.26.1"

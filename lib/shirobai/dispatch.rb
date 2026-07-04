@@ -108,7 +108,21 @@ module Shirobai
       array_alignment: 87
     }.freeze
 
+    # Dormant shirobai-performance segment: `enabled = 0` plus placeholder
+    # cop settings (see the `BundleConfig` docs for the field order). Packed
+    # whenever the plugin gem is not loaded; the Rust side then skips every
+    # Performance rule and leaves their slots empty.
+    PERFORMANCE_SEGMENT_DORMANT = [[0, 0, 0].freeze, [[].freeze].freeze].freeze
+
     class << self
+      # Registration point for the shirobai-performance gem: a callable
+      # `(config) -> [nums, lists]` producing the segment documented on
+      # `BundleConfig` (enabled flag first). Set at plugin require time,
+      # BEFORE any lint run packs a config. Configs packed earlier keep
+      # their dormant tokens (token memoization is per Config identity),
+      # so requiring the plugin mid-run is not supported.
+      attr_accessor :performance_packer
+
       # Returns the raw Rust result for `cop_key` on this source.
       def offenses_for(processed_source, config, cop_key)
         src = processed_source.raw_source
@@ -289,9 +303,17 @@ module Shirobai
           num(dm[0]), # DuplicateMethods ActiveSupportExtensionsEnabled
           *ara # ArrayAlignment style / indent (2 nums)
         ]
+        perf_nums, perf_lists =
+          if Dispatch.performance_packer
+            Dispatch.performance_packer.call(config)
+          else
+            PERFORMANCE_SEGMENT_DORMANT
+          end
+
+        nums.concat(perf_nums)
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0], aba[0],
-                 cl[2], mol[2]]
+                 cl[2], mol[2], *perf_lists]
         [nums, lists]
       end
 
