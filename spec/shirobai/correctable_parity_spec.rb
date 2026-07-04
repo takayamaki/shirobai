@@ -165,6 +165,18 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Metrics::MethodLength,
       "def m\n#{(1..11).map { |i| "  v = #{i}" }.join("\n")}\nend\n"
     ],
+    # Pure metric cops (no autocorrect): offenses must stay `:unsupported` on
+    # both sides. Default `Max` is 100, so the bodies need 101 counted lines.
+    "Metrics/ClassLength" => [
+      RuboCop::Cop::Metrics::ClassLength,
+      Shirobai::Cop::Metrics::ClassLength,
+      "class C\n#{(1..101).map { |i| "  v = #{i}" }.join("\n")}\nend\n"
+    ],
+    "Metrics/ModuleLength" => [
+      RuboCop::Cop::Metrics::ModuleLength,
+      Shirobai::Cop::Metrics::ModuleLength,
+      "module M\n#{(1..101).map { |i| "  v = #{i}" }.join("\n")}\nend\n"
+    ],
     "Layout/EmptyLineBetweenDefs" => [
       RuboCop::Cop::Layout::EmptyLineBetweenDefs,
       Shirobai::Cop::Layout::EmptyLineBetweenDefs,
@@ -228,6 +240,20 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Style::TrailingCommaInArguments,
       "some_method(a, b, c,)\n"
     ],
+    # Same `avoid_comma` shape on a braced hash literal under the default
+    # `no_comma` style: the offense carries a removal corrector (correctable).
+    "Style/TrailingCommaInHashLiteral" => [
+      RuboCop::Cop::Style::TrailingCommaInHashLiteral,
+      Shirobai::Cop::Style::TrailingCommaInHashLiteral,
+      "h = { a: 1, b: 2, }\n"
+    ],
+    # Same `avoid_comma` shape on an array literal under the default
+    # `no_comma` style: the offense carries a removal corrector (correctable).
+    "Style/TrailingCommaInArrayLiteral" => [
+      RuboCop::Cop::Style::TrailingCommaInArrayLiteral,
+      Shirobai::Cop::Style::TrailingCommaInArrayLiteral,
+      "x = [1, 2, 3,]\n"
+    ],
     # A double-quoted string inside an interpolation under the default
     # single_quotes style: the offense carries a corrector (correctable), and
     # the outer double-quoted string is unaffected (not inside interpolation).
@@ -267,6 +293,32 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Layout::SpaceInsideBlockBraces,
       Shirobai::Cop::Layout::SpaceInsideBlockBraces,
       "foo.each {puts x}\n"
+    ],
+    # A hash literal missing both inner spaces under the default `space`
+    # style: both offenses carry their own corrector (correctable). Guards
+    # that the wrapper attaches the corrector block in lint mode like stock.
+    "Layout/SpaceInsideHashLiteralBraces" => [
+      RuboCop::Cop::Layout::SpaceInsideHashLiteralBraces,
+      Shirobai::Cop::Layout::SpaceInsideHashLiteralBraces,
+      "h = {a: 1}\n"
+    ],
+    # An array with spaces inside under the default `no_space` style: stock
+    # corrects the whole node on the FIRST offense (`ignore_node`), so the
+    # first offense is correctable and the second is NOT (its corrector block
+    # stays empty). Guards that the wrapper reproduces the per-node grouping,
+    # not just the offense list.
+    "Layout/SpaceInsideArrayLiteralBrackets" => [
+      RuboCop::Cop::Layout::SpaceInsideArrayLiteralBrackets,
+      Shirobai::Cop::Layout::SpaceInsideArrayLiteralBrackets,
+      "a = [ 1, 2 ]\n"
+    ],
+    # A block brace with no space before it under the default `space` style:
+    # the offense carries an `insert_before` corrector (correctable). Guards
+    # that the wrapper attaches the corrector block in lint mode like stock.
+    "Layout/SpaceBeforeBlockBraces" => [
+      RuboCop::Cop::Layout::SpaceBeforeBlockBraces,
+      Shirobai::Cop::Layout::SpaceBeforeBlockBraces,
+      "foo.each{ puts x }\n"
     ],
     # A predicate-style call with an `&&` argument: stock has no autocorrect,
     # so both stock and shirobai offenses must stay `:unsupported` (never
@@ -428,7 +480,25 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Layout::LeadingEmptyLines,
       Shirobai::Cop::Layout::LeadingEmptyLines,
       "\nclass Foo\nend\n"
-    ]
+    ],
+    # Both directions are correctable in lint mode; the same-line-modifier
+    # correction skip must leave an EMPTY corrector (`:unsupported`), exactly
+    # like stock's `another_modifier_if_on_same_line?` guard.
+    "Style/IfUnlessModifier (to modifier form)" => [
+      RuboCop::Cop::Style::IfUnlessModifier,
+      Shirobai::Cop::Style::IfUnlessModifier,
+      "if condition\n  do_stuff(bar)\nend\n"
+    ],
+    "Style/IfUnlessModifier (too long modifier form)" => [
+      RuboCop::Cop::Style::IfUnlessModifier,
+      Shirobai::Cop::Style::IfUnlessModifier,
+      "do_something(arg) if #{"a" * 100}_condition_name\n"
+    ],
+    "Style/IfUnlessModifier (uncorrected same-line modifiers)" => [
+      RuboCop::Cop::Style::IfUnlessModifier,
+      Shirobai::Cop::Style::IfUnlessModifier,
+      "{ x: (do_something_rather_long(arg) if #{"b" * 80}_cond), y: (2 if b) }\n"
+    ],
   }
 
   cases.each do |name, (stock_klass, shirobai_klass, source)|

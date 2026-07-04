@@ -12,6 +12,7 @@ use super::{
     abc_size, access_modifier_indentation, ambiguous_block_association, argument_alignment,
     assignment_indentation,
     block_delimiters, block_length, block_nesting,
+    class_length,
     closing_parenthesis_indentation, colon_method_call, complexity, debugger, def_end_alignment,
     dot_position,
     empty_comment,
@@ -23,20 +24,25 @@ use super::{
     end_alignment,
     first_argument_indentation, first_array_element_indentation, first_hash_element_indentation,
     hash_alignment, hash_each_methods, hash_syntax, hash_transform_keys,
+    if_unless_modifier,
     indentation_consistency, indentation_width,
     leading_empty_lines,
     line_end_concatenation, line_length,
-    line_length_breakable, method_length, method_name,
+    line_length_breakable, method_length, method_name, module_length,
     multiline_method_call_brace_layout, nested_parenthesized_calls,
     parentheses_as_grouped_expression,
     percent_literal_delimiters,
     predicate_prefix, redundant_self, redundant_self_assignment,
     require_parentheses, safe_navigation_chain, self_assignment,
-    space_around_keyword, space_around_method_call_operator, space_inside_block_braces,
+    space_around_keyword, space_around_method_call_operator, space_before_block_braces,
+    space_inside_array_literal_brackets, space_inside_block_braces,
+    space_inside_hash_literal_braces,
     stabby_lambda_parentheses,
     string_literals,
     string_literals_in_interpolation,
-    trailing_comma_in_arguments, trailing_empty_lines, unreachable_code, useless_access_modifier,
+    trailing_comma, trailing_comma_in_arguments, trailing_comma_in_array_literal,
+    trailing_comma_in_hash_literal, trailing_empty_lines, unreachable_code,
+    useless_access_modifier,
     variable_number, void,
 };
 
@@ -127,6 +133,20 @@ pub fn check_multiline_bundle(
 /// | 85  | stabby_lambda_parentheses style (`Style/StabbyLambdaParentheses` `EnforcedStyle`: 0 = require_parentheses, 1 = require_no_parentheses) |
 /// | 86  | empty_comment_allow_border (`Layout/EmptyComment` `AllowBorderComment`) |
 /// | 87  | empty_comment_allow_margin (`Layout/EmptyComment` `AllowMarginComment`) |
+/// | 88-89 | class_length max / count_comments (`Metrics/ClassLength` `Max` / `CountComments`) |
+/// | 90-91 | module_length max / count_comments (`Metrics/ModuleLength` `Max` / `CountComments`) |
+/// | 92  | trailing_comma_in_hash_literal style (`EnforcedStyleForMultiline`: 0 no_comma, 1 comma, 2 consistent_comma, 3 diff_comma) |
+/// | 93  | trailing_comma_in_array_literal style (`EnforcedStyleForMultiline`, same coding) |
+/// | 94  | space_inside_hash_literal_braces style (`EnforcedStyle`: 0 space, 1 no_space, 2 compact) |
+/// | 95  | space_inside_hash_literal_braces empty no_space (`EnforcedStyleForEmptyBraces == 'no_space'`) |
+/// | 96  | space_inside_array_literal_brackets style (`EnforcedStyle`: 0 no_space, 1 space, 2 compact) |
+/// | 97  | space_inside_array_literal_brackets empty space (`EnforcedStyleForEmptyBrackets == 'space'`) |
+///
+/// | 98  | if_unless_modifier_max (`Style/IfUnlessModifier`'s view of `Layout/LineLength` `Max`; `-1` when that cop is disabled) |
+/// | 99  | if_unless_modifier_tab_width (`LineLengthHelp#tab_indentation_width` for this cop) |
+/// | 100 | space_before_block_braces style (`EnforcedStyle`: 0 space, 1 no_space) |
+/// | 101 | space_before_block_braces empty style (`EnforcedStyleForEmptyBraces` resolved: 0 space, 1 no_space, 2 invalid — `nil` follows `EnforcedStyle`) |
+/// | 102 | space_before_block_braces bd_line_count_based (`Style/BlockDelimiters` `EnforcedStyle == 'line_count_based'`) |
 ///
 /// `lists` (`Vec<String>`), 20 entries:
 ///
@@ -155,6 +175,8 @@ pub fn check_multiline_bundle(
 /// | 20  | nested_parenthesized_calls_allowed_methods (`Style/NestedParenthesizedCalls` `AllowedMethods`) |
 /// | 21  | percent_literal_delimiters_pairs (`Style/PercentLiteralDelimiters` `PreferredDelimiters`, resolved to 10 two-byte strings in `[%, %i, %I, %q, %Q, %r, %s, %w, %W, %x]` order) |
 /// | 22  | ambiguous_block_association_allowed_methods (`Lint/AmbiguousBlockAssociation` `AllowedMethods`, regexp entries dropped by the Ruby wrapper which falls back to standalone when any regexp is present) |
+/// | 23  | class_length_count_as_one (`Metrics/ClassLength` `CountAsOne`) |
+/// | 24  | module_length_count_as_one (`Metrics/ModuleLength` `CountAsOne`) |
 ///
 /// `Layout/IndentationWidth`'s `allowed_lines` and `prior_ranges` are fixed to
 /// empty in the bundle: the non-empty cases (configured `AllowedPatterns`,
@@ -223,11 +245,19 @@ pub struct BundleConfig {
     pub string_literals: string_literals::Config,
     pub string_literals_in_interpolation: string_literals_in_interpolation::Config,
     pub trailing_comma_in_arguments: trailing_comma_in_arguments::Config,
+    pub trailing_comma_in_hash_literal: trailing_comma::Config,
+    pub trailing_comma_in_array_literal: trailing_comma::Config,
     pub trailing_empty_lines: trailing_empty_lines::Config,
     pub space_inside_block_braces: space_inside_block_braces::Config,
     pub method_length_max: usize,
     pub method_length_count_comments: bool,
     pub method_length_count_as_one: Vec<String>,
+    pub class_length_max: usize,
+    pub class_length_count_comments: bool,
+    pub class_length_count_as_one: Vec<String>,
+    pub module_length_max: usize,
+    pub module_length_count_comments: bool,
+    pub module_length_count_as_one: Vec<String>,
     pub def_end_alignment: def_end_alignment::Config,
     pub multiline_method_call_brace_style: u8,
     pub nested_parenthesized_calls_allowed_methods: Vec<String>,
@@ -237,14 +267,18 @@ pub struct BundleConfig {
     pub stabby_lambda_parentheses: stabby_lambda_parentheses::Config,
     pub ambiguous_block_association: ambiguous_block_association::Config,
     pub empty_comment: empty_comment::Config,
+    pub space_inside_hash_literal_braces: space_inside_hash_literal_braces::Config,
+    pub space_inside_array_literal_brackets: space_inside_array_literal_brackets::Config,
+    pub if_unless_modifier: if_unless_modifier::Config,
+    pub space_before_block_braces: space_before_block_braces::Config,
 }
 
 // `Lint/ParenthesesAsGroupedExpression` carries no config so it doesn't appear
 // in the `nums` / `lists` packing; the bundle still computes its slot in the
 // shared walk (see `check_all_bundle` below).
 
-const NUMS_LEN: usize = 88;
-const LISTS_LEN: usize = 23;
+const NUMS_LEN: usize = 103;
+const LISTS_LEN: usize = 25;
 
 impl BundleConfig {
     /// Build a config from the flat wire format (see the struct docs for the
@@ -380,6 +414,12 @@ impl BundleConfig {
             trailing_comma_in_arguments: trailing_comma_in_arguments::Config {
                 style: nums[72] as u8,
             },
+            trailing_comma_in_hash_literal: trailing_comma::Config {
+                style: nums[92] as u8,
+            },
+            trailing_comma_in_array_literal: trailing_comma::Config {
+                style: nums[93] as u8,
+            },
             string_literals_in_interpolation: string_literals_in_interpolation::Config {
                 style: nums[73] as u8,
             },
@@ -402,6 +442,10 @@ impl BundleConfig {
             method_length_max: nums[78] as usize,
             method_length_count_comments: nums[79] != 0,
             method_length_count_as_one: next_list(),
+            class_length_max: nums[88] as usize,
+            class_length_count_comments: nums[89] != 0,
+            module_length_max: nums[90] as usize,
+            module_length_count_comments: nums[91] != 0,
             def_end_alignment: def_end_alignment::Config {
                 style: nums[80] as u8,
             },
@@ -424,6 +468,44 @@ impl BundleConfig {
             empty_comment: empty_comment::Config {
                 allow_border_comment: nums[86] != 0,
                 allow_margin_comment: nums[87] != 0,
+            },
+            // Struct literal order is evaluation order: these two must come
+            // after every earlier `next_list()` so they read lists 23 / 24
+            // (the space cop configs below consume no lists).
+            class_length_count_as_one: next_list(),
+            module_length_count_as_one: next_list(),
+            space_inside_hash_literal_braces: space_inside_hash_literal_braces::Config {
+                style: match nums[94] {
+                    1 => space_inside_hash_literal_braces::Style::NoSpace,
+                    2 => space_inside_hash_literal_braces::Style::Compact,
+                    _ => space_inside_hash_literal_braces::Style::Space,
+                },
+                no_space_empty: nums[95] != 0,
+            },
+            space_inside_array_literal_brackets: space_inside_array_literal_brackets::Config {
+                style: match nums[96] {
+                    1 => space_inside_array_literal_brackets::Style::Space,
+                    2 => space_inside_array_literal_brackets::Style::Compact,
+                    _ => space_inside_array_literal_brackets::Style::NoSpace,
+                },
+                space_empty: nums[97] != 0,
+            },
+            if_unless_modifier: if_unless_modifier::Config {
+                max_line_length: if nums[98] < 0 { None } else { Some(nums[98]) },
+                tab_width: nums[99],
+            },
+            space_before_block_braces: space_before_block_braces::Config {
+                style: if nums[100] != 0 {
+                    space_before_block_braces::Style::NoSpace
+                } else {
+                    space_before_block_braces::Style::Space
+                },
+                empty_style: match nums[101] {
+                    1 => space_before_block_braces::EmptyStyle::NoSpace,
+                    2 => space_before_block_braces::EmptyStyle::Invalid,
+                    _ => space_before_block_braces::EmptyStyle::Space,
+                },
+                bd_line_count_based: nums[102] != 0,
             },
         })
     }
@@ -515,6 +597,8 @@ pub struct BundleResult {
         Vec<string_literals_in_interpolation::StringLiteralsInInterpolationOffense>,
     pub trailing_comma_in_arguments:
         Vec<trailing_comma_in_arguments::TrailingCommaInArgumentsOffense>,
+    pub trailing_comma_in_hash_literal: Vec<trailing_comma::TrailingCommaOffense>,
+    pub trailing_comma_in_array_literal: Vec<trailing_comma::TrailingCommaOffense>,
     /// At most one offense per file (the final-newline / trailing-blank check).
     pub trailing_empty_lines: Option<trailing_empty_lines::TrailingEmptyLinesOffense>,
     pub space_around_method_call_operator:
@@ -523,6 +607,8 @@ pub struct BundleResult {
     pub space_inside_block_braces:
         Vec<space_inside_block_braces::SpaceInsideBlockBracesOffense>,
     pub method_length: Vec<method_length::MethodLengthCandidate>,
+    pub class_length: Vec<class_length::ClassLengthCandidate>,
+    pub module_length: Vec<module_length::ModuleLengthCandidate>,
     pub def_end_alignment: Vec<def_end_alignment::DefEndAlignmentRecord>,
     pub require_parentheses: Vec<require_parentheses::RequireParenthesesOffense>,
     pub self_assignment: Vec<self_assignment::SelfAssignmentOffense>,
@@ -548,12 +634,18 @@ pub struct BundleResult {
         Vec<ambiguous_block_association::AmbiguousBlockAssociationOffense>,
     pub empty_line_after_guard_clause:
         Vec<empty_line_after_guard_clause::GuardClauseCandidate>,
+    pub if_unless_modifier: Vec<if_unless_modifier::IfUnlessModifierCandidate>,
     pub empty_comment: Vec<empty_comment::EmptyCommentOffense>,
     pub empty_line_after_magic_comment:
         Vec<empty_line_after_magic_comment::MagicCommentCandidate>,
     pub empty_lines: Vec<empty_lines::EmptyLinesOffense>,
     /// At most one offense per file (the leading-blank-line offense).
     pub leading_empty_lines: Option<leading_empty_lines::LeadingEmptyLinesOffense>,
+    pub space_inside_hash_literal_braces:
+        Vec<space_inside_hash_literal_braces::SpaceInsideHashLiteralBracesOffense>,
+    pub space_inside_array_literal_brackets:
+        space_inside_array_literal_brackets::ArrayBracketsResult,
+    pub space_before_block_braces: space_before_block_braces::SpaceBeforeBlockBracesResult,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -671,14 +763,40 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     );
     let mut tca_rule =
         trailing_comma_in_arguments::build_rule(source, &cfg.trailing_comma_in_arguments);
+    let mut tchl_rule =
+        trailing_comma_in_hash_literal::build_rule(source, &cfg.trailing_comma_in_hash_literal);
+    let mut tcal_rule =
+        trailing_comma_in_array_literal::build_rule(source, &cfg.trailing_comma_in_array_literal);
     let mut samco_rule = space_around_method_call_operator::build_rule(source);
     let mut sak_rule = space_around_keyword::build_rule(source);
     let mut sibb_rule = space_inside_block_braces::build_rule(source, cfg.space_inside_block_braces);
+    let mut sihlb_rule = space_inside_hash_literal_braces::build_rule(
+        source,
+        cfg.space_inside_hash_literal_braces,
+    );
+    let mut sialb_rule = space_inside_array_literal_brackets::build_rule(
+        source,
+        cfg.space_inside_array_literal_brackets,
+    );
+    let mut sbbb_rule =
+        space_before_block_braces::build_rule(source, cfg.space_before_block_braces);
     let mut ml_rule = method_length::build_rule(
         source,
         cfg.method_length_max,
         cfg.method_length_count_comments,
         &cfg.method_length_count_as_one,
+    );
+    let mut cl_rule = class_length::build_rule(
+        source,
+        cfg.class_length_max,
+        cfg.class_length_count_comments,
+        &cfg.class_length_count_as_one,
+    );
+    let mut mol_rule = module_length::build_rule(
+        source,
+        cfg.module_length_max,
+        cfg.module_length_count_comments,
+        &cfg.module_length_count_as_one,
     );
     let mut dea_rule = def_end_alignment::build_rule(source, cfg.def_end_alignment);
     let mut rp_rule = require_parentheses::build_rule();
@@ -705,6 +823,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut htk_rule = hash_transform_keys::build_rule(source);
     let mut aba_rule =
         ambiguous_block_association::build_rule(source, cfg.ambiguous_block_association.clone());
+    let mut ium_rule = if_unless_modifier::build_rule(source, cfg.if_unless_modifier);
     // `Layout/EmptyLines` joins the shared walk only when the file actually
     // contains `\n\n\n` (stock's prefilter); otherwise the rule's collected
     // lines are unused and we skip both the walk push and the finalize. The
@@ -747,10 +866,17 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut sl_rule,
         &mut sli_rule,
         &mut tca_rule,
+        &mut tchl_rule,
+        &mut tcal_rule,
         &mut samco_rule,
         &mut sak_rule,
         &mut sibb_rule,
+        &mut sihlb_rule,
+        &mut sialb_rule,
+        &mut sbbb_rule,
         &mut ml_rule,
+        &mut cl_rule,
+        &mut mol_rule,
         &mut dea_rule,
         &mut rp_rule,
         &mut sa_rule,
@@ -766,6 +892,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut uc_rule,
         &mut htk_rule,
         &mut aba_rule,
+        &mut ium_rule,
     ];
     if empty_lines_eligible {
         rules.push(&mut el_rule);
@@ -818,10 +945,17 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let string_literals = sl_rule.offenses;
     let string_literals_in_interpolation = sli_rule.offenses;
     let trailing_comma_in_arguments = tca_rule.offenses;
+    let trailing_comma_in_hash_literal = tchl_rule.checker.offenses;
+    let trailing_comma_in_array_literal = tcal_rule.checker.offenses;
     let space_around_method_call_operator = samco_rule.offenses;
     let space_around_keyword = sak_rule.offenses;
     let space_inside_block_braces = sibb_rule.offenses;
+    let space_inside_hash_literal_braces = sihlb_rule.into_offenses();
+    let space_inside_array_literal_brackets = sialb_rule.into_result();
+    let space_before_block_braces = sbbb_rule.into_result();
     let method_length = ml_rule.out;
+    let class_length = cl_rule.out;
+    let module_length = mol_rule.out;
     let def_end_alignment = dea_rule.records;
     let require_parentheses = rp_rule.offenses;
     let self_assignment = sa_rule.offenses;
@@ -920,11 +1054,15 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         string_literals,
         string_literals_in_interpolation,
         trailing_comma_in_arguments,
+        trailing_comma_in_hash_literal,
+        trailing_comma_in_array_literal,
         trailing_empty_lines,
         space_around_method_call_operator,
         space_around_keyword,
         space_inside_block_braces,
         method_length,
+        class_length,
+        module_length,
         def_end_alignment,
         require_parentheses,
         self_assignment,
@@ -941,10 +1079,14 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         hash_transform_keys,
         ambiguous_block_association,
         empty_line_after_guard_clause,
+        if_unless_modifier: ium_rule.candidates,
         empty_comment,
         empty_line_after_magic_comment,
         empty_lines,
         leading_empty_lines,
+        space_inside_hash_literal_braces,
+        space_inside_array_literal_brackets,
+        space_before_block_braces,
     }
 }
 
@@ -1022,6 +1164,14 @@ mod tests {
             2, // assignment_indentation: indentation_width (default 2)
             0, // stabby_lambda_parentheses: style (require_parentheses)
             1, 1, // empty_comment: allow_border / allow_margin (defaults)
+            100, 0, // class_length: max(100) / count_comments
+            100, 0, // module_length: max(100) / count_comments
+            0, // trailing_comma_in_hash_literal: style (no_comma)
+            0, // trailing_comma_in_array_literal: style (no_comma)
+            0, 1, // space_inside_hash_literal_braces: style(space) / empty(no_space)
+            0, 0, // space_inside_array_literal_brackets: style(no_space) / empty(no_space)
+            120, 2, // if_unless_modifier: max_line_length / tab_width (defaults)
+            0, 0, 1, // space_before_block_braces: style(space) / empty(space) / bd(line_count_based)
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -1068,6 +1218,8 @@ mod tests {
             ],
             // ambiguous_block_association: AllowedMethods (default empty).
             vec![],
+            vec![], // class_length: count_as_one
+            vec![], // module_length: count_as_one
         ];
         (nums, lists)
     }
@@ -2004,6 +2156,66 @@ mod tests {
         }
     }
 
+    /// `Metrics/ClassLength` merged into the shared walk must report exactly
+    /// what its standalone entry point reports, over a source exercising a
+    /// plain class, a suppressed-inside-class `class << self`, a toplevel
+    /// sclass and the `Foo = Struct.new(...) do` constructor form.
+    #[test]
+    fn shared_walk_matches_standalone_class_length() {
+        let src = "class A\n  x = 1\n  x = 2\n  x = 3\nend\n\
+                   class << self\n  y = 1\n  y = 2\n  y = 3\nend\n\
+                   Foo = Struct.new(:a) do\n  z = 1\n  z = 2\n  z = 3\nend\n";
+        let (mut nums, lists) = default_packed();
+        nums[88] = 2; // class_length max
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::class_length::check_class_length(
+            src.as_bytes(),
+            cfg.class_length_max,
+            cfg.class_length_count_comments,
+            &cfg.class_length_count_as_one,
+        );
+        assert_eq!(alone.len(), 3);
+        assert!(alone.iter().any(|c| c.sclass));
+        assert_eq!(bundle.class_length.len(), alone.len());
+        for (a, b) in bundle.class_length.iter().zip(&alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.head_end, a.length, a.sclass),
+                (b.start_offset, b.end_offset, b.head_end, b.length, b.sclass)
+            );
+        }
+    }
+
+    /// `Metrics/ModuleLength` merged into the shared walk must report exactly
+    /// what its standalone entry point reports, over a plain module and the
+    /// `Foo = Module.new do` constructor form (whose offense is the constant
+    /// name).
+    #[test]
+    fn shared_walk_matches_standalone_module_length() {
+        let src = "module A\n  x = 1\n  x = 2\n  x = 3\nend\n\
+                   Foo = Module.new do\n  z = 1\n  z = 2\n  z = 3\nend\n";
+        let (mut nums, lists) = default_packed();
+        nums[90] = 2; // module_length max
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::module_length::check_module_length(
+            src.as_bytes(),
+            cfg.module_length_max,
+            cfg.module_length_count_comments,
+            &cfg.module_length_count_as_one,
+        );
+        assert_eq!(alone.len(), 2);
+        assert_eq!(bundle.module_length.len(), alone.len());
+        for (a, b) in bundle.module_length.iter().zip(&alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, a.head_end, a.length),
+                (b.start_offset, b.end_offset, b.head_end, b.length)
+            );
+        }
+    }
+
     /// `Lint/RequireParentheses` merged into the shared walk must report
     /// exactly what its standalone entry point reports, over a source that
     /// covers the two stock branches: a predicate send with an `&&` last
@@ -2594,6 +2806,161 @@ mod tests {
     }
 
     #[test]
+    fn shared_walk_matches_standalone_space_inside_hash_literal_braces() {
+        let src = "h = {a: 1}\n\
+                   g = {  b: 2  }\n\
+                   e1 = {}\n\
+                   e2 = { }\n\
+                   e3 = {\n}\n\
+                   c = { a: { b: 1 } }\n\
+                   d = { k => %w{a} }\n\
+                   f = { a: proc {} }\n\
+                   cm = { # comment\n  a: 1 }\n\
+                   case x\nin {k1: 0}\n  1\nend\n";
+        for style in 0..=2i64 {
+            for empty in 0..=1i64 {
+                let (mut nums, lists) = default_packed();
+                nums[94] = style;
+                nums[95] = empty;
+                let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+                let bundle = check_all_bundle(src.as_bytes(), &cfg);
+                let alone = super::space_inside_hash_literal_braces::
+                    check_space_inside_hash_literal_braces(
+                        src.as_bytes(),
+                        cfg.space_inside_hash_literal_braces,
+                    );
+                assert_eq!(
+                    bundle.space_inside_hash_literal_braces.len(),
+                    alone.len(),
+                    "len mismatch style={style} empty={empty}"
+                );
+                for (a, b) in bundle.space_inside_hash_literal_braces.iter().zip(&alone) {
+                    assert_eq!(
+                        (a.start_offset, a.end_offset, a.message.code()),
+                        (b.start_offset, b.end_offset, b.message.code()),
+                        "style={style} empty={empty}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shared_walk_matches_standalone_space_inside_array_literal_brackets() {
+        let src = "a = [ 2, 3 ]\n\
+                   b = [1, [2], %w[a]]\n\
+                   e1 = []\n\
+                   e2 = [ ]\n\
+                   e3 = [\n]\n\
+                   d = [ [1] ]\n\
+                   f = [\n  [1], [2]]\n\
+                   cm = [ # comment\n  1]\n\
+                   case v\nin [ x, y ]\n  1\nin ADT[ i, [j ]]\n  2\nin ADT([g ], [h ])\n  3\nend\n";
+        for style in 0..=2i64 {
+            for empty in 0..=1i64 {
+                let (mut nums, lists) = default_packed();
+                nums[96] = style;
+                nums[97] = empty;
+                let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+                let bundle = check_all_bundle(src.as_bytes(), &cfg);
+                let alone = super::space_inside_array_literal_brackets::
+                    check_space_inside_array_literal_brackets(
+                        src.as_bytes(),
+                        cfg.space_inside_array_literal_brackets,
+                    );
+                assert_eq!(
+                    bundle.space_inside_array_literal_brackets.offenses.len(),
+                    alone.offenses.len(),
+                    "offense len mismatch style={style} empty={empty}"
+                );
+                for (a, b) in bundle
+                    .space_inside_array_literal_brackets
+                    .offenses
+                    .iter()
+                    .zip(&alone.offenses)
+                {
+                    assert_eq!(
+                        (
+                            a.start_offset,
+                            a.end_offset,
+                            a.message.code(),
+                            a.node,
+                            a.suppress_when_disable_uncorrectable
+                        ),
+                        (
+                            b.start_offset,
+                            b.end_offset,
+                            b.message.code(),
+                            b.node,
+                            b.suppress_when_disable_uncorrectable
+                        ),
+                        "style={style} empty={empty}"
+                    );
+                }
+                let pack = |r: &super::space_inside_array_literal_brackets::ArrayBracketsResult| {
+                    r.node_ops
+                        .iter()
+                        .map(|ops| ops.iter().map(|o| o.packed()).collect::<Vec<_>>())
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(
+                    pack(&bundle.space_inside_array_literal_brackets),
+                    pack(&alone),
+                    "ops mismatch style={style} empty={empty}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shared_walk_matches_standalone_space_before_block_braces() {
+        let src = "each { puts }\n\
+                   each{ puts }\n\
+                   7.times {}\n\
+                   7.times {}\n\
+                   ->(){ }\n\
+                   foo.map(a,\n  b) { |x| x }\n\
+                   foo.bar { |x|\n  x\n}\n\
+                   x.each do |n| n end\n";
+        for style in 0..=1i64 {
+            for empty in 0..=2i64 {
+                for bd in 0..=1i64 {
+                    let (mut nums, lists) = default_packed();
+                    nums[100] = style;
+                    nums[101] = empty;
+                    nums[102] = bd;
+                    let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+                    let bundle = check_all_bundle(src.as_bytes(), &cfg);
+                    let alone = super::space_before_block_braces::check_space_before_block_braces(
+                        src.as_bytes(),
+                        cfg.space_before_block_braces,
+                    );
+                    let tag = format!("style={style} empty={empty} bd={bd}");
+                    let (b, a) = (&bundle.space_before_block_braces, &alone);
+                    assert_eq!(b.offenses.len(), a.offenses.len(), "len mismatch {tag}");
+                    for (x, y) in b.offenses.iter().zip(&a.offenses) {
+                        assert_eq!(
+                            (x.start_offset, x.end_offset, x.detected, x.from_empty),
+                            (y.start_offset, y.end_offset, y.detected, y.from_empty),
+                            "{tag}"
+                        );
+                    }
+                    let pack = |s: &super::space_before_block_braces::Summary| {
+                        (
+                            s.a_correct,
+                            s.b_match_first,
+                            s.b_offense,
+                            s.b_match_after,
+                            s.saw_empty,
+                        )
+                    };
+                    assert_eq!(pack(&b.summary), pack(&a.summary), "{tag}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn shared_walk_matches_standalone_trailing_comma_in_arguments() {
         let src = "some_method(a, b, c,)\n\
                    object[1, 2,]\n\
@@ -2621,6 +2988,73 @@ mod tests {
                 "len mismatch style={style}"
             );
             for (a, b) in bundle.trailing_comma_in_arguments.iter().zip(&alone) {
+                assert_eq!(
+                    (a.start_offset, a.end_offset, a.message, a.fix),
+                    (b.start_offset, b.end_offset, b.message, b.fix),
+                    "style={style}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shared_walk_matches_standalone_trailing_comma_in_hash_literal() {
+        let src = "h = { a: 1, b: 2, }\n\
+                   g = {\n  a: 1,\n  b: 2,\n}\n\
+                   f = {\n  a: 1,\n  b: 2\n}\n\
+                   e = { a: 1,\n      b: 2 }\n\
+                   d = {\n  **kw\n}\n\
+                   m(a: 1, b: 2,)\n\
+                   c = { x: { y: 1 }, }\n";
+        for style in 0..=3u8 {
+            let (mut nums, lists) = default_packed();
+            nums[92] = style as i64;
+            let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+            let bundle = check_all_bundle(src.as_bytes(), &cfg);
+            let alone = super::trailing_comma_in_hash_literal::check_trailing_comma_in_hash_literal(
+                src.as_bytes(),
+                &cfg.trailing_comma_in_hash_literal,
+            );
+            assert_eq!(
+                bundle.trailing_comma_in_hash_literal.len(),
+                alone.len(),
+                "len mismatch style={style}"
+            );
+            for (a, b) in bundle.trailing_comma_in_hash_literal.iter().zip(&alone) {
+                assert_eq!(
+                    (a.start_offset, a.end_offset, a.message, a.fix),
+                    (b.start_offset, b.end_offset, b.message, b.fix),
+                    "style={style}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shared_walk_matches_standalone_trailing_comma_in_array_literal() {
+        let src = "x = [1, 2,]\n\
+                   y = [\n  1,\n  2,\n]\n\
+                   z = [\n  1,\n  2\n]\n\
+                   w = [1,\n     2]\n\
+                   v = %w[\n  a\n  b\n]\n\
+                   u = [\n  *rest\n]\n\
+                   t = [[1, 2,], [3],]\n";
+        for style in 0..=3u8 {
+            let (mut nums, lists) = default_packed();
+            nums[93] = style as i64;
+            let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+            let bundle = check_all_bundle(src.as_bytes(), &cfg);
+            let alone =
+                super::trailing_comma_in_array_literal::check_trailing_comma_in_array_literal(
+                    src.as_bytes(),
+                    &cfg.trailing_comma_in_array_literal,
+                );
+            assert_eq!(
+                bundle.trailing_comma_in_array_literal.len(),
+                alone.len(),
+                "len mismatch style={style}"
+            );
+            for (a, b) in bundle.trailing_comma_in_array_literal.iter().zip(&alone) {
                 assert_eq!(
                     (a.start_offset, a.end_offset, a.message, a.fix),
                     (b.start_offset, b.end_offset, b.message, b.fix),
@@ -2711,6 +3145,50 @@ mod tests {
                 (a.start_offset, a.end_offset, a.column_delta),
                 (b.start_offset, b.end_offset, b.column_delta)
             );
+        }
+    }
+
+    #[test]
+    fn if_unless_modifier_bundle_matches_standalone() {
+        // One "use modifier" candidate (with a first-line comment and a
+        // parenthesizing parent) and one "too long" candidate (with a
+        // comment-move rewrite), so both record shapes are compared.
+        let long = "a".repeat(110);
+        let src = format!(
+            "x = if a # note\n  b\nend\nfoo(arg) if {long}_cond\ny(z) if w # {long}\n"
+        );
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone = super::if_unless_modifier::check_if_unless_modifier(
+            src.as_bytes(),
+            cfg.if_unless_modifier,
+        );
+        assert_eq!(bundle.if_unless_modifier.len(), alone.len());
+        assert_eq!(alone.len(), 3);
+        for (a, b) in bundle.if_unless_modifier.iter().zip(&alone) {
+            assert_eq!(a.kind, b.kind);
+            assert_eq!(
+                (a.keyword_start, a.keyword_end, a.node_start, a.node_end),
+                (b.keyword_start, b.keyword_end, b.node_start, b.node_end)
+            );
+            assert_eq!(a.is_unless, b.is_unless);
+            assert_eq!(a.another_modifier_same_line, b.another_modifier_same_line);
+            assert_eq!(
+                (a.has_comment, a.comment_start, a.comment_end, a.has_code_after_end),
+                (b.has_comment, b.comment_start, b.comment_end, b.has_code_after_end)
+            );
+            assert_eq!(
+                (a.fits_no_comment, a.fits_with_comment),
+                (b.fits_no_comment, b.fits_with_comment)
+            );
+            assert_eq!(a.replacement_no_comment, b.replacement_no_comment);
+            assert_eq!(a.replacement_with_comment, b.replacement_with_comment);
+            assert_eq!(a.line_number, b.line_number);
+            assert_eq!(a.ops.len(), b.ops.len());
+            for (x, y) in a.ops.iter().zip(&b.ops) {
+                assert_eq!((x.kind, x.start, x.end, &x.text), (y.kind, y.start, y.end, &y.text));
+            }
         }
     }
 }

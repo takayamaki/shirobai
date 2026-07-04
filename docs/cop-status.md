@@ -4,14 +4,14 @@ This document tracks which RuboCop cops shirobai has reimplemented in Rust,
 and which cops were attempted but reverted because they did not meet the
 project's drop-in compatibility and speed requirements together.
 
-## Implemented (68 cops)
+## Implemented (76 cops)
 
 shirobai replaces these cops with Rust implementations.
 Every offense position, message, and autocorrected byte matches stock RuboCop
 on all five verification corpora (Mastodon, Discourse, Redmine, fluentd,
 and RuboCop itself).
 
-### Layout (36)
+### Layout (39)
 
 - `Layout/AccessModifierIndentation`
 - `Layout/ArgumentAlignment`
@@ -47,7 +47,10 @@ and RuboCop itself).
 - `Layout/MultilineOperationIndentation`
 - `Layout/SpaceAroundKeyword`
 - `Layout/SpaceAroundMethodCallOperator`
+- `Layout/SpaceBeforeBlockBraces`
+- `Layout/SpaceInsideArrayLiteralBrackets`
 - `Layout/SpaceInsideBlockBraces`
+- `Layout/SpaceInsideHashLiteralBraces`
 - `Layout/TrailingEmptyLines`
 
 ### Lint (9)
@@ -62,13 +65,15 @@ and RuboCop itself).
 - `Lint/UselessAccessModifier`
 - `Lint/Void`
 
-### Metrics (6)
+### Metrics (8)
 
 - `Metrics/AbcSize`
 - `Metrics/BlockLength`
 - `Metrics/BlockNesting`
+- `Metrics/ClassLength`
 - `Metrics/CyclomaticComplexity`
 - `Metrics/MethodLength`
+- `Metrics/ModuleLength`
 - `Metrics/PerceivedComplexity`
 
 ### Naming (3)
@@ -77,13 +82,14 @@ and RuboCop itself).
 - `Naming/PredicatePrefix`
 - `Naming/VariableNumber`
 
-### Style (14)
+### Style (17)
 
 - `Style/BlockDelimiters`
 - `Style/ColonMethodCall`
 - `Style/HashEachMethods`
 - `Style/HashSyntax`
 - `Style/HashTransformKeys`
+- `Style/IfUnlessModifier`
 - `Style/LineEndConcatenation`
 - `Style/NestedParenthesizedCalls`
 - `Style/PercentLiteralDelimiters`
@@ -93,6 +99,8 @@ and RuboCop itself).
 - `Style/StringLiterals`
 - `Style/StringLiteralsInInterpolation`
 - `Style/TrailingCommaInArguments`
+- `Style/TrailingCommaInArrayLiteral`
+- `Style/TrailingCommaInHashLiteral`
 
 ## Attempted but reverted
 

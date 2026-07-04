@@ -49,6 +49,7 @@ module VendorSpecHelper
 
     header_end = source.index("\n", first_line) + 1
     body = source[header_end..].sub(/\nend\s*\z/, "\n")
+    lineno = source[0...header_end].count("\n") + 1
 
     unless pending.empty?
       patterns = Array(pending)
@@ -60,13 +61,23 @@ module VendorSpecHelper
       end
     end
 
-    lineno = source[0...header_end].count("\n") + 1
-    # `class_eval` so any `def helper(...)` in the vendor spec body becomes an
-    # instance method on the example group (callable from inside `it` blocks).
-    # `instance_eval` defines them on the example group's singleton class,
-    # which examples cannot reach (we hit this with
-    # `vendor/rubocop/spec/rubocop/cop/lint/unreachable_code_spec.rb`'s
-    # `def wrap(str)` helper).
-    example_group.class_eval(body, full_path, lineno)
+    class_eval_without_leaky_locals(example_group, body, full_path, lineno)
+  end
+
+  # `class_eval` so any `def helper(...)` in the vendor spec body becomes an
+  # instance method on the example group (callable from inside `it` blocks).
+  # `instance_eval` defines them on the example group's singleton class,
+  # which examples cannot reach (we hit this with
+  # `vendor/rubocop/spec/rubocop/cop/lint/unreachable_code_spec.rb`'s
+  # `def wrap(str)` helper).
+  #
+  # A separate method with mangled parameter names: `class_eval(string)`
+  # exposes the caller's LOCAL variables to the evaluated code, and locals
+  # shadow `let` methods inside the vendor examples. `load_vendor_spec`'s
+  # own `source` / `body` locals used to shadow the same-named `let`s of
+  # `if_unless_modifier_spec.rb`, feeding the whole spec file to
+  # `expect_offense`.
+  def self.class_eval_without_leaky_locals(__example_group, __body, __path, __lineno)
+    __example_group.class_eval(__body, __path, __lineno)
   end
 end

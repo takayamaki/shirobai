@@ -69,6 +69,27 @@ fn map_method_length(
         .collect()
 }
 
+/// `Metrics/ClassLength` per-class results: `[start, end, head_end, length,
+/// sclass]`. The Ruby wrapper builds the message and skips `sclass`
+/// candidates in LSP mode (stock errors out on those instead of reporting).
+fn map_class_length(
+    v: Vec<shirobai_core::rules::class_length::ClassLengthCandidate>,
+) -> Vec<(usize, usize, usize, usize, bool)> {
+    v.into_iter()
+        .map(|c| (c.start_offset, c.end_offset, c.head_end, c.length, c.sclass))
+        .collect()
+}
+
+/// `Metrics/ModuleLength` per-module results: `[start, end, head_end,
+/// length]`. The Ruby wrapper builds the message.
+fn map_module_length(
+    v: Vec<shirobai_core::rules::module_length::ModuleLengthCandidate>,
+) -> Vec<(usize, usize, usize, usize)> {
+    v.into_iter()
+        .map(|c| (c.start_offset, c.end_offset, c.head_end, c.length))
+        .collect()
+}
+
 fn map_block_nesting(
     (offenses, deepest): (
         Vec<shirobai_core::rules::block_nesting::BlockNestingOffense>,
@@ -474,6 +495,17 @@ fn map_trailing_comma_in_arguments(
         .collect()
 }
 
+/// `Style/TrailingCommaInHashLiteral` / `Style/TrailingCommaInArrayLiteral`
+/// records, same wire shape as `map_trailing_comma_in_arguments`: `[start,
+/// end, message, fix]`.
+fn map_trailing_comma_literal(
+    v: Vec<shirobai_core::rules::trailing_comma::TrailingCommaOffense>,
+) -> Vec<(usize, usize, u8, u8)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.message, o.fix))
+        .collect()
+}
+
 /// `Layout/TrailingEmptyLines`: at most one record per file, flattened to a
 /// `Vec` of length 0 or 1. Each entry is `[report_start, report_end, ac_start,
 /// ac_end, replacement, blank_lines]`: Ruby reports the caret range
@@ -670,6 +702,89 @@ fn map_space_inside_block_braces(
     v.into_iter()
         .map(|o| (o.start_offset, o.end_offset, o.message.code()))
         .collect()
+}
+
+/// `Layout/SpaceInsideHashLiteralBraces`: `[[start, end, message_code], ...]`
+/// — `[start, end)` is the offense range stock reports (also the autocorrect
+/// anchor); `message_code` selects the fixed message (0 `{` missing, 1 `{`
+/// detected, 2 `}` missing, 3 `}` detected, 4 empty missing, 5 empty
+/// detected). The wrapper derives the corrector from the live `range.source`
+/// like stock (whitespace: remove, `{`: insert after, else insert before).
+fn map_space_inside_hash_literal_braces(
+    v: Vec<
+        shirobai_core::rules::space_inside_hash_literal_braces::SpaceInsideHashLiteralBracesOffense,
+    >,
+) -> Vec<(usize, usize, u8)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.message.code()))
+        .collect()
+}
+
+/// `Layout/SpaceInsideArrayLiteralBrackets`:
+/// `[[[start, end, message_code, node, suppress], ...], [[[op, s, e], ...], ...]]`
+/// — the first array is the offenses (`message_code`: 0 use, 1 do-not-use,
+/// 2 use-one-empty, 3 do-not-use-empty; `node` indexes the second array;
+/// `suppress` drops the offense under `--disable-uncorrectable`), the second
+/// is the per-node corrector program (`op`: 0 `remove [s, e)`, 1
+/// `insert_after` a space at range `[s, e)`, 2 `insert_before`). The wrapper
+/// replays a node's program on its first offense (stock's `ignore_node`
+/// grouping).
+#[allow(clippy::type_complexity)]
+fn map_space_inside_array_literal_brackets(
+    r: shirobai_core::rules::space_inside_array_literal_brackets::ArrayBracketsResult,
+) -> (
+    Vec<(usize, usize, u8, usize, bool)>,
+    Vec<Vec<(u8, usize, usize)>>,
+) {
+    (
+        r.offenses
+            .into_iter()
+            .map(|o| {
+                (
+                    o.start_offset,
+                    o.end_offset,
+                    o.message.code(),
+                    o.node,
+                    o.suppress_when_disable_uncorrectable,
+                )
+            })
+            .collect(),
+        r.node_ops
+            .into_iter()
+            .map(|ops| {
+                ops.into_iter()
+                    .map(shirobai_core::rules::space_inside_array_literal_brackets::Op::packed)
+                    .collect()
+            })
+            .collect(),
+    )
+}
+
+/// `Layout/SpaceBeforeBlockBraces`:
+/// `[[[start, end, detected, from_empty], ...], [a_correct, b_match_first,
+/// b_offense, b_match_after, saw_empty]]` — the offenses (range +
+/// message/axis selectors) plus the five-flag style-detection summary the
+/// wrapper replays into `config_to_allow_offenses` (see the rule docs).
+#[allow(clippy::type_complexity)]
+fn map_space_before_block_braces(
+    r: shirobai_core::rules::space_before_block_braces::SpaceBeforeBlockBracesResult,
+) -> (
+    Vec<(usize, usize, bool, bool)>,
+    (bool, bool, bool, bool, bool),
+) {
+    (
+        r.offenses
+            .into_iter()
+            .map(|o| (o.start_offset, o.end_offset, o.detected, o.from_empty))
+            .collect(),
+        (
+            r.summary.a_correct,
+            r.summary.b_match_first,
+            r.summary.b_offense,
+            r.summary.b_match_after,
+            r.summary.saw_empty,
+        ),
+    )
 }
 
 /// `Layout/EndAlignment`: `[[end_start, end_end, matching, message, align_column], ...]`
@@ -1116,7 +1231,12 @@ fn register_bundle_config(
 /// 62 ambiguous_block_association /
 /// 63 empty_line_after_guard_clause /
 /// 64 empty_comment / 65 empty_line_after_magic_comment /
-/// 66 empty_lines / 67 leading_empty_lines
+/// 66 empty_lines / 67 leading_empty_lines /
+/// 68 class_length / 69 module_length /
+/// 70 trailing_comma_in_hash_literal / 71 trailing_comma_in_array_literal /
+/// 72 space_inside_hash_literal_braces /
+/// 73 space_inside_array_literal_brackets / 74 space_before_block_braces /
+/// 75 if_unless_modifier
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1127,7 +1247,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(68);
+        let ary = ruby.ary_new_capa(76);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -1230,6 +1350,18 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ))?;
         ary.push(map_empty_lines_offenses(r.empty_lines))?;
         ary.push(map_leading_empty_lines(r.leading_empty_lines))?;
+        ary.push(map_class_length(r.class_length))?;
+        ary.push(map_module_length(r.module_length))?;
+        ary.push(map_trailing_comma_literal(r.trailing_comma_in_hash_literal))?;
+        ary.push(map_trailing_comma_literal(r.trailing_comma_in_array_literal))?;
+        ary.push(map_space_inside_hash_literal_braces(
+            r.space_inside_hash_literal_braces,
+        ))?;
+        ary.push(map_space_inside_array_literal_brackets(
+            r.space_inside_array_literal_brackets,
+        ))?;
+        ary.push(map_space_before_block_braces(r.space_before_block_braces))?;
+        ary.push(map_if_unless_modifier(r.if_unless_modifier))?;
         Ok(ary)
     })
 }
@@ -1305,6 +1437,68 @@ fn map_leading_empty_lines(
         .collect()
 }
 
+type IfUnlessModifierOps = Vec<(u8, usize, usize, String)>;
+
+/// `Style/IfUnlessModifier` candidates: `[kind, kw_start, kw_end, node_start,
+/// node_end, flags, comment_start, comment_end, replacement_no_comment,
+/// replacement_with_comment, line_number, ops]`, in walk order.
+///
+/// `kind`: 0 = "use modifier", 1 = "too long". `flags` bits: 1 unless-keyword
+/// / 2 another_modifier_if_on_same_line / 4 has first-line comment / 8 code
+/// after `end` / 16 fits without comment / 32 fits with comment. `ops` are
+/// `[op_kind, start, end, text]` with 0 = replace, 1 = remove (direction 2).
+#[allow(clippy::type_complexity)]
+fn map_if_unless_modifier(
+    v: Vec<shirobai_core::rules::if_unless_modifier::IfUnlessModifierCandidate>,
+) -> Vec<(u8, usize, usize, usize, usize, u8, usize, usize, String, String, usize, IfUnlessModifierOps)> {
+    v.into_iter()
+        .map(|c| {
+            let flags = u8::from(c.is_unless)
+                | (u8::from(c.another_modifier_same_line) << 1)
+                | (u8::from(c.has_comment) << 2)
+                | (u8::from(c.has_code_after_end) << 3)
+                | (u8::from(c.fits_no_comment) << 4)
+                | (u8::from(c.fits_with_comment) << 5);
+            let ops = c
+                .ops
+                .into_iter()
+                .map(|op| (op.kind, op.start, op.end, op.text))
+                .collect();
+            (
+                c.kind,
+                c.keyword_start,
+                c.keyword_end,
+                c.node_start,
+                c.node_end,
+                flags,
+                c.comment_start,
+                c.comment_end,
+                c.replacement_no_comment,
+                c.replacement_with_comment,
+                c.line_number,
+                ops,
+            )
+        })
+        .collect()
+}
+
+/// Standalone `Style/IfUnlessModifier` (fallback when the bundle path is not
+/// usable, e.g. CRLF/BOM sources scanned via `buffer.source`). `nums` is
+/// `[max_line_length (-1 = Layout/LineLength disabled), tab_width]`.
+#[allow(clippy::type_complexity)]
+fn check_if_unless_modifier(
+    source: RString,
+    nums: Vec<i64>,
+) -> Vec<(u8, usize, usize, usize, usize, u8, usize, usize, String, String, usize, IfUnlessModifierOps)> {
+    let cfg = shirobai_core::rules::if_unless_modifier::Config {
+        max_line_length: if nums[0] < 0 { None } else { Some(nums[0]) },
+        tab_width: nums[1],
+    };
+    map_if_unless_modifier(
+        shirobai_core::rules::if_unless_modifier::check_if_unless_modifier(bytes(&source), cfg),
+    )
+}
+
 /// Ruby entry point for `Lint/Debugger`. Takes the source, the flattened
 /// `DebuggerMethods` list and the flattened `DebuggerRequires` list, and
 /// returns `[[start_offset, end_offset], ...]`.
@@ -1355,6 +1549,40 @@ fn check_method_length(
     count_as_one: Vec<String>,
 ) -> Vec<(usize, usize, usize, usize, String, bool)> {
     map_method_length(shirobai_core::rules::method_length::check_method_length(
+        bytes(&source),
+        max,
+        count_comments,
+        &count_as_one,
+    ))
+}
+
+/// Ruby entry point for `Metrics/ClassLength`. Returns one entry per class
+/// definition whose measured length exceeds `max`: `[[start, end, head_end,
+/// length, sclass], ...]`.
+fn check_class_length(
+    source: RString,
+    max: usize,
+    count_comments: bool,
+    count_as_one: Vec<String>,
+) -> Vec<(usize, usize, usize, usize, bool)> {
+    map_class_length(shirobai_core::rules::class_length::check_class_length(
+        bytes(&source),
+        max,
+        count_comments,
+        &count_as_one,
+    ))
+}
+
+/// Ruby entry point for `Metrics/ModuleLength`. Returns one entry per module
+/// definition whose measured length exceeds `max`: `[[start, end, head_end,
+/// length], ...]`.
+fn check_module_length(
+    source: RString,
+    max: usize,
+    count_comments: bool,
+    count_as_one: Vec<String>,
+) -> Vec<(usize, usize, usize, usize)> {
+    map_module_length(shirobai_core::rules::module_length::check_module_length(
         bytes(&source),
         max,
         count_comments,
@@ -1876,6 +2104,42 @@ fn check_trailing_comma_in_arguments(
     )
 }
 
+/// Ruby entry point for `Style/TrailingCommaInHashLiteral`. Takes the source
+/// and the packed config nums (`[style]`). Returns one entry per record (see
+/// `map_trailing_comma_literal`).
+fn check_trailing_comma_in_hash_literal(
+    source: RString,
+    nums: Vec<i64>,
+) -> Vec<(usize, usize, u8, u8)> {
+    let cfg = shirobai_core::rules::trailing_comma::Config {
+        style: nums[0] as u8,
+    };
+    map_trailing_comma_literal(
+        shirobai_core::rules::trailing_comma_in_hash_literal::check_trailing_comma_in_hash_literal(
+            bytes(&source),
+            &cfg,
+        ),
+    )
+}
+
+/// Ruby entry point for `Style/TrailingCommaInArrayLiteral`. Takes the source
+/// and the packed config nums (`[style]`). Returns one entry per record (see
+/// `map_trailing_comma_literal`).
+fn check_trailing_comma_in_array_literal(
+    source: RString,
+    nums: Vec<i64>,
+) -> Vec<(usize, usize, u8, u8)> {
+    let cfg = shirobai_core::rules::trailing_comma::Config {
+        style: nums[0] as u8,
+    };
+    map_trailing_comma_literal(
+        shirobai_core::rules::trailing_comma_in_array_literal::check_trailing_comma_in_array_literal(
+            bytes(&source),
+            &cfg,
+        ),
+    )
+}
+
 /// Ruby entry point for `Layout/TrailingEmptyLines`. Takes the source and the
 /// packed config nums (`[style]`: 0 final_newline, 1 final_blank_line). Returns
 /// a 0-or-1-element Vec (see `map_trailing_empty_lines`).
@@ -2215,6 +2479,90 @@ fn check_space_inside_block_braces(
         space_before_block_parameters: sbbp,
     };
     map_space_inside_block_braces(sibb::check_space_inside_block_braces(bytes(&source), cfg))
+}
+
+/// Ruby entry point for `Layout/SpaceInsideHashLiteralBraces` (the bundle is
+/// the usual path). `style` is 0 = space, 1 = no_space, 2 = compact;
+/// `no_space_empty` is `EnforcedStyleForEmptyBraces == 'no_space'`. Returns
+/// the shape documented on `map_space_inside_hash_literal_braces`.
+fn check_space_inside_hash_literal_braces(
+    source: RString,
+    style: u8,
+    no_space_empty: bool,
+) -> Vec<(usize, usize, u8)> {
+    use shirobai_core::rules::space_inside_hash_literal_braces as sihlb;
+    let cfg = sihlb::Config {
+        style: match style {
+            1 => sihlb::Style::NoSpace,
+            2 => sihlb::Style::Compact,
+            _ => sihlb::Style::Space,
+        },
+        no_space_empty,
+    };
+    map_space_inside_hash_literal_braces(sihlb::check_space_inside_hash_literal_braces(
+        bytes(&source),
+        cfg,
+    ))
+}
+
+/// Ruby entry point for `Layout/SpaceInsideArrayLiteralBrackets` (the bundle
+/// is the usual path). `style` is 0 = no_space, 1 = space, 2 = compact;
+/// `space_empty` is `EnforcedStyleForEmptyBrackets == 'space'`. Returns the
+/// shape documented on `map_space_inside_array_literal_brackets`.
+#[allow(clippy::type_complexity)]
+fn check_space_inside_array_literal_brackets(
+    source: RString,
+    style: u8,
+    space_empty: bool,
+) -> (
+    Vec<(usize, usize, u8, usize, bool)>,
+    Vec<Vec<(u8, usize, usize)>>,
+) {
+    use shirobai_core::rules::space_inside_array_literal_brackets as sialb;
+    let cfg = sialb::Config {
+        style: match style {
+            1 => sialb::Style::Space,
+            2 => sialb::Style::Compact,
+            _ => sialb::Style::NoSpace,
+        },
+        space_empty,
+    };
+    map_space_inside_array_literal_brackets(sialb::check_space_inside_array_literal_brackets(
+        bytes(&source),
+        cfg,
+    ))
+}
+
+/// Ruby entry point for `Layout/SpaceBeforeBlockBraces` (the bundle is the
+/// usual path). `style` is 0 = space, 1 = no_space; `empty_style` is the
+/// resolved `EnforcedStyleForEmptyBraces` (0 space, 1 no_space, 2 invalid);
+/// `bd_line_count_based` is `Style/BlockDelimiters`' conflict flag. Returns
+/// the shape documented on `map_space_before_block_braces`.
+#[allow(clippy::type_complexity)]
+fn check_space_before_block_braces(
+    source: RString,
+    style: u8,
+    empty_style: u8,
+    bd_line_count_based: bool,
+) -> (
+    Vec<(usize, usize, bool, bool)>,
+    (bool, bool, bool, bool, bool),
+) {
+    use shirobai_core::rules::space_before_block_braces as sbbb;
+    let cfg = sbbb::Config {
+        style: if style != 0 {
+            sbbb::Style::NoSpace
+        } else {
+            sbbb::Style::Space
+        },
+        empty_style: match empty_style {
+            1 => sbbb::EmptyStyle::NoSpace,
+            2 => sbbb::EmptyStyle::Invalid,
+            _ => sbbb::EmptyStyle::Space,
+        },
+        bd_line_count_based,
+    };
+    map_space_before_block_braces(sbbb::check_space_before_block_braces(bytes(&source), cfg))
 }
 
 /// Ruby entry point for `Layout/EndAlignment`. `style` is the
@@ -2580,6 +2928,8 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function("check_debugger", function!(check_debugger, 3))?;
     module.define_module_function("check_block_length", function!(check_block_length, 6))?;
     module.define_module_function("check_method_length", function!(check_method_length, 4))?;
+    module.define_module_function("check_class_length", function!(check_class_length, 4))?;
+    module.define_module_function("check_module_length", function!(check_module_length, 4))?;
     module.define_module_function("check_complexity", function!(check_complexity, 3))?;
     module.define_module_function("check_abc_size", function!(check_abc_size, 3))?;
     module.define_module_function("check_block_nesting", function!(check_block_nesting, 4))?;
@@ -2641,6 +2991,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         function!(check_empty_line_after_guard_clause, 1),
     )?;
     module.define_module_function(
+        "check_if_unless_modifier",
+        function!(check_if_unless_modifier, 2),
+    )?;
+    module.define_module_function(
         "check_empty_comment",
         function!(check_empty_comment, 3),
     )?;
@@ -2667,6 +3021,18 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_space_inside_block_braces",
         function!(check_space_inside_block_braces, 4),
+    )?;
+    module.define_module_function(
+        "check_space_inside_hash_literal_braces",
+        function!(check_space_inside_hash_literal_braces, 3),
+    )?;
+    module.define_module_function(
+        "check_space_inside_array_literal_brackets",
+        function!(check_space_inside_array_literal_brackets, 3),
+    )?;
+    module.define_module_function(
+        "check_space_before_block_braces",
+        function!(check_space_before_block_braces, 4),
     )?;
     module.define_module_function("check_end_alignment", function!(check_end_alignment, 2))?;
     module.define_module_function(
@@ -2781,6 +3147,14 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_trailing_comma_in_arguments",
         function!(check_trailing_comma_in_arguments, 2),
+    )?;
+    module.define_module_function(
+        "check_trailing_comma_in_hash_literal",
+        function!(check_trailing_comma_in_hash_literal, 2),
+    )?;
+    module.define_module_function(
+        "check_trailing_comma_in_array_literal",
+        function!(check_trailing_comma_in_array_literal, 2),
     )?;
     module.define_module_function(
         "check_trailing_empty_lines",

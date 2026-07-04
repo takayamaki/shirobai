@@ -123,6 +123,11 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     "Metrics/PerceivedComplexity" => "def m\n#{(1..9).map { |i| "  x#{i} if c#{i}\n" }.join}end\n",
     # start/fin/head_end (default Max 17, so 18 assignments => vector <18, 0, 0>).
     "Metrics/AbcSize" => "def m\n#{(1..18).map { |i| "  v#{i} = #{i}\n" }.join}end\n",
+    # start/fin/head_end (default Max 100 => 101 counted lines; no autocorrect).
+    "Metrics/ClassLength" => "class Test\n#{"  x = 1\n" * 101}end\n",
+    # start/fin/head_end for the module and the `Foo = Module.new do` name range.
+    "Metrics/ModuleLength" =>
+      "module Test\n#{"  x = 1\n" * 101}end\nFoo = Module.new do\n#{"  x = 1\n" * 101}end\n",
     # start/fin (fb_start/fb_end are covered by the forbidden-identifier case below).
     "Naming/MethodName" => "def fooBar; end\n",
     # start/fin.
@@ -198,6 +203,12 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # caret range and a removal corrector; both offsets sit after the multibyte
     # comment, so the byte->char conversion must shift them.
     "Style/TrailingCommaInArguments" => "some_method(あ, い,)\n",
+    # Same `avoid_comma` shape on a braced hash literal: the caret range and
+    # the removal corrector both sit after multibyte keys/values, so every
+    # offset must be byte->char converted.
+    "Style/TrailingCommaInHashLiteral" => "h = { a: \"あ\", b: \"い\", }\n",
+    # Same `avoid_comma` shape on an array literal with multibyte elements.
+    "Style/TrailingCommaInArrayLiteral" => "x = [\"あ\", \"い\",]\n",
     # The offending interpolation-internal string node range plus the autocorrect
     # replacement, all shifted by the multibyte comment. The inner string content
     # is itself multibyte, so the wrapper's `to_string_literal` on the decoded
@@ -223,6 +234,17 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # body, so their byte offsets are shifted ahead of the char offsets and must
     # be converted; both spaces are inserted under the default `space` style.
     "Layout/SpaceInsideBlockBraces" => "foo.each {puts 日本語}\n",
+    # Both brace offenses (the `{` and `}` anchors of the insert correctors)
+    # sit after the multibyte comment and the hash value is itself multibyte,
+    # so every offense/corrector byte offset must be converted.
+    "Layout/SpaceInsideHashLiteralBraces" => "h = {a: \"日本語\", b: 2}\n",
+    # The two space-run offense ranges and the node's removal corrector
+    # ranges all sit after the multibyte comment with multibyte elements
+    # between them, so the byte offsets must be converted.
+    "Layout/SpaceInsideArrayLiteralBrackets" => "a = [ \"日本語\", 2 ]\n",
+    # The `{` offense range (also the `insert_before` anchor) sits after the
+    # multibyte comment and after a multibyte receiver on the same line.
+    "Layout/SpaceBeforeBlockBraces" => "あいう.each{ puts 1 }\n",
     # Predicate-style call with an `&&` argument: the whole-call offense range
     # sits after the multibyte comment, so the byte offsets must be converted
     # to character offsets. No autocorrect, so no other ranges to check.
@@ -335,12 +357,17 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # both sit after the multibyte prefix, so the byte->char conversion runs
     # on every offset Rust returns.
     "Layout/EmptyLines" =>
-      "a = 1\n\n\nb = 2\n"
+      "a = 1\n\n\nb = 2\n",
     # NOTE: `Layout/LeadingEmptyLines` does not appear in this synthetic
     # `prefix + body` sweep — the shared prefix puts a comment on line 1,
     # which IS a token, so the cop never fires once prepended. The cop's
     # byte→char path still gets non-ASCII coverage from the fileutils.rb
     # sweep below (which uses the cop's own multibyte first token).
+    # keyword offense range + node replace range and the Rust-built
+    # replacement text (multibyte body slice), both directions.
+    "Style/IfUnlessModifier" =>
+      "if condition\n  do_stuff(\"あいう\")\nend\n" \
+      "foo_bar(\"えお\") if #{"a" * 100}_condition\n",
   }
 
   cases.each do |cop_name, body|
