@@ -35,7 +35,7 @@ use super::{
     percent_literal_delimiters,
     perf_detect, perf_end_with, perf_start_with, perf_string_include, perf_times_map,
     predicate_prefix, punctuation_spacing, redundant_self, redundant_self_assignment,
-    require_parentheses, safe_navigation_chain, self_assignment,
+    require_parentheses, rspec_language, safe_navigation_chain, self_assignment,
     space_around_keyword, space_around_method_call_operator, space_before_block_braces,
     space_before_first_arg,
     space_inside_array_literal_brackets, space_inside_block_braces,
@@ -72,9 +72,9 @@ pub fn check_multiline_bundle(
 ///
 /// Built from the per-origin wire format via [`BundleConfig::from_packed`]:
 /// `nums` and `lists` are one sub-array per origin (outer index
-/// [`ORIGIN_CORE`] = 0, [`ORIGIN_PERFORMANCE`] = 1, mirroring
-/// `Shirobai::Dispatch::ORIGINS`), so one origin's segment can grow without
-/// shifting any other origin's offsets. This is the single place that
+/// [`ORIGIN_CORE`] = 0, [`ORIGIN_PERFORMANCE`] = 1, [`ORIGIN_RSPEC`] = 2,
+/// mirroring `Shirobai::Dispatch::ORIGINS`), so one origin's segment can grow
+/// without shifting any other origin's offsets. This is the single place that
 /// documents each segment's packing order; the Ruby side
 /// (`Shirobai::Dispatch.packed_config`) assembles the same structure.
 ///
@@ -214,6 +214,32 @@ pub fn check_multiline_bundle(
 /// packer on `Shirobai::Dispatch.register_plugin_packer(:performance)` that
 /// fills real values and flips `performance_enabled`.
 ///
+/// RSpec segment `nums[2]` (the shirobai-rspec plugin origin):
+///
+/// | idx | field |
+/// |-----|-------|
+/// |  0  | rspec_enabled — the plugin gem's wake-up flag. `0` keeps every RSpec rule out of the walk and its slots empty. Unlike performance this flag is also per-file: the rspec origin is gated on the RSpec department's Include/Exclude, so non-spec files use a token whose rspec segment is dormant (`Shirobai::Dispatch` registers one token per (config, active-origin set)) |
+///
+/// RSpec segment `lists[2]`: the sixteen `RSpec/Language` role lists in
+/// [`rspec_language`] wire order —
+///
+/// | idx | field |
+/// |-----|-------|
+/// |  0..2  | ExampleGroups Regular / Focused / Skipped |
+/// |  3..6  | Examples Regular / Focused / Skipped / Pending |
+/// |  7  | Expectations |
+/// |  8  | Helpers |
+/// |  9  | Hooks |
+/// | 10  | ErrorMatchers |
+/// | 11..12 | Includes Examples / Context |
+/// | 13..14 | SharedGroups Examples / Context |
+/// | 15  | Subjects |
+///
+/// The values come from the resolved `config['RSpec']['Language']` hash
+/// (RuboCop's config layer has already applied `inherit_mode: merge`); the
+/// packer flattens, it never merges. The dormant rspec segment is `[0]` plus
+/// sixteen empty lists.
+///
 /// `Layout/IndentationWidth`'s `allowed_lines` and `prior_ranges` are fixed to
 /// empty in the bundle: the non-empty cases (configured `AllowedPatterns`,
 /// autocorrect re-passes) take the per-cop fallback path on the Ruby side.
@@ -319,6 +345,12 @@ pub struct BundleConfig {
     /// Performance rules out of the shared walk entirely — their slots are
     /// pushed as empty arrays that no wrapper cop ever reads.
     pub performance: Option<PerformanceConfig>,
+    /// `Some` only when the shirobai-rspec plugin gem is loaded AND the file
+    /// being checked is an RSpec-relevant file (`rspec_enabled` num is 1 —
+    /// the Ruby side packs a dormant rspec segment into the token it uses
+    /// for non-spec files). `None` keeps the RSpec rules out of the shared
+    /// walk entirely.
+    pub rspec: Option<rspec_language::RSpecConfig>,
 }
 
 /// Packed configuration for the shirobai-performance plugin cops.
@@ -340,16 +372,20 @@ pub struct PerformanceConfig {
 
 /// Fixed origin order of the packed config and of the `check_all` result
 /// slots: outer index 0 is the core batch, 1 the shirobai-performance
-/// plugin. Mirrors `Shirobai::Dispatch::ORIGINS` on the Ruby side; adding a
-/// plugin origin means one entry there and one constant (plus lengths) here.
+/// plugin, 2 the shirobai-rspec plugin. Mirrors `Shirobai::Dispatch::ORIGINS`
+/// on the Ruby side; adding a plugin origin means one entry there and one
+/// constant (plus lengths) here.
 pub const ORIGIN_CORE: usize = 0;
 pub const ORIGIN_PERFORMANCE: usize = 1;
-pub const N_ORIGINS: usize = 2;
+pub const ORIGIN_RSPEC: usize = 2;
+pub const N_ORIGINS: usize = 3;
 
 const CORE_NUMS_LEN: usize = 114;
 const CORE_LISTS_LEN: usize = 25;
 const PERF_NUMS_LEN: usize = 3;
 const PERF_LISTS_LEN: usize = 1;
+const RSPEC_NUMS_LEN: usize = 1;
+const RSPEC_LISTS_LEN: usize = rspec_language::N_ROLE_LISTS;
 
 impl BundleConfig {
     /// Build a config from the per-origin wire format (see the struct docs
@@ -387,9 +423,17 @@ impl BundleConfig {
                 perf_nums.len()
             ));
         }
+        let rspec_nums = &packed_nums[ORIGIN_RSPEC];
+        if rspec_nums.len() != RSPEC_NUMS_LEN {
+            return Err(format!(
+                "rspec segment expects {RSPEC_NUMS_LEN} nums, got {}",
+                rspec_nums.len()
+            ));
+        }
         let mut segments = packed_lists.into_iter();
         let core_lists = segments.next().expect("length checked above");
         let perf_lists = segments.next().expect("length checked above");
+        let rspec_lists = segments.next().expect("length checked above");
         if core_lists.len() != CORE_LISTS_LEN {
             return Err(format!(
                 "core segment expects {CORE_LISTS_LEN} lists, got {}",
@@ -400,6 +444,12 @@ impl BundleConfig {
             return Err(format!(
                 "performance segment expects {PERF_LISTS_LEN} lists, got {}",
                 perf_lists.len()
+            ));
+        }
+        if rspec_lists.len() != RSPEC_LISTS_LEN {
+            return Err(format!(
+                "rspec segment expects {RSPEC_LISTS_LEN} lists, got {}",
+                rspec_lists.len()
             ));
         }
         let mut lists = core_lists.into_iter();
@@ -658,6 +708,14 @@ impl BundleConfig {
                         end_with_safe_multiline: perf_nums[1] != 0,
                         start_with_safe_multiline: perf_nums[2] != 0,
                     })
+                } else {
+                    None
+                }
+            },
+            // The shirobai-rspec origin, read from its own segment.
+            rspec: {
+                if rspec_nums[0] != 0 {
+                    Some(rspec_language::RSpecConfig::from_role_lists(&rspec_lists)?)
                 } else {
                     None
                 }
@@ -1486,7 +1544,14 @@ mod tests {
         // (`PreferredMethods['detect']` resolves to `find`).
         let perf_nums = vec![1, 1, 1];
         let perf_lists = vec![vec!["find".to_string()]];
-        (vec![nums, perf_nums], vec![lists, perf_lists])
+        // RSpec segment (origin 2): enabled, with the rubocop-rspec 3.10.2
+        // default Language lists.
+        let rspec_nums = vec![1];
+        let rspec_lists = rspec_language::tests::default_role_lists();
+        (
+            vec![nums, perf_nums, rspec_nums],
+            vec![lists, perf_lists, rspec_lists],
+        )
     }
 
     #[test]
@@ -1547,6 +1612,27 @@ mod tests {
         let bundle = check_all_bundle(src.as_bytes(), &cfg);
         assert!(bundle.perf_detect.is_empty());
         assert!(bundle.perf_string_include.is_empty());
+    }
+
+    #[test]
+    fn from_packed_reads_rspec_segment() {
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let rspec = cfg.rspec.expect("enabled in default_packed");
+        use super::rspec_language::roles;
+        assert_eq!(rspec.roles_of(b"describe"), roles::EG_REGULAR);
+        assert_eq!(rspec.roles_of(b"let!"), roles::HELPERS);
+    }
+
+    #[test]
+    fn dormant_rspec_segment_stays_off() {
+        // A token packed with `rspec_enabled = 0` (core-only install, or the
+        // per-file gate saying "not a spec file") must not build the RSpec
+        // role table at all.
+        let (mut nums, lists) = default_packed();
+        nums[2][0] = 0;
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        assert!(cfg.rspec.is_none());
     }
 
     /// `Performance/StringInclude` merged into the shared walk must report
@@ -1706,6 +1792,13 @@ mod tests {
         assert!(BundleConfig::from_packed(&nums, lists).is_err());
         let (nums, mut lists) = default_packed();
         lists[1].pop();
+        assert!(BundleConfig::from_packed(&nums, lists).is_err());
+        // Wrong length inside the rspec segment.
+        let (mut nums, lists) = default_packed();
+        nums[2].pop();
+        assert!(BundleConfig::from_packed(&nums, lists).is_err());
+        let (nums, mut lists) = default_packed();
+        lists[2].pop();
         assert!(BundleConfig::from_packed(&nums, lists).is_err());
     }
 

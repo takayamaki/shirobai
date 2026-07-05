@@ -1283,8 +1283,9 @@ thread_local! {
 
 /// Ruby entry point registering a packed [`BundleConfig`] for `check_all`.
 /// `nums` / `lists` carry one sub-array per origin (core first, then the
-/// shirobai-performance plugin), following the per-origin packing order
-/// documented on `BundleConfig`. Returns the token to pass to `check_all`.
+/// shirobai-performance plugin, then shirobai-rspec), following the
+/// per-origin packing order documented on `BundleConfig`. Returns the token
+/// to pass to `check_all`.
 fn register_bundle_config(
     ruby: &Ruby,
     nums: Vec<Vec<i64>>,
@@ -1357,6 +1358,11 @@ fn register_bundle_config(
 ///
 /// 0 perf_detect / 1 perf_string_include / 2 perf_end_with /
 /// 3 perf_start_with / 4 perf_times_map
+///
+/// RSpec slots (origin 2; empty until RSpec cops are implemented — the
+/// origin itself is wired so the segment order is fixed):
+///
+/// (none yet)
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1507,11 +1513,15 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         perf.push(map_perf_end_with(r.perf_end_with))?;
         perf.push(map_perf_start_with(r.perf_start_with))?;
         perf.push(map_perf_times_map(r.perf_times_map))?;
+        // RSpec origin (result[2]); rule slots land here as RSpec cops are
+        // implemented.
+        let rspec = ruby.ary_new_capa(0);
         // The nested result is N_ORIGINS + 1 arrays per file (the outer
         // one plus one per origin), nothing per cop.
-        let out = ruby.ary_new_capa(2);
+        let out = ruby.ary_new_capa(3);
         out.push(ary)?;
         out.push(perf)?;
+        out.push(rspec)?;
         Ok(out)
     })
 }

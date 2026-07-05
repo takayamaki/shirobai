@@ -65,6 +65,7 @@ pub mod punctuation_spacing;
 pub mod redundant_self;
 pub mod redundant_self_assignment;
 pub mod require_parentheses;
+pub mod rspec_language;
 pub mod safe_navigation_chain;
 pub mod self_assignment;
 pub mod space_around_keyword;

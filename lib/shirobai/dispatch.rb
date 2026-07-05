@@ -15,11 +15,12 @@ module Shirobai
   module Dispatch
     # Origin order of the `Shirobai.check_all` result Array and of the packed
     # config segments: outer index 0 is the core batch, 1 the
-    # shirobai-performance plugin, and so on. Mirrors the origin constants in
+    # shirobai-performance plugin, 2 the shirobai-rspec plugin, and so on.
+    # Mirrors the origin constants in
     # `crates/shirobai-core/src/rules/bundle.rs` (`ORIGIN_*` / `N_ORIGINS`);
     # adding a plugin means one entry here and one constant there — that pair
     # of one-line edits is the only place plugin batches can conflict.
-    ORIGINS = %i[core performance].freeze
+    ORIGINS = %i[core performance rspec].freeze
 
     # `[origin, rule]` slot pairs into the `Shirobai.check_all` result
     # (`result[origin][rule]`). The rule order within each origin mirrors the
@@ -124,15 +125,22 @@ module Shirobai
       perf_end_with: [1, 2].freeze,
       perf_start_with: [1, 3].freeze,
       perf_times_map: [1, 4].freeze
+      # shirobai-rspec plugin slots (origin 2) are added as RSpec cops are
+      # implemented. The rspec origin is additionally gated per file (see
+      # `register_plugin_packer`'s `gate`): the RSpec department only runs
+      # on spec files, so other files use a dormant-rspec token.
     }.freeze
 
     # Dormant packed-config segment per plugin origin: the enable flag (first
     # num) is 0 and the cop settings are placeholders (see the `BundleConfig`
     # docs for each segment's field order). Packed whenever the plugin gem
-    # has not registered a packer; the Rust side then skips that origin's
-    # rules and leaves its slots empty.
+    # has not registered a packer — or, for a gated origin, whenever the
+    # origin's gate says the current file is not relevant; the Rust side
+    # then skips that origin's rules and leaves its slots empty.
     DORMANT_SEGMENTS = {
-      performance: [[0, 0, 0].freeze, [[].freeze].freeze].freeze
+      performance: [[0, 0, 0].freeze, [[].freeze].freeze].freeze,
+      # rspec: enable flag + the sixteen RSpec/Language role lists.
+      rspec: [[0].freeze, ([[].freeze] * 16).freeze].freeze
     }.freeze
 
     class << self
@@ -143,46 +151,89 @@ module Shirobai
       # Configs packed earlier keep their dormant tokens (token memoization
       # is per Config identity), so requiring a plugin mid-run is not
       # supported.
-      def register_plugin_packer(origin, &packer)
+      #
+      # `gate` (optional) makes the origin per-file: a callable
+      # `(config, processed_source) -> bool` answering "does any of this
+      # origin's cops run on this file?". Department-scoped plugins
+      # (rubocop-rspec's `Include: **/*_spec.rb`) pass one so non-relevant
+      # files use a token whose segment is dormant and never pay for the
+      # origin's rules. The gate must be a superset of the wrapper cops'
+      # `relevant_file?` — a wrapper that runs on a gated-off file falls
+      # back to its standalone entry point (`offenses_for` returns nil).
+      def register_plugin_packer(origin, gate: nil, &packer)
         raise ArgumentError, "unknown origin #{origin.inspect}" unless ORIGINS.include?(origin)
 
         plugin_packers[origin] = packer
+        plugin_gates[origin] = gate if gate
       end
 
       def plugin_packers
         @plugin_packers ||= {}
       end
-      # Returns the raw Rust result for `cop_key` on this source.
+
+      def plugin_gates
+        @plugin_gates ||= {}
+      end
+
+      # Returns the raw Rust result for `cop_key` on this source, or nil when
+      # `cop_key` belongs to a gated origin that is inactive for this file
+      # (the safety net: the wrapper then takes its standalone entry point,
+      # so a gate/relevant_file? disagreement can only cost speed, never
+      # offenses).
       def offenses_for(processed_source, config, cop_key)
         src = processed_source.raw_source
         unless defined?(@cached_source) && @cached_source.equal?(src) && @cached_config.equal?(config)
-          result = Shirobai.check_all(src, bundle_token(config))
+          inactive = inactive_origins(config, processed_source)
+          result = Shirobai.check_all(src, bundle_token(config, inactive))
           @cached_source = src
           @cached_config = config
           @cached_result = result
+          @cached_inactive = inactive
         end
         origin, rule = SLOTS.fetch(cop_key)
+        return nil if @cached_inactive.include?(ORIGINS.fetch(origin))
+
         @cached_result.fetch(origin).fetch(rule)
       end
 
-      # The Rust-side token for `config`, registering its packed bundle config
-      # on first sight. Memoized per config object identity: a lint run shares
-      # one `Config` object across all cops in the team, so a run registers
-      # O(#distinct configs) entries (each spec example registers one; entries
-      # are small and never evicted).
-      def bundle_token(config)
+      # The Rust-side token for `config` with the given gated-off origins,
+      # registering its packed bundle config on first sight. Memoized per
+      # (config object identity, inactive origin set): a lint run shares one
+      # `Config` object across all cops in the team, so a run registers
+      # O(#distinct configs x #distinct gate outcomes) entries (each spec
+      # example registers one; entries are small and never evicted).
+      def bundle_token(config, inactive = EMPTY_INACTIVE)
         @bundle_tokens ||= {}.compare_by_identity
-        @bundle_tokens[config] ||= Shirobai.register_bundle_config(*packed_config(config))
+        per_config = (@bundle_tokens[config] ||= {})
+        per_config[inactive] ||=
+          Shirobai.register_bundle_config(*packed_config(config, inactive))
       end
 
       private
+
+      EMPTY_INACTIVE = [].freeze
+
+      # The gated origins whose gate turns the current file down. Frozen and
+      # deterministic (ORIGINS order) so it doubles as the token memo key.
+      def inactive_origins(config, processed_source)
+        gates = plugin_gates
+        return EMPTY_INACTIVE if gates.empty?
+
+        inactive = ORIGINS.select do |origin|
+          gate = gates[origin]
+          gate && !gate.call(config, processed_source)
+        end
+        inactive.empty? ? EMPTY_INACTIVE : inactive.freeze
+      end
 
       # Builds the `(nums, lists)` wire format documented on `BundleConfig`
       # (crates/shirobai-core/src/rules/bundle.rs). Every cop's values come
       # from its `bundle_args` class method — the same derivation its instance
       # uses — resolved from `config` alone (cop-own config via
       # `config.for_badge`, exactly like `RuboCop::Cop::Base#cop_config`).
-      def packed_config(config)
+      # Origins in `inactive` pack their dormant segment even when their
+      # packer is registered (the per-file gate said no).
+      def packed_config(config, inactive = EMPTY_INACTIVE)
         dbg = Cop::Lint::Debugger.bundle_args(config)
         bl = Cop::Metrics::BlockLength.bundle_args(config)
         bn = Cop::Metrics::BlockNesting.bundle_args(config)
@@ -345,6 +396,7 @@ module Shirobai
         packed_lists = [lists]
         ORIGINS.drop(1).each do |origin|
           packer = Dispatch.plugin_packers[origin]
+          packer = nil if inactive.include?(origin)
           seg_nums, seg_lists = packer ? packer.call(config) : DORMANT_SEGMENTS.fetch(origin)
           packed_nums << seg_nums
           packed_lists << seg_lists
