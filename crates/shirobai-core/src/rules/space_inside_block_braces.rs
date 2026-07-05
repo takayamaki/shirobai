@@ -477,6 +477,30 @@ impl<'a> Visitor<'a> {
                     None,
                     node.location().start_offset(),
                 )
+            } else if let Some(zsuper) = node.as_forwarding_super_node() {
+                // A bare `super { }` block hides behind the concretely-typed
+                // `block` field: prism's generated walker calls
+                // `visit_block_node` directly, so the block never reaches the
+                // shared-walk enter hook (the RescueNode-family trap). Reach it
+                // here. `super(...) { }` is a `SuperNode` whose `block` is a
+                // normal `Option<Node>` child, so it is already covered by the
+                // block-node arm above; only the bare form needs this.
+                // Parser wraps `super { }` in one block node spanning the whole
+                // `super … }`, so the column is the `super` keyword, i.e. this
+                // node's own start offset.
+                let Some(block) = zsuper.block() else {
+                    return;
+                };
+                let pipe = block
+                    .parameters()
+                    .and_then(|p| p.as_block_parameters_node().and_then(|bp| bp.opening_loc()));
+                (
+                    block.opening_loc(),
+                    block.closing_loc(),
+                    block.body().is_none(),
+                    pipe,
+                    node.location().start_offset(),
+                )
             } else {
                 return;
             };
@@ -624,5 +648,22 @@ mod tests {
             run("x.each {y.map {z}}\n", SPACE),
             vec![(8, 9, 0), (17, 18, 2), (15, 16, 0), (16, 17, 2)]
         );
+    }
+
+    #[test]
+    fn bare_super_block_reached() {
+        // A bare `super { }` block hides behind ForwardingSuperNode's concrete
+        // `block` field, which the generated walker visits directly (bypassing
+        // the shared-walk enter hook). Stock still checks its braces; so must we.
+        // Offsets confirmed against stock RuboCop 1.88.0.
+        assert_eq!(run("super {x}\n", SPACE), vec![(7, 8, 0), (8, 9, 2)]);
+        // A `{|` pipe: `{`..`|` span for the missing space, plus right brace.
+        assert_eq!(run("super {|n| n}\n", SPACE), vec![(6, 8, 6), (12, 13, 2)]);
+        // Empty braces with the no_space empty style: the inner space is flagged.
+        assert_eq!(run("super { }\n", SPACE), vec![(7, 8, 4)]);
+        // A `super(...) { }` block is a SuperNode with a normal child block and
+        // is already reached by the generic walk; the bare arm must not fire
+        // twice for it. One offense pair, no duplicates.
+        assert_eq!(run("super() {x}\n", SPACE), vec![(9, 10, 0), (10, 11, 2)]);
     }
 }

@@ -3342,7 +3342,9 @@ mod tests {
     /// exactly what its standalone entry point reports, across the style /
     /// empty-style / space-before-params axes, over a source exercising a
     /// space-missing block, a no-space inner, an empty `{}`, an empty `{ }`, a
-    /// `{|` pipe, a multi-line aligned block and a `do`/`end` block (ignored).
+    /// `{|` pipe, a multi-line aligned block, a `do`/`end` block (ignored) and a
+    /// bare `super { }` block (reached through `ForwardingSuperNode`'s concrete
+    /// `block` field, which the generic walk hook skips).
     #[test]
     fn shared_walk_matches_standalone_space_inside_block_braces() {
         let src = "a.each {puts x}\n\
@@ -3352,7 +3354,10 @@ mod tests {
                    e.each {|n| n }\n\
                    f.each { |a|\n  b\n}\n\
                    g.each do |n| n end\n\
-                   h.each { [1] }\n";
+                   h.each { [1] }\n\
+                   super {puts x}\n\
+                   super {|n| n }\n\
+                   super { }\n";
         for style in 0..=1u8 {
             for empty in 0..=1u8 {
                 for sbbp in 0..=1u8 {
