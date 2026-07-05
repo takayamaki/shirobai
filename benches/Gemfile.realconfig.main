@@ -1,0 +1,22 @@
+# frozen_string_literal: true
+
+source "https://rubygems.org"
+
+# The "main" bench mode installs shirobai from a second checkout of the main
+# branch so a branch job can compare branch vs main on the same runner.
+# SHIROBAI_MAIN_TREE must point at that checkout
+# (.github/workflows/bench.yml sets it up).
+main_tree = ENV.fetch("SHIROBAI_MAIN_TREE") do
+  abort "SHIROBAI_MAIN_TREE is not set: point it at a checkout of shirobai's main branch"
+end
+
+gem "shirobai", path: main_tree
+
+# Plugins required by test corpora (same list as Gemfile.realconfig.shirobai)
+gem "rubocop-capybara"        # Mastodon
+gem "rubocop-discourse"       # Discourse
+gem "rubocop-i18n"            # Mastodon
+gem "rubocop-performance"     # Mastodon, Redmine, fluentd
+gem "rubocop-rails"           # Mastodon, Redmine
+gem "rubocop-rspec"           # Mastodon
+gem "rubocop-rspec_rails"     # Mastodon

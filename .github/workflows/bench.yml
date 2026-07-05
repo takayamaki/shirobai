@@ -1,13 +1,17 @@
 name: Bench
 
-# Manual real-CLI benchmark: stock vs shirobai on real corpora,
-# each with its own .rubocop.yml and all plugin gems installed.
-# Before timing, both sides run once with JSON output and the offense
-# sets must match — the run proves "same offenses, less time".
+# Manual real-CLI benchmark on real corpora, each with its own .rubocop.yml
+# and all plugin gems installed. Each round runs several modes back to back on
+# the same runner: stock, shirobai (this branch), removed (stock minus the
+# implemented cops = the replacement upper bound) and, on branches, main
+# (shirobai from the main branch, for a same-runner branch-vs-main comparison).
+# Before timing, each shirobai-family mode must report the same offense set as
+# stock — the run proves "same offenses, less time".
 #
 # Trigger from CLI:
 #   gh workflow run bench.yml
 #   gh workflow run bench.yml -f corpora="redmine fluentd" -f rounds=5
+#   gh workflow run bench.yml -f modes="stock shirobai"
 #   gh workflow run bench.yml --ref <branch>
 
 on:
@@ -21,21 +25,38 @@ on:
         description: "Timed rounds per mode"
         required: false
         default: "3"
+      modes:
+        description: "Modes per round (empty = auto: stock removed shirobai, plus main on branches)"
+        required: false
+        default: ""
 
 jobs:
   plan:
     runs-on: ubuntu-latest
     outputs:
       corpora: ${{ steps.set.outputs.corpora }}
+      modes: ${{ steps.set.outputs.modes }}
     steps:
       - id: set
         run: |
           corpora=$(echo "$CORPORA" | jq -cR 'split(" ") | map(select(length > 0))')
           echo "corpora=$corpora" >> "$GITHUB_OUTPUT"
+          # Auto-select modes when the input is empty. On main there is no
+          # branch to compare against, so main mode is left out.
+          if [ -n "$MODES_INPUT" ]; then
+            modes="$MODES_INPUT"
+          elif [ "$REF_NAME" = "main" ]; then
+            modes="stock removed shirobai"
+          else
+            modes="stock removed shirobai main"
+          fi
+          echo "modes=$modes" >> "$GITHUB_OUTPUT"
         env:
           # The fallback covers events without inputs (e.g. a temporary
           # push trigger) and an explicitly empty input.
           CORPORA: ${{ inputs.corpora || 'mastodon discourse redmine fluentd' }}
+          MODES_INPUT: ${{ inputs.modes }}
+          REF_NAME: ${{ github.ref_name }}
 
   bench:
     needs: plan
@@ -71,10 +92,36 @@ jobs:
           BUNDLE_GEMFILE=benches/Gemfile.realconfig.stock bundle install --jobs 4
           BUNDLE_GEMFILE=benches/Gemfile.realconfig.shirobai bundle install --jobs 4
 
+      # main mode needs a second checkout of the main branch, built the same
+      # way, so branch and main run side by side on one runner.
+      - name: Check out main for the main mode
+        if: contains(needs.plan.outputs.modes, 'main')
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          path: main-tree
+          submodules: true
+
+      - name: Build the main tree
+        if: contains(needs.plan.outputs.modes, 'main')
+        working-directory: main-tree
+        run: |
+          bundle install --jobs 4
+          bundle exec rake compile
+
+      - name: Install the main bench Gemfile
+        if: contains(needs.plan.outputs.modes, 'main')
+        env:
+          SHIROBAI_MAIN_TREE: ${{ github.workspace }}/main-tree
+        run: BUNDLE_GEMFILE=benches/Gemfile.realconfig.main bundle install --jobs 4
+
       - name: Clone corpus
         run: bin/setup-corpora ${{ matrix.corpus }}
 
       - name: Bench (${{ matrix.corpus }})
+        env:
+          MODES: ${{ needs.plan.outputs.modes }}
+          SHIROBAI_MAIN_TREE: ${{ github.workspace }}/main-tree
         run: |
           VERIFY=1 SUMMARY_FILE="$GITHUB_STEP_SUMMARY" \
             benches/real_cli_bench.sh ".tmp/${{ matrix.corpus }}" "${{ inputs.rounds || '3' }}"
