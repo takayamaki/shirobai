@@ -19,6 +19,17 @@ Benchmarks and the parity oracle.
   `--plugin rubocop-performance --enable-pending-cops`
   (Gemfile.stock.performance vs Gemfile.with_shirobai.performance).
   Zero diff required on the same corpora.
+- `parity_diff_rspec.sh` — The oracle for the shirobai-rspec plugin gem
+  (Gemfile.stock.rspec vs Gemfile.with_shirobai.rspec). Unlike the other
+  two it does NOT use `--force-default-config`: that flag skips the
+  plugin config merge, leaves `RSpec/Language` empty and silences every
+  RSpec cop on both sides (an empty parity). It writes a uniform config
+  into the corpus root (`inherit_from` of the pinned rubocop-rspec
+  default.yml + `DisabledByDefault: false`), runs both CLIs from inside
+  the corpus, and self-tests on a synthetic fixture that must fire the
+  implemented cops on the stock side first.
+  Main corpora: discourse / forem / factory_bot (densest RSpec offense
+  surface), mastodon as the clean non-interference check.
 - `e2e_bench.rb` — In-process speed measurement harness.
   Accepts a corpus path and loads its `.rubocop.yml`
   (skips require/inherit_gem so plugin gems are not needed).

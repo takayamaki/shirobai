@@ -64,9 +64,9 @@ impl Rule for NoopRule {
 }
 
 /// Reads one or more packed segments (nums line, list count, lists), one per
-/// origin, matching the per-origin wire format. A single-segment dump (a
-/// core-only config) gets the dormant performance segment appended so old
-/// dump scripts keep working after regeneration.
+/// origin, matching the per-origin wire format. A dump with fewer segments
+/// than `N_ORIGINS` (e.g. a core-only config) gets the dormant plugin
+/// segments appended so old dump scripts keep working after regeneration.
 fn read_packed(path: &str) -> (Vec<Vec<i64>>, Vec<Vec<Vec<String>>>) {
     let text = std::fs::read_to_string(path).expect("packed config file");
     let mut lines = text.lines().peekable();
@@ -92,9 +92,15 @@ fn read_packed(path: &str) -> (Vec<Vec<i64>>, Vec<Vec<Vec<String>>>) {
         packed_nums.push(nums);
         packed_lists.push(lists);
     }
-    if packed_nums.len() == 1 {
+    if packed_nums.len() < 2 {
+        // Dormant performance segment.
         packed_nums.push(vec![0, 0, 0]);
         packed_lists.push(vec![vec![]]);
+    }
+    if packed_nums.len() < 3 {
+        // Dormant rspec segment: enable flag off + 16 empty role lists.
+        packed_nums.push(vec![0]);
+        packed_lists.push(vec![vec![]; 16]);
     }
     (packed_nums, packed_lists)
 }

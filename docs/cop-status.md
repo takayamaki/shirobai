@@ -148,6 +148,91 @@ Stock behaves the same for `TargetRubyVersion >= 3.4`; for targets `<= 3.3`
 stock parses `it` as a plain method call and DOES flag it.
 `Performance/TimesMap` is unaffected (its pattern is `any_block`).
 
+## Plugin cops: shirobai-rspec (R1 cluster)
+
+`gems/shirobai-rspec` replaces rubocop-rspec (pinned `= 3.10.2`) cops.
+Unlike the performance batch this IS a speed play: measured on Mastodon
+spec/, stock RSpec cops re-answer the `RSpec/Language` role question
+about 87 times per send node and re-walk ancestors/subtrees per cop for
+every structural question. shirobai routes ALL RSpec cops through one
+`RSpecDispatcherRule` on the shared walk (a single second-layer
+dispatcher): the role classification is one hash probe against a
+per-config `name -> role mask` table, and the example-group scope tree
+(stock's `find_all_in_scope`) is built once per file and shared.
+
+The rspec origin is gated per file: the RSpec department only includes
+spec files, so other files use a bundle token whose rspec segment is
+dormant. The gate is the union of the wrapper cops' `relevant_file?`;
+if they ever disagree, `Dispatch.offenses_for` returns nil and the
+wrapper falls back to its standalone entry point (speed bug, never an
+offense bug).
+
+### Implemented (6 cops)
+
+- `RSpec/LetSetup`
+- `RSpec/MultipleMemoizedHelpers`
+- `RSpec/RepeatedDescription`
+- `RSpec/RepeatedExample`
+- `RSpec/VariableDefinition`
+- `RSpec/VariableName`
+
+Verified with the same bar as core cops: vendor specs from the
+`vendor/rubocop-rspec` submodule (plus its shared contexts and smoke
+tests), differential edge-case specs pinning the probed quirks (the
+`inside_example_group?` top-level-statement gate, block/numblock/itblock
+matcher asymmetries, `LetSetup`'s zero-argument-use search, sym/str
+non-shadowing, Unicode style properties, AllowedPatterns +
+detected-style bookkeeping, `VariableDefinition`'s style-filtered
+autocorrect, `MultipleMemoizedHelpers`' cross-frame helper union with
+structural dedup of interpolated names, `RepeatedDescription` /
+`RepeatedExample`'s EG-only example collection with structural
+signature grouping on real parser nodes), lint-mode correctable parity,
+non-ASCII offset parity, and the rspec parity oracle
+(`benches/parity_diff_rspec.sh` with its synthetic-fixture self-test) at
+zero diff.
+
+`RSpec/VariableDefinition` and `RSpec/MultipleMemoizedHelpers` reuse the
+`RSpecDispatcherRule`: the former shares `VariableName`'s send-shaped
+candidate and top-level-group gate (style filtering happens in Rust); the
+latter unions each spec group's own helper frame with its parser-block
+ancestor frames (adding a per-role `subjects` collection alongside
+`lets`), counts the bytewise-decidable identities in Rust and hands the
+rare `dsym`/`dstr` names to the wrapper, which relocates them through the
+shared `Shirobai::RSpec::NodeLocator` and dedups them with parser-gem
+structural equality.
+
+`RSpec/RepeatedDescription` and `RSpec/RepeatedExample` share ONE more
+`RSpecDispatcherRule` collection: for every `example_group?` frame (EG
+only — not shared groups, not `include_*` blocks) the walk collects its
+`examples` with the exact stock scope semantics (a plain-block example,
+attributed innermost-outward and halting at the first `scope_change` or
+`example` frame — a `let`/`subject` body is transparent, a numblock group
+opens no frame), and puts the example BLOCK node ranges of every group
+with >= 2 examples on the wire (both cops read identical data). Byte-level
+signature comparison is impossible: stock groups examples by parser-node
+STRUCTURAL equality (`it 'a'` == `it "a"`; a heredoc body != a same-text
+string body), so the wrappers relocate the nodes via the shared
+`NodeLocator`, wrap them in the stock `RuboCop::RSpec::Example`, and run
+stock's grouping (`[metadata, doc_string]` / `[doc_string, example]` for
+descriptions, `[metadata, implementation]` + `its` args for examples)
+VERBATIM — parity by construction for the equality-sensitive part.
+
+One probed parser divergence is handled centrally:
+an empty percent-string (`%()`) is a `str` node in prism 1.9 but a `dstr`
+in the parser gem, so `string_is_parser_dstr` treats it as `dstr`
+(matching every stock `{str dstr}` matcher).
+
+### Known limitation (same family as the README `TargetRubyVersion` note)
+
+RSpec matchers split on the parser block kind (`block` / `numblock` /
+`itblock`), and shirobai recovers the split from prism Latest. A block
+whose body uses a bare `it` (e.g. `let(:x) { it }`) is an it-block under
+prism Latest and under stock with `TargetRubyVersion >= 3.4`, but a plain
+`block` (with `it` as a method call) under stock with older targets, so
+block-kind-sensitive matchers can disagree there. Real spec code calling
+a bare `it` inside a block is essentially nonexistent (RSpec's own `it`
+requires arguments or a block).
+
 ## Attempted but reverted
 
 These cops were implemented to full drop-in compatibility but reverted because

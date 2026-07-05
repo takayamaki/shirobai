@@ -19,10 +19,15 @@ Ruby layer of shirobai.
   `Dispatch::SLOTS` is the single source of cop-to-slot mapping:
   `[origin, rule]` pairs into the per-origin result
   (`result[origin][rule]`; `Dispatch::ORIGINS` fixes the origin order).
-  Plugin gems (gems/shirobai-performance) register their packed-config
-  segment with `Dispatch.register_plugin_packer`; the dormant default
-  keeps the Rust-side plugin rules asleep when the plugin gem is not
-  loaded.
+  Plugin gems (gems/shirobai-performance, gems/shirobai-rspec) register
+  their packed-config segment with `Dispatch.register_plugin_packer`; the
+  dormant default keeps the Rust-side plugin rules asleep when the plugin
+  gem is not loaded.
+  A plugin origin can also register a per-file `gate` (shirobai-rspec
+  does: RSpec cops only run on spec files). Files the gate turns down use
+  a token whose segment is dormant; `offenses_for` then returns nil for
+  that origin's cop keys and the wrapper falls back to its standalone
+  entry point, so a gate bug can cost speed but never offenses.
 - `source_offsets.rb` — Converts byte offsets (prism) to char offsets (parser-gem).
   ASCII fast path: one `ascii_only?` check per source, identity conversion if true.
 - `cop/base.rb` — Shared base for all wrapper cops.

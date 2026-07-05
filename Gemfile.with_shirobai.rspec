@@ -1,0 +1,10 @@
+# frozen_string_literal: true
+
+# Shirobai side of benches/parity_diff_rspec.sh: the same stock pair plus
+# the shirobai core and the shirobai-rspec plugin shell from this tree.
+source "https://rubygems.org"
+
+gem "rubocop", "= 1.88.0"
+gem "rubocop-rspec", "= 3.10.2"
+gem "shirobai", path: "."
+gem "shirobai-rspec", path: "gems/shirobai-rspec"

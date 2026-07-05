@@ -1,0 +1,1 @@
+../../gems/shirobai-rspec/README.md
