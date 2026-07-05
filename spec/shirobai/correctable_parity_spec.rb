@@ -621,6 +621,15 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Style::FrozenStringLiteralComment,
       "puts 1\n"
     ],
+    # Forward-all `...` collapse (fires at the default target 2.7): stock
+    # yields a `replace(arg_range, '...')` corrector on both the def and the
+    # call, so both offenses are `:uncorrected` / `correctable?` in lint
+    # mode. Guards that the wrapper attaches its corrector block like stock.
+    "Style/ArgumentsForwarding" => [
+      RuboCop::Cop::Style::ArgumentsForwarding,
+      Shirobai::Cop::Style::ArgumentsForwarding,
+      "def foo(*args, **kwargs, &block)\n  bar(*args, **kwargs, &block)\nend\n"
+    ],
   }
 
   cases.each do |name, (stock_klass, shirobai_klass, source)|

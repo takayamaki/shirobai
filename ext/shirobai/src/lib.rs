@@ -310,6 +310,23 @@ fn map_array_alignment(
         .collect()
 }
 
+/// `[[start, end, message, [[op_kind, start, end, text], ...]], ...]`.
+#[allow(clippy::type_complexity)]
+fn map_arguments_forwarding(
+    v: Vec<shirobai_core::rules::arguments_forwarding::AfOffense>,
+) -> Vec<(usize, usize, u8, Vec<(u8, usize, usize, String)>)> {
+    v.into_iter()
+        .map(|o| {
+            let ops = o
+                .ops
+                .into_iter()
+                .map(|op| (op.kind, op.start, op.end, op.text))
+                .collect();
+            (o.start, o.end, o.message, ops)
+        })
+        .collect()
+}
+
 #[allow(clippy::type_complexity)]
 fn map_first_argument_indentation(
     v: Vec<shirobai_core::rules::first_argument_indentation::FirstArgIndentOffense>,
@@ -1558,7 +1575,8 @@ fn register_bundle_config(
 /// 84 space_before_first_arg /
 /// 85 duplicate_magic_comment / 86 duplicate_methods /
 /// 87 array_alignment / 88 file_null / 89 semicolon /
-/// 90 redundant_freeze / 91 frozen_string_literal_comment
+/// 90 redundant_freeze / 91 frozen_string_literal_comment /
+/// 92 arguments_forwarding
 ///
 /// Performance slots (origin 1; every slot empty unless the plugin gem
 /// registered its packed segment):
@@ -1583,7 +1601,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
         // Core origin (result[0]).
-        let ary = ruby.ary_new_capa(92);
+        let ary = ruby.ary_new_capa(93);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -1719,6 +1737,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_semicolon(r.semicolon))?;
         ary.push(map_redundant_freeze(r.redundant_freeze))?;
         ary.push(r.frozen_string_literal_comment)?;
+        ary.push(map_arguments_forwarding(r.arguments_forwarding))?;
         // Performance origin (result[1]).
         let perf = ruby.ary_new_capa(5);
         perf.push(map_perf_detect(r.perf_detect))?;
@@ -2254,6 +2273,37 @@ fn check_array_alignment(
         style,
         indent_width,
     ))
+}
+
+/// Ruby entry point for `Style/ArgumentsForwarding`. Takes the source, the
+/// target ruby (`* 10` rounded), the two boolean flags, the explicit-block
+/// flag, and the three redundant-name lists.
+/// Returns `[[start, end, message, [[op_kind, start, end, text], ...]], ...]`.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn check_arguments_forwarding(
+    source: RString,
+    target_ruby: i64,
+    allow_only_rest: bool,
+    use_anonymous: bool,
+    explicit_block: bool,
+    redundant_rest: Vec<String>,
+    redundant_kwrest: Vec<String>,
+    redundant_block: Vec<String>,
+) -> Vec<(usize, usize, u8, Vec<(u8, usize, usize, String)>)> {
+    map_arguments_forwarding(
+        shirobai_core::rules::arguments_forwarding::check_arguments_forwarding(
+            bytes(&source),
+            &shirobai_core::rules::arguments_forwarding::Config {
+                target_ruby,
+                allow_only_rest_arguments: allow_only_rest,
+                use_anonymous_forwarding: use_anonymous,
+                explicit_block_name: explicit_block,
+                redundant_rest,
+                redundant_kwrest,
+                redundant_block,
+            },
+        ),
+    )
 }
 
 /// Ruby entry point for `Layout/FirstArgumentIndentation`. Takes the source,
@@ -3674,6 +3724,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_array_alignment",
         function!(check_array_alignment, 3),
+    )?;
+    module.define_module_function(
+        "check_arguments_forwarding",
+        function!(check_arguments_forwarding, 8),
     )?;
     module.define_module_function("check_redundant_self", function!(check_redundant_self, 2))?;
     module.define_module_function(

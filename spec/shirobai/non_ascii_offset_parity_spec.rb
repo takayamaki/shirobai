@@ -538,6 +538,27 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     end
   end
 
+  # `Style/ArgumentsForwarding` is `Enabled: pending`, so force-enable it. The
+  # forward-all `...` collapse fires at the default target 2.7; the def and
+  # call arg ranges plus the `replace(..., '...')` corrector ranges all sit
+  # after the multibyte prefix and must be byte-to-char converted.
+  describe "Style/ArgumentsForwarding (pending cop, force-enabled)" do
+    it "matches stock offenses and autocorrect output after a multibyte comment" do
+      enabled_config = RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new(
+          { "Style/ArgumentsForwarding" => { "Enabled" => true } }, "(test)"
+        ),
+        "(test)"
+      )
+      offenses = expect_parity(
+        "Style/ArgumentsForwarding",
+        "#{prefix}def foo(*args, **kwargs, &block)\n  bar(*args, **kwargs, &block)\nend\n",
+        enabled_config
+      )
+      expect(offenses).not_to be_empty, "fixture produced no stock offense; fix the source"
+    end
+  end
+
   # Real-file sweep: Ruby's own fileutils.rb carries multibyte comments and is
   # the file where the byte/char divergence was first demonstrated against
   # stock (2-byte shift; DotPosition dropping offenses). Replays the parity

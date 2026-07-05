@@ -10,7 +10,7 @@ use super::multiline_method_call_indentation::{self as mc, MethodCallIndentOffen
 use super::multiline_operation_indentation::{self as op, OperationIndentOffense};
 use super::{
     abc_size, access_modifier_indentation, ambiguous_block_association, argument_alignment,
-    array_alignment, assignment_indentation,
+    arguments_forwarding, array_alignment, assignment_indentation,
     block_delimiters, block_length, block_nesting,
     class_length,
     closing_parenthesis_indentation, colon_method_call, complexity, debugger, def_end_alignment,
@@ -170,6 +170,10 @@ pub fn check_multiline_bundle(
 /// | 114 | redundant_freeze target_ruby_30_plus (`Style/RedundantFreeze`'s `AllCops/TargetRubyVersion >= 3.0`) |
 /// | 115 | redundant_freeze string_literals_frozen_by_default (`AllCops/StringLiteralsFrozenByDefault` is literally `true`) |
 /// | 116 | frozen_string_literal_comment style (`Style/FrozenStringLiteralComment` `EnforcedStyle`: 0 always, 1 never, 2 always_true) |
+/// | 117 | arguments_forwarding target_ruby (`AllCops/TargetRubyVersion * 10` rounded) |
+/// | 118 | arguments_forwarding allow_only_rest (`AllowOnlyRestArgument`) |
+/// | 119 | arguments_forwarding use_anonymous (`UseAnonymousForwarding`) |
+/// | 120 | arguments_forwarding explicit_block (`Naming/BlockForwarding` `EnforcedStyle == 'explicit'`) |
 ///
 /// Core segment `lists[0]` (`Vec<String>`):
 ///
@@ -200,6 +204,9 @@ pub fn check_multiline_bundle(
 /// | 22  | ambiguous_block_association_allowed_methods (`Lint/AmbiguousBlockAssociation` `AllowedMethods`, regexp entries dropped by the Ruby wrapper which falls back to standalone when any regexp is present) |
 /// | 23  | class_length_count_as_one (`Metrics/ClassLength` `CountAsOne`) |
 /// | 24  | module_length_count_as_one (`Metrics/ModuleLength` `CountAsOne`) |
+/// | 25  | arguments_forwarding RedundantRestArgumentNames |
+/// | 26  | arguments_forwarding RedundantKeywordRestArgumentNames |
+/// | 27  | arguments_forwarding RedundantBlockArgumentNames |
 ///
 /// Performance segment `nums[1]` (the shirobai-performance plugin origin):
 ///
@@ -358,6 +365,7 @@ pub struct BundleConfig {
     /// `Style/FrozenStringLiteralComment` `EnforcedStyle`: 0 always, 1 never,
     /// 2 always_true.
     pub frozen_string_literal_comment_style: u8,
+    pub arguments_forwarding: arguments_forwarding::Config,
     /// `Some` only when the shirobai-performance plugin gem is loaded on the
     /// Ruby side (`performance_enabled` num is 1). `None` keeps the
     /// Performance rules out of the shared walk entirely — their slots are
@@ -398,8 +406,8 @@ pub const ORIGIN_PERFORMANCE: usize = 1;
 pub const ORIGIN_RSPEC: usize = 2;
 pub const N_ORIGINS: usize = 3;
 
-const CORE_NUMS_LEN: usize = 117;
-const CORE_LISTS_LEN: usize = 25;
+const CORE_NUMS_LEN: usize = 121;
+const CORE_LISTS_LEN: usize = 28;
 const PERF_NUMS_LEN: usize = 3;
 const PERF_LISTS_LEN: usize = 1;
 
@@ -698,6 +706,15 @@ impl BundleConfig {
             },
             redundant_freeze_target_30_plus: nums[114] != 0,
             redundant_freeze_string_literals_frozen_by_default: nums[115] != 0,
+            arguments_forwarding: arguments_forwarding::Config {
+                target_ruby: nums[117],
+                allow_only_rest_arguments: nums[118] != 0,
+                use_anonymous_forwarding: nums[119] != 0,
+                explicit_block_name: nums[120] != 0,
+                redundant_rest: next_list(),
+                redundant_kwrest: next_list(),
+                redundant_block: next_list(),
+            },
             // The shirobai-performance origin, read from its own segment —
             // core growth can never shift these offsets again.
             performance: {
@@ -883,6 +900,7 @@ pub struct BundleResult {
     /// `Style/FrozenStringLiteralComment`: at most one packed offense
     /// `(kind, start, fin, line, insert_line, is_emacs)`.
     pub frozen_string_literal_comment: Vec<frozen_string_literal_comment::FslResult>,
+    pub arguments_forwarding: Vec<arguments_forwarding::AfOffense>,
     /// shirobai-performance plugin slots. Always present in the wire format;
     /// empty when `BundleConfig::performance` is `None` (plugin not loaded).
     pub perf_detect: Vec<perf_detect::PerfDetectOffense>,
@@ -1097,6 +1115,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut fn_rule = file_null::build_rule();
     let mut semicolon_rule = semicolon::build_rule(source);
     let mut rf_rule = redundant_freeze::build_rule(source, cfg.redundant_freeze_target_30_plus);
+    let mut af_rule = arguments_forwarding::build_rule(source, &cfg.arguments_forwarding);
     // `Layout/EmptyLines` joins the shared walk only when the file actually
     // contains `\n\n\n` (stock's prefilter); otherwise the rule's collected
     // lines are unused and we skip both the walk push and the finalize. The
@@ -1202,6 +1221,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut rf_rule,
         &mut ara_rule,
         &mut fn_rule,
+        &mut af_rule,
     ];
     if empty_lines_eligible {
         rules.push(&mut el_rule);
@@ -1240,6 +1260,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let multiline_method_call = mc_rule.offenses;
     let argument_alignment = aa_rule.map(|r| r.offenses).unwrap_or_default();
     let array_alignment = ara_rule.offenses;
+    let arguments_forwarding = af_rule.take_offenses();
     let first_argument_indentation = fa_rule.map(|r| r.offenses).unwrap_or_default();
     let perf_detect = pd_rule.map(|r| r.offenses).unwrap_or_default();
     let perf_string_include = psi_rule.map(|r| r.offenses).unwrap_or_default();
@@ -1452,6 +1473,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         semicolon: semicolon_rule.into_offenses(),
         redundant_freeze,
         frozen_string_literal_comment,
+        arguments_forwarding,
         perf_detect,
         perf_string_include,
         perf_end_with,
@@ -1556,6 +1578,7 @@ mod tests {
             0, 2, // array_alignment: style(with_first_element) / indent
             1, 0, // redundant_freeze: target_ruby_30_plus / string_literals_frozen_by_default
             0, // frozen_string_literal_comment: style(always)
+            34, 1, 1, 0, // arguments_forwarding: target_ruby / allow_only_rest / use_anon / explicit_block
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -1604,6 +1627,9 @@ mod tests {
             vec![],
             vec![], // class_length: count_as_one
             vec![], // module_length: count_as_one
+            ["args", "arguments"].map(String::from).to_vec(), // af: RedundantRestArgumentNames
+            ["kwargs", "options", "opts"].map(String::from).to_vec(), // af: RedundantKeywordRestArgumentNames
+            ["blk", "block", "proc"].map(String::from).to_vec(), // af: RedundantBlockArgumentNames
         ];
         // Performance segment (origin 1): enabled, with the SafeMultiline
         // defaults and RuboCop's default preferred method for Detect
@@ -4013,6 +4039,27 @@ mod tests {
                 (a.off_start, a.off_end, a.line, a.rescue_scope),
                 (b.off_start, b.off_end, b.line, b.rescue_scope)
             );
+        }
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_arguments_forwarding() {
+        let src = "def foo(*args, **kwargs, &block)\n  bar(*args, **kwargs, &block)\nend\ndef qux(**kwargs, &block)\n  baz(**kwargs, &block)\nend\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone = super::arguments_forwarding::check_arguments_forwarding(
+            src.as_bytes(),
+            &cfg.arguments_forwarding,
+        );
+        assert!(!alone.is_empty());
+        assert_eq!(bundle.arguments_forwarding.len(), alone.len());
+        for (a, b) in bundle.arguments_forwarding.iter().zip(&alone) {
+            assert_eq!((a.start, a.end, a.message), (b.start, b.end, b.message));
+            assert_eq!(a.ops.len(), b.ops.len());
+            for (x, y) in a.ops.iter().zip(&b.ops) {
+                assert_eq!((x.kind, x.start, x.end, &x.text), (y.kind, y.start, y.end, &y.text));
+            }
         }
     }
 

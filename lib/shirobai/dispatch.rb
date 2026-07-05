@@ -121,6 +121,7 @@ module Shirobai
       semicolon: [0, 89].freeze,
       redundant_freeze: [0, 90].freeze,
       frozen_string_literal_comment: [0, 91].freeze,
+      arguments_forwarding: [0, 92].freeze,
       # shirobai-performance plugin slots (origin 1). Always present in the
       # wire format; the Rust side leaves them empty unless the plugin gem
       # registered its packed segment (`Dispatch.register_plugin_packer`).
@@ -343,6 +344,7 @@ module Shirobai
         _ = Cop::Style::Semicolon.bundle_args(config)
         rf = Cop::Style::RedundantFreeze.bundle_args(config)
         fslc = Cop::Style::FrozenStringLiteralComment.bundle_args(config)
+        af = Cop::Style::ArgumentsForwarding.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -402,11 +404,12 @@ module Shirobai
           num(dm[0]), # DuplicateMethods ActiveSupportExtensionsEnabled
           *ara, # ArrayAlignment style / indent (2 nums)
           *rf[0], # RedundantFreeze target_ruby_30_plus / string_literals_frozen_by_default (2 nums)
-          *fslc[0] # FrozenStringLiteralComment style (1 num)
+          *fslc[0], # FrozenStringLiteralComment style (1 num)
+          *af[0] # ArgumentsForwarding target_ruby / allow_only_rest / use_anon / explicit_block (4 nums)
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0], aba[0],
-                 cl[2], mol[2]]
+                 cl[2], mol[2], *af[1]]
 
         # One sub-array per origin: `nums[origin]` / `lists[origin]`. Core is
         # origin 0; every plugin origin packs its registered segment or the
