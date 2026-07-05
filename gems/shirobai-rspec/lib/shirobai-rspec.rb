@@ -72,8 +72,14 @@ module Shirobai
       #
       # Contract for malformed configs: when the department or Language hash
       # is missing (e.g. rubocop-rspec required as a library without
-      # `plugins:`, where every RSpec cop resolves to `Enabled: false`), the
-      # segment is dormant. Non-Array role values and non-String list
+      # `plugins:`, so its default.yml was never merged), the segment is
+      # dormant. Note that a dormant segment only covers shirobai's side:
+      # without `plugins:` the stock RSpec cops usually resolve to
+      # `Enabled: false`, but `NewCops: enable` turns them on without their
+      # default.yml Includes, and the non-replaced stock cops then fire on
+      # non-spec files. That is a user misconfiguration outside shirobai's
+      # control; shirobai's own segment stays dormant either way.
+      # Non-Array role values and non-String list
       # entries are dropped — a Symbol in a role list never matches in
       # stock either (`Array#include?` compares against `element.to_s`).
       def segment(config)

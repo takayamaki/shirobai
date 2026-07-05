@@ -57,6 +57,24 @@ Benchmarks and the parity oracle.
       branch (`Gemfile.realconfig.main`, needs `SHIROBAI_MAIN_TREE`). Run
       alongside `shirobai` to compare branch vs main on the same runner
       (`branch - main`, the decision line) without cross-run noise.
+    - `plugins` — rubocop + shirobai core + the plugin shells
+      (shirobai-performance / shirobai-rspec) from this tree
+      (`Gemfile.realconfig.plugins`). This is the release instrument for
+      the plugin replacement: it measures the plugin cops end to end. Each
+      shell is required only when the corpus's resolved config really loads
+      the matching stock plugin — the same require line a real user would
+      write. Force-requiring shirobai-rspec on a corpus that never loads
+      rubocop-rspec pulls in the stock rubocop-rspec cops without their
+      default.yml Includes, and under `NewCops: enable` the non-replaced
+      ones fire on non-spec files (seen on Redmine). The summary adds
+      `plugins saving` (`stock - plugins`) and `plugin effect`
+      (`shirobai - plugins`, the extra speed the plugin cops add on top of
+      core-only shirobai).
+    - `plugins-main` — the same trio from a second checkout of the main
+      branch (`Gemfile.realconfig.plugins.main`, needs `SHIROBAI_MAIN_TREE`),
+      with the same conditional requires as `plugins`. Run alongside
+      `plugins` to compare a plugin-cop branch vs main on the same runner
+      (`plugins: branch - main`, the decision line for plugin branches).
   - `VERIFY=1` runs each mode once with JSON output first and fails when a
     shirobai-family mode's offense set differs from stock. These runs also
     warm the file cache.
@@ -84,10 +102,18 @@ gh workflow run bench.yml -f modes="stock shirobai"            # pick modes
 gh workflow run bench.yml --ref my-branch                      # bench a branch
 ```
 
-When `modes` is empty the workflow picks them by ref: `stock removed shirobai`
-on main, plus `main` on a branch (so a branch is compared against main on the
-same runner). A branch run adds a second checkout of main, builds it, and
-installs `Gemfile.realconfig.main`.
+When `modes` is empty the workflow picks them by ref. On main it runs
+`stock removed shirobai plugins`: main carries the plugins release instrument,
+so it also measures shirobai-performance + shirobai-rspec end to end. On a
+branch it runs `stock removed shirobai main`, so the branch is compared against
+main on the same runner. A branch run adds a second checkout of main, builds
+it, and installs `Gemfile.realconfig.main`.
+
+A plugin-cop branch opts into the plugin comparison explicitly with
+`-f modes="stock shirobai plugins plugins-main"`. `plugins-main` reuses the
+same second checkout of main (its name contains `main`, so the checkout/build
+steps fire for it too) and installs `Gemfile.realconfig.plugins.main`. The
+`plugins: branch - main` row is then the decision line for the plugin branch.
 
 Runner times are slower and noisier than the README numbers
 (shared 4-vCPU runners); do not compare seconds across runs. Trust the
