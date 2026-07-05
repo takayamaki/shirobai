@@ -1178,6 +1178,100 @@ fn map_block_delimiters(
     (offenses, r.send_ignores, r.has_conditional)
 }
 
+/// `Performance/Detect`: `[[sel_start, sel_end, recv_end, outer_end, message,
+/// replacement], ...]` — `[sel_start, sel_end)` is the inner selector
+/// (`select` / `find_all` / `filter`): offense highlight start and the
+/// autocorrect replace target. `[recv_end, outer_end)` is the removal range
+/// (`.first` / `[0]` tail); `outer_end` is also the offense highlight end.
+fn map_perf_detect(
+    v: Vec<shirobai_core::rules::perf_detect::PerfDetectOffense>,
+) -> Vec<(usize, usize, usize, usize, String, String)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.sel_start,
+                o.sel_end,
+                o.recv_end,
+                o.outer_end,
+                o.message,
+                o.replacement,
+            )
+        })
+        .collect()
+}
+
+/// `Performance/StringInclude`: `[[start, end, negation, recv_start,
+/// recv_end, dot, content], ...]` — `[start, end)` is the whole node
+/// (offense highlight and autocorrect replace target); `negation` is 1 for
+/// the plain-send `!~` form; `[recv_start, recv_end)` is the node that
+/// becomes the `include?` receiver; `dot` is the call operator token (`.`
+/// when absent); `content` is the RAW regexp source (the wrapper runs
+/// stock's `interpret_string_escapes` / `to_string_literal` on it).
+fn map_perf_string_include(
+    v: Vec<shirobai_core::rules::perf_string_include::PerfStringIncludeOffense>,
+) -> Vec<(usize, usize, u8, usize, usize, String, String)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.start,
+                o.end,
+                u8::from(o.negation),
+                o.recv_start,
+                o.recv_end,
+                o.dot,
+                o.content,
+            )
+        })
+        .collect()
+}
+
+/// `Performance/EndWith` / `Performance/StartWith`: `[[start, end,
+/// recv_start, recv_end, dot, content], ...]` — `[start, end)` is the whole
+/// node (offense highlight and autocorrect replace target); `[recv_start,
+/// recv_end)` is the node that becomes the `end_with?` / `start_with?`
+/// receiver; `dot` is the call operator token (`.` when absent); `content`
+/// is the RAW regexp source with the anchor still attached (the wrapper
+/// runs stock's `drop_{end,start}_metacharacter` +
+/// `interpret_string_escapes` / `to_string_literal`).
+fn map_perf_end_with(
+    v: Vec<shirobai_core::rules::perf_end_with::PerfEndWithOffense>,
+) -> Vec<(usize, usize, usize, usize, String, String)> {
+    v.into_iter()
+        .map(|o| (o.start, o.end, o.recv_start, o.recv_end, o.dot, o.content))
+        .collect()
+}
+
+/// See [`map_perf_end_with`] — identical wire shape.
+fn map_perf_start_with(
+    v: Vec<shirobai_core::rules::perf_start_with::PerfStartWithOffense>,
+) -> Vec<(usize, usize, usize, usize, String, String)> {
+    v.into_iter()
+        .map(|o| (o.start, o.end, o.recv_start, o.recv_end, o.dot, o.content))
+        .collect()
+}
+
+/// `Performance/TimesMap`: `[[start, end, replace_start, replace_end,
+/// message, replacement], ...]` — `[start, end)` is the whole node (offense
+/// highlight); `[replace_start, replace_end)` is the parser-send range of
+/// the `x.times.map(...)` call without its literal block (autocorrect
+/// replace target); `replacement` is the full `Array.new(...)` text.
+fn map_perf_times_map(
+    v: Vec<shirobai_core::rules::perf_times_map::PerfTimesMapOffense>,
+) -> Vec<(usize, usize, usize, usize, String, String)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.start,
+                o.end,
+                o.replace_start,
+                o.replace_end,
+                o.message,
+                o.replacement,
+            )
+        })
+        .collect()
+}
+
 thread_local! {
     /// Bundle configs registered by `register_bundle_config` (token = index,
     /// no eviction: a lint run registers one entry per distinct `Config`
@@ -1188,12 +1282,13 @@ thread_local! {
 }
 
 /// Ruby entry point registering a packed [`BundleConfig`] for `check_all`.
-/// `nums` / `lists` follow the packing order documented on `BundleConfig`.
-/// Returns the token to pass to `check_all`.
+/// `nums` / `lists` carry one sub-array per origin (core first, then the
+/// shirobai-performance plugin), following the per-origin packing order
+/// documented on `BundleConfig`. Returns the token to pass to `check_all`.
 fn register_bundle_config(
     ruby: &Ruby,
-    nums: Vec<i64>,
-    lists: Vec<Vec<String>>,
+    nums: Vec<Vec<i64>>,
+    lists: Vec<Vec<Vec<String>>>,
 ) -> Result<usize, Error> {
     let cfg = BundleConfig::from_packed(&nums, lists)
         .map_err(|e| Error::new(ruby.exception_arg_error(), e))?;
@@ -1205,10 +1300,15 @@ fn register_bundle_config(
 }
 
 /// Ruby entry point for the all-cop bundle: computes every cop's result for
-/// `source` in one call, using the config registered under `token`. Returns a
-/// fixed-order 88-slot Array; each slot carries that cop's existing tuple-array
-/// shape (identical to the standalone entry point's return value). The slot
-/// order is mirrored by `Shirobai::Dispatch::SLOTS` on the Ruby side:
+/// `source` in one call, using the config registered under `token`. Returns
+/// one fixed-order Array per origin, wrapped in an outer Array indexed like
+/// `BundleConfig`'s origins (`result[origin][rule]`; origin 0 = core,
+/// 1 = shirobai-performance). Each rule slot carries that cop's existing
+/// tuple-array shape (identical to the standalone entry point's return
+/// value). The `[origin, rule]` pairs are mirrored by
+/// `Shirobai::Dispatch::SLOTS` on the Ruby side.
+///
+/// Core slots (origin 0):
 ///
 /// 0 debugger / 1 block_length / 2 block_nesting / 3 complexity /
 /// 4 variable_number / 5 method_name / 6 safe_navigation_chain /
@@ -1251,6 +1351,12 @@ fn register_bundle_config(
 /// 84 space_before_first_arg /
 /// 85 duplicate_magic_comment / 86 duplicate_methods /
 /// 87 array_alignment
+///
+/// Performance slots (origin 1; every slot empty unless the plugin gem
+/// registered its packed segment):
+///
+/// 0 perf_detect / 1 perf_string_include / 2 perf_end_with /
+/// 3 perf_start_with / 4 perf_times_map
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1261,6 +1367,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
+        // Core origin (result[0]).
         let ary = ruby.ary_new_capa(88);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
@@ -1393,7 +1500,19 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(r.duplicate_magic_comment)?;
         ary.push(map_duplicate_methods(r.duplicate_methods))?;
         ary.push(map_array_alignment(r.array_alignment))?;
-        Ok(ary)
+        // Performance origin (result[1]).
+        let perf = ruby.ary_new_capa(5);
+        perf.push(map_perf_detect(r.perf_detect))?;
+        perf.push(map_perf_string_include(r.perf_string_include))?;
+        perf.push(map_perf_end_with(r.perf_end_with))?;
+        perf.push(map_perf_start_with(r.perf_start_with))?;
+        perf.push(map_perf_times_map(r.perf_times_map))?;
+        // The nested result is N_ORIGINS + 1 arrays per file (the outer
+        // one plus one per origin), nothing per cop.
+        let out = ruby.ary_new_capa(2);
+        out.push(ary)?;
+        out.push(perf)?;
+        Ok(out)
     })
 }
 
@@ -2969,6 +3088,66 @@ fn check_colon_method_call(source: RString) -> Vec<(usize, usize)> {
     )
 }
 
+/// Ruby entry point for `Performance/Detect` (shirobai-performance).
+/// `preferred` is `Style/CollectionMethods` `PreferredMethods['detect']`
+/// resolved on the Ruby side (`detect` when unset). Returns the
+/// `map_perf_detect` tuple shape.
+fn check_perf_detect(
+    source: RString,
+    preferred: String,
+) -> Vec<(usize, usize, usize, usize, String, String)> {
+    map_perf_detect(shirobai_core::rules::perf_detect::check_perf_detect(
+        bytes(&source),
+        &preferred,
+    ))
+}
+
+/// Ruby entry point for `Performance/StringInclude` (shirobai-performance).
+/// Config-less. Returns the `map_perf_string_include` tuple shape.
+fn check_perf_string_include(
+    source: RString,
+) -> Vec<(usize, usize, u8, usize, usize, String, String)> {
+    map_perf_string_include(
+        shirobai_core::rules::perf_string_include::check_perf_string_include(bytes(&source)),
+    )
+}
+
+/// Ruby entry point for `Performance/EndWith` (shirobai-performance).
+/// `safe_multiline` is the cop's `SafeMultiline`. Returns the
+/// `map_perf_end_with` tuple shape.
+fn check_perf_end_with(
+    source: RString,
+    safe_multiline: bool,
+) -> Vec<(usize, usize, usize, usize, String, String)> {
+    map_perf_end_with(shirobai_core::rules::perf_end_with::check_perf_end_with(
+        bytes(&source),
+        safe_multiline,
+    ))
+}
+
+/// Ruby entry point for `Performance/StartWith` (shirobai-performance).
+/// `safe_multiline` is the cop's `SafeMultiline`. Returns the
+/// `map_perf_start_with` tuple shape.
+fn check_perf_start_with(
+    source: RString,
+    safe_multiline: bool,
+) -> Vec<(usize, usize, usize, usize, String, String)> {
+    map_perf_start_with(shirobai_core::rules::perf_start_with::check_perf_start_with(
+        bytes(&source),
+        safe_multiline,
+    ))
+}
+
+/// Ruby entry point for `Performance/TimesMap` (shirobai-performance).
+/// Config-less. Returns the `map_perf_times_map` tuple shape.
+fn check_perf_times_map(
+    source: RString,
+) -> Vec<(usize, usize, usize, usize, String, String)> {
+    map_perf_times_map(shirobai_core::rules::perf_times_map::check_perf_times_map(
+        bytes(&source),
+    ))
+}
+
 /// Ruby entry point for `Lint/UnreachableCode`. Config-less. Returns
 /// `[[start, end], ...]` — the byte range of each unreachable expression.
 fn check_unreachable_code(source: RString) -> Vec<(usize, usize)> {
@@ -3383,6 +3562,20 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_colon_method_call",
         function!(check_colon_method_call, 1),
+    )?;
+    module.define_module_function("check_perf_detect", function!(check_perf_detect, 2))?;
+    module.define_module_function(
+        "check_perf_string_include",
+        function!(check_perf_string_include, 1),
+    )?;
+    module.define_module_function("check_perf_end_with", function!(check_perf_end_with, 2))?;
+    module.define_module_function(
+        "check_perf_start_with",
+        function!(check_perf_start_with, 2),
+    )?;
+    module.define_module_function(
+        "check_perf_times_map",
+        function!(check_perf_times_map, 1),
     )?;
     module.define_module_function(
         "check_stabby_lambda_parentheses",

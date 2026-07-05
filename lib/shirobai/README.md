@@ -16,7 +16,13 @@ Ruby layer of shirobai.
 - `dispatch.rb` — Per-file coordinator.
   Memoizes `Shirobai.check_all(src, token)` by (raw_source identity, config identity)
   so the first cop triggers one Rust call and the rest pull from the cache.
-  `Dispatch::SLOTS` is the single source of cop-to-slot mapping.
+  `Dispatch::SLOTS` is the single source of cop-to-slot mapping:
+  `[origin, rule]` pairs into the per-origin result
+  (`result[origin][rule]`; `Dispatch::ORIGINS` fixes the origin order).
+  Plugin gems (gems/shirobai-performance) register their packed-config
+  segment with `Dispatch.register_plugin_packer`; the dormant default
+  keeps the Rust-side plugin rules asleep when the plugin gem is not
+  loaded.
 - `source_offsets.rb` — Converts byte offsets (prism) to char offsets (parser-gem).
   ASCII fast path: one `ascii_only?` check per source, identity conversion if true.
 - `cop/base.rb` — Shared base for all wrapper cops.

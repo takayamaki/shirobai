@@ -44,6 +44,10 @@ The image is simple: RuboCop hops on a shiro-bai and gets faster.
 ## Current status
 
 - **88 cops** reimplemented in Rust (Lint / Layout / Metrics / Naming / Style).
+- **Plugin-cop proof of concept**: `gems/shirobai-performance` replaces
+  5 rubocop-performance cops through the same shared native extension.
+  See `docs/cop-status.md` and `gems/shirobai-performance/README.md`;
+  the setup below describes the core gem only.
 - **Full drop-in compatibility** verified on real codebases.
   For every implemented cop, every offense position, message,
   and autocorrected byte matches stock RuboCop.
@@ -195,9 +199,11 @@ Each directory has its own `README.md` with details.
 | `lib/shirobai/` | Ruby wrappers, Dispatch, SourceOffsets, inject |
 | `crates/shirobai-core/` | Rust analysis core (per-cop rules + shared walk) |
 | `ext/shirobai/` | magnus bridge (cdylib) |
-| `benches/` | Benchmarks and the parity oracle |
+| `benches/` | Benchmarks and the parity oracles |
 | `spec/` | RSpec, vendor spec inclusion, edge-case parity |
 | `vendor/rubocop/` | Git submodule pinned to 1.88.0 for vendor specs |
+| `gems/shirobai-performance/` | Plugin gem PoC (rubocop-performance cops) |
+| `vendor/rubocop-performance/` | Git submodule pinned to 1.26.1 for plugin vendor specs |
 
 ## Building and testing
 

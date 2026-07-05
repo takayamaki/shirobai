@@ -63,26 +63,40 @@ impl Rule for NoopRule {
     }
 }
 
-fn read_packed(path: &str) -> (Vec<i64>, Vec<Vec<String>>) {
+/// Reads one or more packed segments (nums line, list count, lists), one per
+/// origin, matching the per-origin wire format. A single-segment dump (a
+/// core-only config) gets the dormant performance segment appended so old
+/// dump scripts keep working after regeneration.
+fn read_packed(path: &str) -> (Vec<Vec<i64>>, Vec<Vec<Vec<String>>>) {
     let text = std::fs::read_to_string(path).expect("packed config file");
-    let mut lines = text.lines();
-    let nums: Vec<i64> = lines
-        .next()
-        .expect("nums line")
-        .split_whitespace()
-        .map(|t| t.parse().expect("num"))
-        .collect();
-    let list_count: usize = lines.next().expect("list count").parse().expect("count");
-    let mut lists = Vec::with_capacity(list_count);
-    for _ in 0..list_count {
-        let k: usize = lines.next().expect("list len").parse().expect("len");
-        let mut items = Vec::with_capacity(k);
-        for _ in 0..k {
-            items.push(lines.next().expect("list item").to_string());
+    let mut lines = text.lines().peekable();
+    let mut packed_nums = Vec::new();
+    let mut packed_lists = Vec::new();
+    while lines.peek().is_some_and(|l| !l.trim().is_empty()) {
+        let nums: Vec<i64> = lines
+            .next()
+            .expect("nums line")
+            .split_whitespace()
+            .map(|t| t.parse().expect("num"))
+            .collect();
+        let list_count: usize = lines.next().expect("list count").parse().expect("count");
+        let mut lists = Vec::with_capacity(list_count);
+        for _ in 0..list_count {
+            let k: usize = lines.next().expect("list len").parse().expect("len");
+            let mut items = Vec::with_capacity(k);
+            for _ in 0..k {
+                items.push(lines.next().expect("list item").to_string());
+            }
+            lists.push(items);
         }
-        lists.push(items);
+        packed_nums.push(nums);
+        packed_lists.push(lists);
     }
-    (nums, lists)
+    if packed_nums.len() == 1 {
+        packed_nums.push(vec![0, 0, 0]);
+        packed_lists.push(vec![vec![]]);
+    }
+    (packed_nums, packed_lists)
 }
 
 /// Per-rule attribution: each standalone `check_*` entry drives its own walk

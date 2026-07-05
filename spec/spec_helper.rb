@@ -40,8 +40,10 @@ end
 module VendorSpecHelper
   VENDOR_SPEC_ROOT = File.expand_path("../vendor/rubocop/spec", __dir__)
 
-  def self.load_vendor_spec(example_group, relative_path, pending: [])
-    full_path = File.join(VENDOR_SPEC_ROOT, relative_path)
+  # `root` defaults to the rubocop submodule; plugin gem suites (e.g.
+  # gems/shirobai-performance) pass their own vendor spec root.
+  def self.load_vendor_spec(example_group, relative_path, pending: [], root: VENDOR_SPEC_ROOT)
+    full_path = File.join(root, relative_path)
     source = File.read(full_path)
 
     first_line = source.index(/^RSpec\.describe\b/)

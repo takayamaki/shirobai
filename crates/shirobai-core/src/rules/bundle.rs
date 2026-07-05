@@ -33,6 +33,7 @@ use super::{
     multiline_method_call_brace_layout, nested_parenthesized_calls,
     parentheses_as_grouped_expression,
     percent_literal_delimiters,
+    perf_detect, perf_end_with, perf_start_with, perf_string_include, perf_times_map,
     predicate_prefix, punctuation_spacing, redundant_self, redundant_self_assignment,
     require_parentheses, safe_navigation_chain, self_assignment,
     space_around_keyword, space_around_method_call_operator, space_before_block_braces,
@@ -69,12 +70,15 @@ pub fn check_multiline_bundle(
 /// Every cop's packed configuration for [`check_all_bundle`]: exactly the
 /// values the per-cop entry points receive from the Ruby wrappers today.
 ///
-/// Built from the flat `(nums, lists)` wire format via [`BundleConfig::from_packed`].
-/// This is the single place that documents the packing order; the Ruby side
-/// (`Shirobai::Dispatch.packed_config`) assembles the two arrays in the same
-/// order.
+/// Built from the per-origin wire format via [`BundleConfig::from_packed`]:
+/// `nums` and `lists` are one sub-array per origin (outer index
+/// [`ORIGIN_CORE`] = 0, [`ORIGIN_PERFORMANCE`] = 1, mirroring
+/// `Shirobai::Dispatch::ORIGINS`), so one origin's segment can grow without
+/// shifting any other origin's offsets. This is the single place that
+/// documents each segment's packing order; the Ruby side
+/// (`Shirobai::Dispatch.packed_config`) assembles the same structure.
 ///
-/// `nums` (`i64`, booleans are `0`/`1`), 38 entries:
+/// Core segment `nums[0]` (`i64`, booleans are `0`/`1`):
 ///
 /// | idx | field |
 /// |-----|-------|
@@ -161,7 +165,7 @@ pub fn check_multiline_bundle(
 /// | 112 | array_alignment style (`EnforcedStyle`: 0 = with_first_element, 1 = with_fixed_indentation) |
 /// | 113 | array_alignment indentation width (`IndentationWidth` falling back to `Layout/IndentationWidth.Width` falling back to 2) |
 ///
-/// `lists` (`Vec<String>`), 20 entries:
+/// Core segment `lists[0]` (`Vec<String>`):
 ///
 /// | idx | field |
 /// |-----|-------|
@@ -190,6 +194,25 @@ pub fn check_multiline_bundle(
 /// | 22  | ambiguous_block_association_allowed_methods (`Lint/AmbiguousBlockAssociation` `AllowedMethods`, regexp entries dropped by the Ruby wrapper which falls back to standalone when any regexp is present) |
 /// | 23  | class_length_count_as_one (`Metrics/ClassLength` `CountAsOne`) |
 /// | 24  | module_length_count_as_one (`Metrics/ModuleLength` `CountAsOne`) |
+///
+/// Performance segment `nums[1]` (the shirobai-performance plugin origin):
+///
+/// | idx | field |
+/// |-----|-------|
+/// |  0  | performance_enabled — the plugin gem's wake-up flag. `0` (core-only install) keeps every Performance rule out of the walk and its slots empty |
+/// |  1  | perf_end_with_safe_multiline (`Performance/EndWith` `SafeMultiline`) |
+/// |  2  | perf_start_with_safe_multiline (`Performance/StartWith` `SafeMultiline`) |
+///
+/// Performance segment `lists[1]`:
+///
+/// | idx | field |
+/// |-----|-------|
+/// |  0  | perf_detect_preferred_method (`Performance/Detect`'s view of `Style/CollectionMethods` `PreferredMethods['detect']`, one entry; empty means `detect`) |
+///
+/// The core gem packs the dormant performance segment (`[0, 0, 0]` /
+/// `[[]]`) when the plugin gem is not loaded; the plugin gem registers a
+/// packer on `Shirobai::Dispatch.register_plugin_packer(:performance)` that
+/// fills real values and flips `performance_enabled`.
 ///
 /// `Layout/IndentationWidth`'s `allowed_lines` and `prior_ranges` are fixed to
 /// empty in the bundle: the non-empty cases (configured `AllowedPatterns`,
@@ -291,33 +314,95 @@ pub struct BundleConfig {
     pub space_inside_reference_brackets: space_inside_reference_brackets::Config,
     pub space_before_first_arg: space_before_first_arg::Config,
     pub duplicate_methods: duplicate_methods::Config,
+    /// `Some` only when the shirobai-performance plugin gem is loaded on the
+    /// Ruby side (`performance_enabled` num is 1). `None` keeps the
+    /// Performance rules out of the shared walk entirely — their slots are
+    /// pushed as empty arrays that no wrapper cop ever reads.
+    pub performance: Option<PerformanceConfig>,
+}
+
+/// Packed configuration for the shirobai-performance plugin cops.
+#[derive(Debug, Clone)]
+pub struct PerformanceConfig {
+    /// `Performance/Detect`'s preferred replacement method
+    /// (`Style/CollectionMethods` `PreferredMethods['detect']`, `detect` when
+    /// unset — `find` under RuboCop's default configuration).
+    pub detect_preferred_method: String,
+    /// `Performance/EndWith` `SafeMultiline`.
+    pub end_with_safe_multiline: bool,
+    /// `Performance/StartWith` `SafeMultiline`.
+    pub start_with_safe_multiline: bool,
 }
 
 // `Lint/ParenthesesAsGroupedExpression` carries no config so it doesn't appear
 // in the `nums` / `lists` packing; the bundle still computes its slot in the
 // shared walk (see `check_all_bundle` below).
 
-const NUMS_LEN: usize = 114;
-const LISTS_LEN: usize = 25;
+/// Fixed origin order of the packed config and of the `check_all` result
+/// slots: outer index 0 is the core batch, 1 the shirobai-performance
+/// plugin. Mirrors `Shirobai::Dispatch::ORIGINS` on the Ruby side; adding a
+/// plugin origin means one entry there and one constant (plus lengths) here.
+pub const ORIGIN_CORE: usize = 0;
+pub const ORIGIN_PERFORMANCE: usize = 1;
+pub const N_ORIGINS: usize = 2;
+
+const CORE_NUMS_LEN: usize = 114;
+const CORE_LISTS_LEN: usize = 25;
+const PERF_NUMS_LEN: usize = 3;
+const PERF_LISTS_LEN: usize = 1;
 
 impl BundleConfig {
-    /// Build a config from the flat wire format (see the struct docs for the
-    /// packing order). Errors on a length mismatch so a Ruby/Rust drift fails
-    /// loudly instead of silently misassigning fields.
-    pub fn from_packed(nums: &[i64], lists: Vec<Vec<String>>) -> Result<Self, String> {
-        if nums.len() != NUMS_LEN {
+    /// Build a config from the per-origin wire format (see the struct docs
+    /// for each segment's packing order). Errors on any length mismatch so a
+    /// Ruby/Rust drift fails loudly instead of silently misassigning fields.
+    pub fn from_packed(
+        packed_nums: &[Vec<i64>],
+        packed_lists: Vec<Vec<Vec<String>>>,
+    ) -> Result<Self, String> {
+        if packed_nums.len() != N_ORIGINS {
             return Err(format!(
-                "bundle config expects {NUMS_LEN} nums, got {}",
+                "bundle config expects {N_ORIGINS} num segments, got {}",
+                packed_nums.len()
+            ));
+        }
+        if packed_lists.len() != N_ORIGINS {
+            return Err(format!(
+                "bundle config expects {N_ORIGINS} list segments, got {}",
+                packed_lists.len()
+            ));
+        }
+        // The core segment: every `nums[i]` read below indexes into it, so
+        // the field assignments are unchanged from the flat format days.
+        let nums = &packed_nums[ORIGIN_CORE];
+        if nums.len() != CORE_NUMS_LEN {
+            return Err(format!(
+                "core segment expects {CORE_NUMS_LEN} nums, got {}",
                 nums.len()
             ));
         }
-        if lists.len() != LISTS_LEN {
+        let perf_nums = &packed_nums[ORIGIN_PERFORMANCE];
+        if perf_nums.len() != PERF_NUMS_LEN {
             return Err(format!(
-                "bundle config expects {LISTS_LEN} lists, got {}",
-                lists.len()
+                "performance segment expects {PERF_NUMS_LEN} nums, got {}",
+                perf_nums.len()
             ));
         }
-        let mut lists = lists.into_iter();
+        let mut segments = packed_lists.into_iter();
+        let core_lists = segments.next().expect("length checked above");
+        let perf_lists = segments.next().expect("length checked above");
+        if core_lists.len() != CORE_LISTS_LEN {
+            return Err(format!(
+                "core segment expects {CORE_LISTS_LEN} lists, got {}",
+                core_lists.len()
+            ));
+        }
+        if perf_lists.len() != PERF_LISTS_LEN {
+            return Err(format!(
+                "performance segment expects {PERF_LISTS_LEN} lists, got {}",
+                perf_lists.len()
+            ));
+        }
+        let mut lists = core_lists.into_iter();
         let mut next_list = || lists.next().expect("length checked above");
         Ok(BundleConfig {
             debugger_methods: next_list(),
@@ -556,6 +641,27 @@ impl BundleConfig {
             duplicate_methods: duplicate_methods::Config {
                 active_support_extensions_enabled: nums[111] != 0,
             },
+            // The shirobai-performance origin, read from its own segment —
+            // core growth can never shift these offsets again.
+            performance: {
+                if perf_nums[0] != 0 {
+                    let preferred = perf_lists
+                        .into_iter()
+                        .next()
+                        .expect("length checked above")
+                        .into_iter()
+                        .next()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| "detect".to_string());
+                    Some(PerformanceConfig {
+                        detect_preferred_method: preferred,
+                        end_with_safe_multiline: perf_nums[1] != 0,
+                        start_with_safe_multiline: perf_nums[2] != 0,
+                    })
+                } else {
+                    None
+                }
+            },
         })
     }
 }
@@ -707,6 +813,13 @@ pub struct BundleResult {
     /// Per-file `found_method` event stream in stock callback order (the
     /// Ruby wrapper replays the cross-file bookkeeping).
     pub duplicate_methods: Vec<duplicate_methods::DupMethodEvent>,
+    /// shirobai-performance plugin slots. Always present in the wire format;
+    /// empty when `BundleConfig::performance` is `None` (plugin not loaded).
+    pub perf_detect: Vec<perf_detect::PerfDetectOffense>,
+    pub perf_string_include: Vec<perf_string_include::PerfStringIncludeOffense>,
+    pub perf_end_with: Vec<perf_end_with::PerfEndWithOffense>,
+    pub perf_start_with: Vec<perf_start_with::PerfStartWithOffense>,
+    pub perf_times_map: Vec<perf_times_map::PerfTimesMapOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -903,6 +1016,28 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // shape simple — `el_rule` is consumed only on the eligible path.
     let empty_lines_eligible = empty_lines::contains_newline_triple(source);
     let mut el_rule = empty_lines::build_rule(source);
+    // shirobai-performance plugin rules: built and driven only when the
+    // plugin gem woke the segment up. A core-only install pays nothing here.
+    let mut pd_rule = cfg
+        .performance
+        .as_ref()
+        .map(|p| perf_detect::build_rule(&p.detect_preferred_method));
+    let mut psi_rule = cfg
+        .performance
+        .as_ref()
+        .map(|_| perf_string_include::build_rule());
+    let mut pew_rule = cfg
+        .performance
+        .as_ref()
+        .map(|p| perf_end_with::build_rule(p.end_with_safe_multiline));
+    let mut psw_rule = cfg
+        .performance
+        .as_ref()
+        .map(|p| perf_start_with::build_rule(p.start_with_safe_multiline));
+    let mut ptm_rule = cfg
+        .performance
+        .as_ref()
+        .map(|_| perf_times_map::build_rule());
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -984,6 +1119,21 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     if let Some(rule) = fae_rule.as_mut() {
         rules.push(rule);
     }
+    if let Some(rule) = pd_rule.as_mut() {
+        rules.push(rule);
+    }
+    if let Some(rule) = psi_rule.as_mut() {
+        rules.push(rule);
+    }
+    if let Some(rule) = pew_rule.as_mut() {
+        rules.push(rule);
+    }
+    if let Some(rule) = psw_rule.as_mut() {
+        rules.push(rule);
+    }
+    if let Some(rule) = ptm_rule.as_mut() {
+        rules.push(rule);
+    }
     super::dispatch::run(source, &mut rules);
 
     let multiline_operation = op_rule.offenses;
@@ -991,6 +1141,11 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let argument_alignment = aa_rule.map(|r| r.offenses).unwrap_or_default();
     let array_alignment = ara_rule.offenses;
     let first_argument_indentation = fa_rule.map(|r| r.offenses).unwrap_or_default();
+    let perf_detect = pd_rule.map(|r| r.offenses).unwrap_or_default();
+    let perf_string_include = psi_rule.map(|r| r.offenses).unwrap_or_default();
+    let perf_end_with = pew_rule.map(|r| r.offenses).unwrap_or_default();
+    let perf_start_with = psw_rule.map(|r| r.offenses).unwrap_or_default();
+    let perf_times_map = ptm_rule.map(|r| r.offenses).unwrap_or_default();
     let safe_navigation_chain = snc_rule.offenses;
     let indentation_width = iw_rule.offenses;
     let debugger = debugger_rule.offenses;
@@ -1181,6 +1336,11 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         space_before_first_arg,
         duplicate_magic_comment,
         duplicate_methods: dm_rule.events,
+        perf_detect,
+        perf_string_include,
+        perf_end_with,
+        perf_start_with,
+        perf_times_map,
     }
 }
 
@@ -1215,7 +1375,7 @@ mod tests {
 
     /// A packed config with RuboCop-default-ish values, mirroring what the
     /// Ruby side sends for an all-defaults run.
-    fn default_packed() -> (Vec<i64>, Vec<Vec<String>>) {
+    fn default_packed() -> (Vec<Vec<i64>>, Vec<Vec<Vec<String>>>) {
         let nums = vec![
             25, 0, 1, // block_length: max / count_comments / filtered
             3, 0, 0, // block_nesting: max / count_blocks / count_modifier_forms
@@ -1321,7 +1481,12 @@ mod tests {
             vec![], // class_length: count_as_one
             vec![], // module_length: count_as_one
         ];
-        (nums, lists)
+        // Performance segment (origin 1): enabled, with the SafeMultiline
+        // defaults and RuboCop's default preferred method for Detect
+        // (`PreferredMethods['detect']` resolves to `find`).
+        let perf_nums = vec![1, 1, 1];
+        let perf_lists = vec![vec!["find".to_string()]];
+        (vec![nums, perf_nums], vec![lists, perf_lists])
     }
 
     #[test]
@@ -1360,11 +1525,188 @@ mod tests {
     }
 
     #[test]
+    fn from_packed_reads_performance_segment() {
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let perf = cfg.performance.expect("enabled in default_packed");
+        assert_eq!(perf.detect_preferred_method, "find");
+        assert!(perf.end_with_safe_multiline);
+        assert!(perf.start_with_safe_multiline);
+    }
+
+    #[test]
+    fn dormant_performance_segment_keeps_slots_empty() {
+        // A core-only install packs `performance_enabled = 0`: the rules stay
+        // out of the walk and the plugin slots stay empty even on source
+        // that would otherwise flag.
+        let src = "[1, 2].select { |i| i.odd? }.first\n";
+        let (mut nums, lists) = default_packed();
+        nums[1][0] = 0;
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        assert!(cfg.performance.is_none());
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        assert!(bundle.perf_detect.is_empty());
+        assert!(bundle.perf_string_include.is_empty());
+    }
+
+    /// `Performance/StringInclude` merged into the shared walk must report
+    /// exactly what its standalone entry point reports.
+    #[test]
+    fn shared_walk_matches_standalone_perf_string_include() {
+        let src = "str.match?(/ab/)\n\
+                   /cd/ =~ other\n\
+                   name !~ /ef/\n\
+                   skip.match?(/a.b/)\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::perf_string_include::check_perf_string_include(src.as_bytes());
+        assert_eq!(alone.len(), 3);
+        assert_eq!(bundle.perf_string_include.len(), alone.len());
+        for (a, b) in bundle.perf_string_include.iter().zip(&alone) {
+            assert_eq!(
+                (a.start, a.end, a.negation, a.recv_start, a.recv_end),
+                (b.start, b.end, b.negation, b.recv_start, b.recv_end)
+            );
+            assert_eq!(a.dot, b.dot);
+            assert_eq!(a.content, b.content);
+        }
+    }
+
+    /// `Performance/Detect` merged into the shared walk must report exactly
+    /// what its standalone entry point reports, over a source exercising the
+    /// block, block-pass and index forms plus accepted shapes.
+    #[test]
+    fn shared_walk_matches_standalone_perf_detect() {
+        let src = "a.select { |i| i.odd? }.first\n\
+                   b.filter { |i| i.odd? }[-1]\n\
+                   c.find_all(&:odd?).last\n\
+                   d.lazy.select { |i| i.odd? }.first\n\
+                   e.select { }.first\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::perf_detect::check_perf_detect(src.as_bytes(), "find");
+        assert_eq!(alone.len(), 3);
+        assert_eq!(bundle.perf_detect.len(), alone.len());
+        for (a, b) in bundle.perf_detect.iter().zip(&alone) {
+            assert_eq!(
+                (a.sel_start, a.sel_end, a.recv_end, a.outer_end),
+                (b.sel_start, b.sel_end, b.recv_end, b.outer_end)
+            );
+            assert_eq!(a.message, b.message);
+            assert_eq!(a.replacement, b.replacement);
+        }
+    }
+
+    /// `Performance/EndWith` merged into the shared walk must report exactly
+    /// what its standalone entry point reports, including the SafeMultiline
+    /// `$`-anchor arm (nums[1][1]).
+    #[test]
+    fn shared_walk_matches_standalone_perf_end_with() {
+        let src = "str.match?(/bc\\z/)\n\
+                   /cd\\z/ =~ other\n\
+                   name.match?(/ef$/)\n\
+                   skip.match?(/bc/)\n";
+        for safe_multiline in [true, false] {
+            let (mut nums, lists) = default_packed();
+            nums[1][1] = i64::from(safe_multiline);
+            let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+            let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+            let alone =
+                super::perf_end_with::check_perf_end_with(src.as_bytes(), safe_multiline);
+            assert_eq!(alone.len(), if safe_multiline { 2 } else { 3 });
+            assert_eq!(bundle.perf_end_with.len(), alone.len());
+            for (a, b) in bundle.perf_end_with.iter().zip(&alone) {
+                assert_eq!(
+                    (a.start, a.end, a.recv_start, a.recv_end),
+                    (b.start, b.end, b.recv_start, b.recv_end)
+                );
+                assert_eq!(a.dot, b.dot);
+                assert_eq!(a.content, b.content);
+            }
+        }
+    }
+
+    /// `Performance/StartWith` merged into the shared walk must report
+    /// exactly what its standalone entry point reports, including the
+    /// SafeMultiline `^`-anchor arm (nums[1][2]).
+    #[test]
+    fn shared_walk_matches_standalone_perf_start_with() {
+        let src = "str.match?(/\\Abc/)\n\
+                   /\\Acd/ =~ other\n\
+                   name.match?(/^ef/)\n\
+                   skip.match?(/bc/)\n";
+        for safe_multiline in [true, false] {
+            let (mut nums, lists) = default_packed();
+            nums[1][2] = i64::from(safe_multiline);
+            let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+            let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+            let alone =
+                super::perf_start_with::check_perf_start_with(src.as_bytes(), safe_multiline);
+            assert_eq!(alone.len(), if safe_multiline { 2 } else { 3 });
+            assert_eq!(bundle.perf_start_with.len(), alone.len());
+            for (a, b) in bundle.perf_start_with.iter().zip(&alone) {
+                assert_eq!(
+                    (a.start, a.end, a.recv_start, a.recv_end),
+                    (b.start, b.end, b.recv_start, b.recv_end)
+                );
+                assert_eq!(a.dot, b.dot);
+                assert_eq!(a.content, b.content);
+            }
+        }
+    }
+
+    /// `Performance/TimesMap` merged into the shared walk must report exactly
+    /// what its standalone entry point reports, over the block, block-pass
+    /// and non-literal-count forms plus an accepted shape.
+    #[test]
+    fn shared_walk_matches_standalone_perf_times_map() {
+        let src = "5.times.map { |i| i.to_s }\n\
+                   n.times.collect(&:to_s)\n\
+                   foo&.times.map { |i| i }\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+
+        let alone = super::perf_times_map::check_perf_times_map(src.as_bytes());
+        assert_eq!(alone.len(), 2);
+        assert_eq!(bundle.perf_times_map.len(), alone.len());
+        for (a, b) in bundle.perf_times_map.iter().zip(&alone) {
+            assert_eq!(
+                (a.start, a.end, a.replace_start, a.replace_end),
+                (b.start, b.end, b.replace_start, b.replace_end)
+            );
+            assert_eq!(a.message, b.message);
+            assert_eq!(a.replacement, b.replacement);
+        }
+    }
+
+    #[test]
     fn from_packed_rejects_wrong_lengths() {
+        // Missing origin segment.
         let (nums, lists) = default_packed();
-        assert!(BundleConfig::from_packed(&nums[..NUMS_LEN - 1], lists).is_err());
+        assert!(BundleConfig::from_packed(&nums[..N_ORIGINS - 1], lists).is_err());
         let (nums, lists) = default_packed();
-        assert!(BundleConfig::from_packed(&nums, lists[..LISTS_LEN - 1].to_vec()).is_err());
+        assert!(BundleConfig::from_packed(&nums, lists[..N_ORIGINS - 1].to_vec()).is_err());
+        // Wrong length inside the core segment.
+        let (mut nums, lists) = default_packed();
+        nums[0].pop();
+        assert!(BundleConfig::from_packed(&nums, lists).is_err());
+        let (nums, mut lists) = default_packed();
+        lists[0].pop();
+        assert!(BundleConfig::from_packed(&nums, lists).is_err());
+        // Wrong length inside the performance segment.
+        let (mut nums, lists) = default_packed();
+        nums[1].pop();
+        assert!(BundleConfig::from_packed(&nums, lists).is_err());
+        let (nums, mut lists) = default_packed();
+        lists[1].pop();
+        assert!(BundleConfig::from_packed(&nums, lists).is_err());
     }
 
     /// The six dispatch-family cops merged into the shared walk must report
@@ -1656,9 +1998,9 @@ mod tests {
                    end\n\
                    /(?<m>a)/ =~ 'a'\n";
         let (mut nums, lists) = default_packed();
-        nums[0] = 2; // block_length max
-        nums[6] = 1; // max_cyclomatic
-        nums[7] = 1; // max_perceived
+        nums[0][0] = 2; // block_length max
+        nums[0][6] = 1; // max_cyclomatic
+        nums[0][7] = 1; // max_perceived
         let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
         let bundle = check_all_bundle(src.as_bytes(), &cfg);
 
@@ -1761,7 +2103,7 @@ mod tests {
                    \x20 end\n\
                    end\n";
         let (mut nums, lists) = default_packed();
-        nums[3] = 2; // block_nesting max
+        nums[0][3] = 2; // block_nesting max
         let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
         let bundle = check_all_bundle(src.as_bytes(), &cfg);
 
@@ -2334,7 +2676,7 @@ mod tests {
                    \x20 end\n\
                    end\n";
         let (mut nums, lists) = default_packed();
-        nums[45] = 0; // report every method
+        nums[0][45] = 0; // report every method
         let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
         let bundle = check_all_bundle(src.as_bytes(), &cfg);
 
@@ -2371,7 +2713,7 @@ mod tests {
                    define_method(:c) do\n  z = 1\n  z = 2\n  z = 3\nend\n\
                    define_method(name) do\n  w = 1\n  w = 2\n  w = 3\nend\n";
         let (mut nums, lists) = default_packed();
-        nums[78] = 2; // method_length max
+        nums[0][78] = 2; // method_length max
         let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
         let bundle = check_all_bundle(src.as_bytes(), &cfg);
 
@@ -2402,7 +2744,7 @@ mod tests {
                    class << self\n  y = 1\n  y = 2\n  y = 3\nend\n\
                    Foo = Struct.new(:a) do\n  z = 1\n  z = 2\n  z = 3\nend\n";
         let (mut nums, lists) = default_packed();
-        nums[88] = 2; // class_length max
+        nums[0][88] = 2; // class_length max
         let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
         let bundle = check_all_bundle(src.as_bytes(), &cfg);
 
@@ -2432,7 +2774,7 @@ mod tests {
         let src = "module A\n  x = 1\n  x = 2\n  x = 3\nend\n\
                    Foo = Module.new do\n  z = 1\n  z = 2\n  z = 3\nend\n";
         let (mut nums, lists) = default_packed();
-        nums[90] = 2; // module_length max
+        nums[0][90] = 2; // module_length max
         let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
         let bundle = check_all_bundle(src.as_bytes(), &cfg);
 
@@ -2533,7 +2875,7 @@ mod tests {
                    \x20  end\n\
                    end\n";
         let (mut nums, lists) = default_packed();
-        nums[47] = 1; // indented_internal_methods
+        nums[0][47] = 1; // indented_internal_methods
         let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
         let bundle = check_all_bundle(src.as_bytes(), &cfg);
 
@@ -2559,7 +2901,7 @@ mod tests {
     fn shared_walk_matches_standalone_empty_line_between_defs() {
         let src = "def a\nend\ndef b\nend\n\n\n\ndef c; end\nclass Foo\nend\nmodule Baz\nend\nif x\n  def d\n  end\n  def e\n  end\nend\n";
         let (mut nums, lists) = default_packed();
-        nums[51] = 0; // allow_adjacent_one_line_defs = false
+        nums[0][51] = 0; // allow_adjacent_one_line_defs = false
         let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
         let bundle = check_all_bundle(src.as_bytes(), &cfg);
 
@@ -2632,7 +2974,7 @@ mod tests {
         let src = "var = if test\n      end\nclass Foo\n  end\nformat(\n  case c\n  when f\n    b\nend, qux\n)\n";
         for style in 0..=2u8 {
             let (mut nums, lists) = default_packed();
-            nums[54] = style as i64;
+            nums[0][54] = style as i64;
             let cfg = BundleConfig::from_packed(&nums, lists.clone()).unwrap();
             let bundle = check_all_bundle(src.as_bytes(), &cfg);
 
@@ -2658,7 +3000,7 @@ mod tests {
         let src = "variable = test do |a|\n  end\nrb += files.select do |f|\n  x\n  end\ntest {\n  }\n";
         for style in 0..=2u8 {
             let (mut nums, lists) = default_packed();
-            nums[55] = style as i64;
+            nums[0][55] = style as i64;
             let cfg = BundleConfig::from_packed(&nums, lists.clone()).unwrap();
             let bundle = check_all_bundle(src.as_bytes(), &cfg);
 
@@ -2682,7 +3024,7 @@ mod tests {
         let src = "if cond\n  x\n else\n  y\nend\nvar = if a\n        0\nelse\n  1\n    end\ncase a\nwhen b\n  c\n else\n  d\nend\n";
         for style in 0..=2u8 {
             let (mut nums, lists) = default_packed();
-            nums[56] = style as i64;
+            nums[0][56] = style as i64;
             let cfg = BundleConfig::from_packed(&nums, lists.clone()).unwrap();
             let bundle = check_all_bundle(src.as_bytes(), &cfg);
 
@@ -2711,7 +3053,7 @@ mod tests {
                    a << {\n a: 1\n }\n";
         for style in 0..=2u8 {
             let (mut nums, lists) = default_packed();
-            nums[57] = style as i64;
+            nums[0][57] = style as i64;
             let cfg = BundleConfig::from_packed(&nums, lists.clone()).unwrap();
             let bundle = check_all_bundle(src.as_bytes(), &cfg);
 
@@ -2763,8 +3105,8 @@ mod tests {
                 2 => "table",
                 _ => "key",
             };
-            lists[17] = vec![name.to_string()];
-            lists[18] = vec![name.to_string()];
+            lists[0][17] = vec![name.to_string()];
+            lists[0][18] = vec![name.to_string()];
             let cfg = BundleConfig::from_packed(&nums, lists.clone()).unwrap();
             let bundle = check_all_bundle(src.as_bytes(), &cfg);
 
@@ -2808,8 +3150,8 @@ mod tests {
         for style in 0..=3u8 {
             for short in 0..=4u8 {
                 let (mut nums, lists) = default_packed();
-                nums[64] = style as i64;
-                nums[65] = short as i64;
+                nums[0][64] = style as i64;
+                nums[0][65] = short as i64;
                 let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
                 let bundle = check_all_bundle(src.as_bytes(), &cfg);
                 let alone =
@@ -2845,8 +3187,8 @@ mod tests {
         for style in 0..=1u8 {
             for consistent in 0..=1i64 {
                 let (mut nums, lists) = default_packed();
-                nums[70] = style as i64;
-                nums[71] = consistent;
+                nums[0][70] = style as i64;
+                nums[0][71] = consistent;
                 let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
                 let bundle = check_all_bundle(src.as_bytes(), &cfg);
                 let alone = super::string_literals::check_string_literals(
@@ -2881,7 +3223,7 @@ mod tests {
                    h = \"#{\"a\" \\\n\"b\"}\"\n";
         for style in 0..=1u8 {
             let (mut nums, lists) = default_packed();
-            nums[73] = style as i64;
+            nums[0][73] = style as i64;
             let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
             let bundle = check_all_bundle(src.as_bytes(), &cfg);
             let alone =
@@ -2910,7 +3252,7 @@ mod tests {
         let src = "x = 0\n\n\n";
         for style in 0..=1u8 {
             let (mut nums, lists) = default_packed();
-            nums[74] = style as i64;
+            nums[0][74] = style as i64;
             let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
             let bundle = check_all_bundle(src.as_bytes(), &cfg);
             let alone = super::trailing_empty_lines::check_trailing_empty_lines(
@@ -3015,9 +3357,9 @@ mod tests {
             for empty in 0..=1u8 {
                 for sbbp in 0..=1u8 {
                     let (mut nums, lists) = default_packed();
-                    nums[75] = style as i64;
-                    nums[76] = empty as i64;
-                    nums[77] = sbbp as i64;
+                    nums[0][75] = style as i64;
+                    nums[0][76] = empty as i64;
+                    nums[0][77] = sbbp as i64;
                     let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
                     let bundle = check_all_bundle(src.as_bytes(), &cfg);
                     let alone = super::space_inside_block_braces::check_space_inside_block_braces(
@@ -3056,8 +3398,8 @@ mod tests {
         for style in 0..=2i64 {
             for empty in 0..=1i64 {
                 let (mut nums, lists) = default_packed();
-                nums[94] = style;
-                nums[95] = empty;
+                nums[0][94] = style;
+                nums[0][95] = empty;
                 let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
                 let bundle = check_all_bundle(src.as_bytes(), &cfg);
                 let alone = super::space_inside_hash_literal_braces::
@@ -3095,8 +3437,8 @@ mod tests {
         for style in 0..=2i64 {
             for empty in 0..=1i64 {
                 let (mut nums, lists) = default_packed();
-                nums[96] = style;
-                nums[97] = empty;
+                nums[0][96] = style;
+                nums[0][97] = empty;
                 let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
                 let bundle = check_all_bundle(src.as_bytes(), &cfg);
                 let alone = super::space_inside_array_literal_brackets::
@@ -3162,9 +3504,9 @@ mod tests {
             for empty in 0..=2i64 {
                 for bd in 0..=1i64 {
                     let (mut nums, lists) = default_packed();
-                    nums[100] = style;
-                    nums[101] = empty;
-                    nums[102] = bd;
+                    nums[0][100] = style;
+                    nums[0][101] = empty;
+                    nums[0][102] = bd;
                     let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
                     let bundle = check_all_bundle(src.as_bytes(), &cfg);
                     let alone = super::space_before_block_braces::check_space_before_block_braces(
@@ -3211,7 +3553,7 @@ mod tests {
                    r(\n  a, b,\n  c,\n)\n";
         for style in 0..=3u8 {
             let (mut nums, lists) = default_packed();
-            nums[72] = style as i64;
+            nums[0][72] = style as i64;
             let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
             let bundle = check_all_bundle(src.as_bytes(), &cfg);
             let alone = super::trailing_comma_in_arguments::check_trailing_comma_in_arguments(
@@ -3244,7 +3586,7 @@ mod tests {
                    c = { x: { y: 1 }, }\n";
         for style in 0..=3u8 {
             let (mut nums, lists) = default_packed();
-            nums[92] = style as i64;
+            nums[0][92] = style as i64;
             let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
             let bundle = check_all_bundle(src.as_bytes(), &cfg);
             let alone = super::trailing_comma_in_hash_literal::check_trailing_comma_in_hash_literal(
@@ -3277,7 +3619,7 @@ mod tests {
                    t = [[1, 2,], [3],]\n";
         for style in 0..=3u8 {
             let (mut nums, lists) = default_packed();
-            nums[93] = style as i64;
+            nums[0][93] = style as i64;
             let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
             let bundle = check_all_bundle(src.as_bytes(), &cfg);
             let alone =
@@ -3306,9 +3648,9 @@ mod tests {
     fn shared_walk_respects_disabled_rules() {
         let src = "foo(bar,\n  baz)\nfoo([\n  1\n])\n";
         let (mut nums, lists) = default_packed();
-        nums[23] = 1; // argument_alignment incompatible (with_first_argument)
-        nums[26] = 1; // first_argument enforce_fixed_no_line_break
-        nums[37] = 1; // first_array_element enforce_fixed_indentation
+        nums[0][23] = 1; // argument_alignment incompatible (with_first_argument)
+        nums[0][26] = 1; // first_argument enforce_fixed_no_line_break
+        nums[0][37] = 1; // first_array_element enforce_fixed_indentation
         let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
         let bundle = check_all_bundle(src.as_bytes(), &cfg);
         assert!(bundle.argument_alignment.is_empty());
