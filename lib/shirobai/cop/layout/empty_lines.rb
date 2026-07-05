@@ -23,6 +23,7 @@ module Shirobai
       # BOM the standalone entry point scans `buffer.source` directly so every
       # returned offset still indexes into the parser-gem buffer.
       class EmptyLines < RuboCop::Cop::Base
+        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
 
@@ -62,16 +63,6 @@ module Shirobai
           else
             Shirobai.check_empty_lines(processed_source.buffer.source)
           end
-        end
-
-        # Eligible only when the parser-normalized buffer source is byte-identical
-        # to the raw source the bundle scans. When they differ (CRLF or BOM),
-        # the standalone path scans `buffer.source` so every offset lines up
-        # with parser-gem's character index. Memoized per investigation.
-        def bundle_eligible?
-          return @bundle_eligible unless @bundle_eligible.nil?
-
-          @bundle_eligible = processed_source.buffer.source == processed_source.raw_source
         end
       end
     end

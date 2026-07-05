@@ -19,6 +19,7 @@ module Shirobai
       # corrector replaces it with `", "`
       # (`PunctuationCorrector.add_space`).
       class SpaceAfterComma < RuboCop::Cop::Base
+        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         MSG = "Space missing after comma."
@@ -56,13 +57,6 @@ module Shirobai
             nums, = self.class.bundle_args(config)
             Shirobai.check_space_after_comma(processed_source.buffer.source, nums[0] == 1)
           end
-        end
-
-        # See `SpaceBeforeComma#bundle_eligible?`.
-        def bundle_eligible?
-          return @bundle_eligible unless @bundle_eligible.nil?
-
-          @bundle_eligible = processed_source.buffer.source == processed_source.raw_source
         end
       end
     end

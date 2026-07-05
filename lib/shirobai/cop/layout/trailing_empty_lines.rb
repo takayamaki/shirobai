@@ -27,6 +27,7 @@ module Shirobai
       # string. Either way the result is purely config-driven and stateless, so
       # the autocorrect re-passes (fresh `ProcessedSource`) recompute correctly.
       class TrailingEmptyLines < RuboCop::Cop::Base
+        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::ConfigurableEnforcedStyle
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
@@ -96,16 +97,6 @@ module Shirobai
             nums = self.class.bundle_args(config).first
             Shirobai.check_trailing_empty_lines(processed_source.buffer.source, nums)
           end
-        end
-
-        # Eligible only when the parser-normalized buffer source is byte-identical
-        # to the raw source the bundle scans (no CRLF/BOM normalization). When
-        # they differ, the standalone path scans `buffer.source` instead. Memoized
-        # per investigation (the comparison is O(source) and is read twice).
-        def bundle_eligible?
-          return @bundle_eligible unless @bundle_eligible.nil?
-
-          @bundle_eligible = processed_source.buffer.source == processed_source.raw_source
         end
       end
     end

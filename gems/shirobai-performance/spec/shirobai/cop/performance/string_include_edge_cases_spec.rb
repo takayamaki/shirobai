@@ -138,4 +138,15 @@ RSpec.describe Shirobai::Cop::Performance::StringInclude do
       expect_lint_parity(*klasses, "match?(/ab/)\n", config, expect_offenses: false)
     end
   end
+
+  describe "CRLF sources (bundle-ineligible fallback)" do
+    # See `Detect`'s CRLF case: the parser buffer normalizes `\r\n` to `\n`,
+    # so `bundle_eligible?` must route CRLF files to the standalone entry
+    # point over `buffer.source`.
+    it "matches stock offenses and autocorrect on a CRLF source" do
+      src = "x = 1\r\ny = str.match?(/abc/)\r\n"
+      expect_lint_parity(*klasses, src, config)
+      expect_autocorrect_parity(*klasses, src, config)
+    end
+  end
 end

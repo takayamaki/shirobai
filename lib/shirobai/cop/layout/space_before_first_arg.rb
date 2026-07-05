@@ -18,6 +18,7 @@ module Shirobai
       # argument (possibly empty for glued arguments); the corrector replaces
       # it with a single space.
       class SpaceBeforeFirstArg < RuboCop::Cop::Base
+        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         MSG = "Put one space between the method name and the first argument."
@@ -57,13 +58,6 @@ module Shirobai
             nums, = self.class.bundle_args(config)
             Shirobai.check_space_before_first_arg(processed_source.buffer.source, nums[0] == 1)
           end
-        end
-
-        # See `SpaceInsideParens#bundle_eligible?`.
-        def bundle_eligible?
-          return @bundle_eligible unless @bundle_eligible.nil?
-
-          @bundle_eligible = processed_source.buffer.source == processed_source.raw_source
         end
       end
     end

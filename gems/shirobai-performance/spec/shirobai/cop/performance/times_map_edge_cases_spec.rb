@@ -122,4 +122,15 @@ RSpec.describe Shirobai::Cop::Performance::TimesMap do
       expect_lint_parity(*klasses, "5.times(2).map { |i| i }\n", config, expect_offenses: false)
     end
   end
+
+  describe "CRLF sources (bundle-ineligible fallback)" do
+    # See `Detect`'s CRLF case: the parser buffer normalizes `\r\n` to `\n`,
+    # so `bundle_eligible?` must route CRLF files to the standalone entry
+    # point over `buffer.source`.
+    it "matches stock offenses and autocorrect on a CRLF source" do
+      src = "x = 1\r\ny = 3.times.map { |i| i }\r\n"
+      expect_lint_parity(*klasses, src, config)
+      expect_autocorrect_parity(*klasses, src, config)
+    end
+  end
 end

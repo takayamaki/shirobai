@@ -23,6 +23,7 @@ module Shirobai
       #   reduced to remove / insert-after / insert-before calls), applied on
       #   the node's first offense like stock's `ignore_node` grouping.
       class SpaceInsideReferenceBrackets < RuboCop::Cop::Base
+        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
 
@@ -96,13 +97,6 @@ module Shirobai
               processed_source.buffer.source, nums[0], nums[1] == 1
             )
           end
-        end
-
-        # See `SpaceInsideParens#bundle_eligible?`.
-        def bundle_eligible?
-          return @bundle_eligible unless @bundle_eligible.nil?
-
-          @bundle_eligible = processed_source.buffer.source == processed_source.raw_source
         end
       end
     end

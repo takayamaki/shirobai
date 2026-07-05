@@ -16,6 +16,7 @@ module Shirobai
       # literal block), exactly like stock's
       # `corrector.replace(map_or_collect, ...)`.
       class TimesMap < RuboCop::Cop::Base
+        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         def self.cop_name = "Performance/TimesMap"
@@ -29,10 +30,9 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-
-          offenses = Dispatch.offenses_for(processed_source, config, :perf_times_map)
-          off = SourceOffsets.for(processed_source.raw_source)
-          offenses.each do |start, fin, replace_start, replace_end, message, replacement|
+          source = bundle_eligible? ? processed_source.raw_source : buffer.source
+          off = SourceOffsets.for(source)
+          resolved_offenses.each do |start, fin, replace_start, replace_end, message, replacement|
             range = Parser::Source::Range.new(buffer, off[start], off[fin])
             add_offense(range, message: message) do |corrector|
               corrector.replace(
@@ -40,6 +40,16 @@ module Shirobai
                 replacement
               )
             end
+          end
+        end
+
+        private
+
+        def resolved_offenses
+          if bundle_eligible?
+            Dispatch.offenses_for(processed_source, config, :perf_times_map)
+          else
+            Shirobai.check_perf_times_map(processed_source.buffer.source)
           end
         end
       end

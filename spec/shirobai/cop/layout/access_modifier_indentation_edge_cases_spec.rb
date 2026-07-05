@@ -46,9 +46,12 @@ RSpec.describe Shirobai::Cop::Layout::AccessModifierIndentation do
     Shirobai::Cop::Layout::AccessModifierIndentation
   ]
 
+  # `Config#to_h` returns the default configuration's INTERNAL hash, so it must
+  # be duped before the key is reassigned — mutating it in place leaks the style
+  # into every later spec that reads the (identity-memoized) default.
   let(:config) do
     default = RuboCop::ConfigLoader.default_configuration
-    hash = default.to_h
+    hash = default.to_h.dup
     hash["Layout/AccessModifierIndentation"] =
       hash["Layout/AccessModifierIndentation"].merge("EnforcedStyle" => "indent")
     RuboCop::Config.new(hash, default.loaded_path)

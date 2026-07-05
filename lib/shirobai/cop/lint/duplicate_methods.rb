@@ -31,6 +31,7 @@ module Shirobai
       #
       # No autocorrect (stock has none).
       class DuplicateMethods < RuboCop::Cop::Base
+        include Shirobai::Cop::BundleEligible
         MSG = "Method `%<method>s` is defined at both %<defined>s and %<current>s."
 
         def self.cop_name = "Lint/DuplicateMethods"
@@ -101,19 +102,6 @@ module Shirobai
           processed_source.ast&.each_node(:defs)&.find do |n|
             n.source_range.begin_pos == begin_pos
           end
-        end
-
-        # Eligible only when parser-gem's buffer source is byte-identical
-        # to the raw source the bundle scans (CRLF / BOM / `__END__`
-        # truncation break that). Memoized per investigation; the flag is
-        # reset each `on_new_investigation` via `begin_investigation`'s
-        # fresh `@processed_source`, so memoize on the source identity.
-        def bundle_eligible?
-          src = processed_source
-          return @bundle_eligible if defined?(@bundle_eligible_for) && @bundle_eligible_for.equal?(src)
-
-          @bundle_eligible_for = src
-          @bundle_eligible = src.buffer.source == src.raw_source
         end
       end
     end
