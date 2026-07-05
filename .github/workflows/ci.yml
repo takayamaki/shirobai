@@ -37,6 +37,38 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+  # The plugin gem has its own bundle on purpose: rubocop-performance in the
+  # root bundle would leak into the core suite's default config through
+  # rubocop/rspec/support (CopHelper scans Gem.loaded_specs).
+  test-shirobai-performance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: true
+
+      - uses: ruby/setup-ruby@89f90524b88a01fe6e0b732220432cc6142926af # v1.313.0
+        with:
+          ruby-version: "4.0"
+          bundler-cache: true
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2.9.1
+
+      - name: Build native extension
+        run: bundle exec rake compile
+
+      - name: Install the plugin bundle
+        working-directory: gems/shirobai-performance
+        run: bundle install --jobs 4
+
+      - name: RSpec (shirobai-performance)
+        working-directory: gems/shirobai-performance
+        run: bundle exec rspec
+
   parity:
     runs-on: ubuntu-latest
     strategy:
