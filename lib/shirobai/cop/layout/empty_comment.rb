@@ -23,6 +23,7 @@ module Shirobai
       # produced on the Rust side as byte ranges, so the Ruby wrapper is just a
       # thin tuple-to-`Parser::Source::Range` conversion.
       class EmptyComment < RuboCop::Cop::Base
+        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
 
@@ -67,16 +68,6 @@ module Shirobai
             args = self.class.bundle_args(config)
             Shirobai.check_empty_comment(processed_source.buffer.source, args[0] != 0, args[1] != 0)
           end
-        end
-
-        # Eligible only when the parser-normalized buffer source is byte-identical
-        # to the raw source the bundle scans. When they differ (CRLF or BOM),
-        # the standalone path scans `buffer.source` so every offset lines up
-        # with parser-gem's character index. Memoized per investigation.
-        def bundle_eligible?
-          return @bundle_eligible unless @bundle_eligible.nil?
-
-          @bundle_eligible = processed_source.buffer.source == processed_source.raw_source
         end
       end
     end

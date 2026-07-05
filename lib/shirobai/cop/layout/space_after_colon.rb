@@ -18,6 +18,7 @@ module Shirobai
       # Each offense is the `[start, end)` range of the colon; the corrector
       # inserts a space after it.
       class SpaceAfterColon < RuboCop::Cop::Base
+        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         MSG = "Space missing after colon."
@@ -50,13 +51,6 @@ module Shirobai
           else
             Shirobai.check_space_after_colon(processed_source.buffer.source)
           end
-        end
-
-        # See `SpaceBeforeComma#bundle_eligible?`.
-        def bundle_eligible?
-          return @bundle_eligible unless @bundle_eligible.nil?
-
-          @bundle_eligible = processed_source.buffer.source == processed_source.raw_source
         end
       end
     end

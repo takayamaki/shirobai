@@ -26,6 +26,7 @@ module Shirobai
       # `SourceOffsets` conversion is needed; `line_range` is only built on
       # offense files (stock pays `line_begins` on every file).
       class DuplicateMagicComment < RuboCop::Cop::Base
+        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
 
@@ -59,20 +60,6 @@ module Shirobai
           else
             Shirobai.check_duplicate_magic_comment(processed_source.buffer.source)
           end
-        end
-
-        # Eligible only when parser-gem's buffer source is byte-identical
-        # to the raw source the bundle scans. CRLF / BOM normalization
-        # breaks that, so we fall back to scanning `buffer.source`
-        # directly. Memoized on the processed
-        # source identity: cop instances are reused across files within a
-        # team, so a plain ivar would leak the previous file's answer.
-        def bundle_eligible?
-          src = processed_source
-          return @bundle_eligible if defined?(@bundle_eligible_for) && @bundle_eligible_for.equal?(src)
-
-          @bundle_eligible_for = src
-          @bundle_eligible = src.buffer.source == src.raw_source
         end
       end
     end

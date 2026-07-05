@@ -18,6 +18,7 @@ module Shirobai
       # Each offense is the `[start, end)` whitespace run before the comma;
       # the corrector removes it (`PunctuationCorrector.remove_space`).
       class SpaceBeforeComma < RuboCop::Cop::Base
+        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         MSG = "Space found before comma."
@@ -55,16 +56,6 @@ module Shirobai
             nums, = self.class.bundle_args(config)
             Shirobai.check_space_before_comma(processed_source.buffer.source, nums[0] == 1)
           end
-        end
-
-        # Eligible only when the parser-normalized buffer source is
-        # byte-identical to the raw source the bundle scans; on a CRLF/BOM
-        # mismatch the standalone path scans `buffer.source` so offsets line
-        # up with parser-gem's index. Memoized per investigation.
-        def bundle_eligible?
-          return @bundle_eligible unless @bundle_eligible.nil?
-
-          @bundle_eligible = processed_source.buffer.source == processed_source.raw_source
         end
       end
     end

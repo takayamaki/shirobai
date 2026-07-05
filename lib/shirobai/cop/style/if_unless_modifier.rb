@@ -28,6 +28,7 @@ module Shirobai
       # (CRLF/BOM sources fall back to the standalone entry point over
       # `buffer.source` so every offset lines up with parser positions).
       class IfUnlessModifier < RuboCop::Cop::Base
+        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::AllowedPattern
         include RuboCop::Cop::RangeHelp
         include RuboCop::Cop::LineLengthHelp
@@ -87,15 +88,6 @@ module Shirobai
           else
             Shirobai.check_if_unless_modifier(rust_source, self.class.bundle_args(config))
           end
-        end
-
-        # The bundled run scans `raw_source`; when the parser buffer differs
-        # (CRLF/BOM normalization) the standalone entry point scans
-        # `buffer.source` instead so every offset lines up.
-        def bundle_eligible?
-          return @bundle_eligible if defined?(@bundle_eligible)
-
-          @bundle_eligible = processed_source.buffer.source == processed_source.raw_source
         end
 
         def rust_source

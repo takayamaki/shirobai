@@ -18,6 +18,7 @@ module Shirobai
       # byte. Messages come from Rust, formatted with the preferred method
       # resolved from `Style/CollectionMethods` below.
       class Detect < RuboCop::Cop::Base
+        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         def self.cop_name = "Performance/Detect"
@@ -38,10 +39,9 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-
-          offenses = Dispatch.offenses_for(processed_source, config, :perf_detect)
-          off = SourceOffsets.for(processed_source.raw_source)
-          offenses.each do |sel_start, sel_end, recv_end, outer_end, message, replacement|
+          source = bundle_eligible? ? processed_source.raw_source : buffer.source
+          off = SourceOffsets.for(source)
+          resolved_offenses.each do |sel_start, sel_end, recv_end, outer_end, message, replacement|
             range = Parser::Source::Range.new(buffer, off[sel_start], off[outer_end])
             add_offense(range, message: message) do |corrector|
               corrector.remove(Parser::Source::Range.new(buffer, off[recv_end], off[outer_end]))
@@ -49,6 +49,18 @@ module Shirobai
                 Parser::Source::Range.new(buffer, off[sel_start], off[sel_end]), replacement
               )
             end
+          end
+        end
+
+        private
+
+        def resolved_offenses
+          if bundle_eligible?
+            Dispatch.offenses_for(processed_source, config, :perf_detect)
+          else
+            Shirobai.check_perf_detect(
+              processed_source.buffer.source, self.class.bundle_args(config)[0]
+            )
           end
         end
       end

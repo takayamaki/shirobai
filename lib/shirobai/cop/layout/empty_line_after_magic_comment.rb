@@ -19,6 +19,7 @@ module Shirobai
       # (SimpleComment / EmacsComment / VimComment); keeping it on the Ruby
       # side reuses stock's implementation verbatim and avoids drift.
       class EmptyLineAfterMagicComment < RuboCop::Cop::Base
+        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
 
@@ -74,17 +75,6 @@ module Shirobai
           else
             Shirobai.check_empty_line_after_magic_comment(processed_source.buffer.source)
           end
-        end
-
-        # Eligible only when parser-gem's buffer source is byte-identical to
-        # the raw source the bundle scans. CRLF / BOM normalization breaks
-        # the byte-offset alignment, so we fall back to scanning
-        # `buffer.source` (LF-normalized, BOM-stripped) directly. Memoized
-        # per investigation.
-        def bundle_eligible?
-          return @bundle_eligible unless @bundle_eligible.nil?
-
-          @bundle_eligible = processed_source.buffer.source == processed_source.raw_source
         end
       end
     end

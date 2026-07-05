@@ -15,6 +15,7 @@ module Shirobai
       # `RuboCop::Cop::Base` -> `include Util`) — so escape interpretation
       # and quote selection cannot drift from stock byte behavior.
       class StringInclude < RuboCop::Cop::Base
+        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         MSG = "Use `%<negation>sString#include?` instead of a regex match " \
@@ -31,10 +32,9 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-
-          offenses = Dispatch.offenses_for(processed_source, config, :perf_string_include)
-          off = SourceOffsets.for(processed_source.raw_source)
-          offenses.each do |start, fin, negation, recv_start, recv_end, dot, content|
+          source = bundle_eligible? ? processed_source.raw_source : buffer.source
+          off = SourceOffsets.for(source)
+          resolved_offenses.each do |start, fin, negation, recv_start, recv_end, dot, content|
             negation = negation == 1
             range = Parser::Source::Range.new(buffer, off[start], off[fin])
             message = format(MSG, negation: (negation ? "!" : ""))
@@ -46,6 +46,16 @@ module Shirobai
                 "#{'!' if negation}#{receiver_source}#{dot}include?(#{literal})"
               corrector.replace(range, new_source)
             end
+          end
+        end
+
+        private
+
+        def resolved_offenses
+          if bundle_eligible?
+            Dispatch.offenses_for(processed_source, config, :perf_string_include)
+          else
+            Shirobai.check_perf_string_include(processed_source.buffer.source)
           end
         end
       end

@@ -16,6 +16,7 @@ module Shirobai
       # ("Space inside parentheses detected."), code 1 inserts a space before
       # it ("No space inside parentheses detected.").
       class SpaceInsideParens < RuboCop::Cop::Base
+        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         MESSAGES = [
@@ -59,15 +60,6 @@ module Shirobai
             nums, = self.class.bundle_args(config)
             Shirobai.check_space_inside_parens(processed_source.buffer.source, nums[0])
           end
-        end
-
-        # Eligible only when the parser-normalized buffer source is
-        # byte-identical to the raw source the bundle scans (CRLF/BOM
-        # fallback scans `buffer.source`). Memoized per investigation.
-        def bundle_eligible?
-          return @bundle_eligible unless @bundle_eligible.nil?
-
-          @bundle_eligible = processed_source.buffer.source == processed_source.raw_source
         end
       end
     end
