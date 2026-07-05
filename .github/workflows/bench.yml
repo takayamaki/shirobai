@@ -8,10 +8,17 @@ name: Bench
 # Before timing, each shirobai-family mode must report the same offense set as
 # stock — the run proves "same offenses, less time".
 #
+# On main the auto modes are "stock removed shirobai plugins": the plugins
+# release instrument (shirobai core + shirobai-performance + shirobai-rspec)
+# lives on main. On branches the auto modes stay "stock removed shirobai main"
+# (branch vs main on the core line). A plugin-cop branch opts into the plugin
+# comparison explicitly with -f modes="stock shirobai plugins plugins-main".
+#
 # Trigger from CLI:
 #   gh workflow run bench.yml
 #   gh workflow run bench.yml -f corpora="redmine fluentd" -f rounds=5
 #   gh workflow run bench.yml -f modes="stock shirobai"
+#   gh workflow run bench.yml -f modes="stock shirobai plugins plugins-main"  # plugin branch
 #   gh workflow run bench.yml --ref <branch>
 
 on:
@@ -26,7 +33,7 @@ on:
         required: false
         default: "3"
       modes:
-        description: "Modes per round (empty = auto: stock removed shirobai, plus main on branches)"
+        description: "Modes per round (empty = auto: on main stock removed shirobai plugins; on branches stock removed shirobai main). Plugin branches: -f modes='stock shirobai plugins plugins-main'"
         required: false
         default: ""
 
@@ -42,11 +49,12 @@ jobs:
           corpora=$(echo "$CORPORA" | jq -cR 'split(" ") | map(select(length > 0))')
           echo "corpora=$corpora" >> "$GITHUB_OUTPUT"
           # Auto-select modes when the input is empty. On main there is no
-          # branch to compare against, so main mode is left out.
+          # branch to compare against, so main mode is left out; instead main
+          # runs the plugins release instrument (core + both plugin shells).
           if [ -n "$MODES_INPUT" ]; then
             modes="$MODES_INPUT"
           elif [ "$REF_NAME" = "main" ]; then
-            modes="stock removed shirobai"
+            modes="stock removed shirobai plugins"
           else
             modes="stock removed shirobai main"
           fi
@@ -91,9 +99,13 @@ jobs:
         run: |
           BUNDLE_GEMFILE=benches/Gemfile.realconfig.stock bundle install --jobs 4
           BUNDLE_GEMFILE=benches/Gemfile.realconfig.shirobai bundle install --jobs 4
+          BUNDLE_GEMFILE=benches/Gemfile.realconfig.plugins bundle install --jobs 4
 
       # main mode needs a second checkout of the main branch, built the same
       # way, so branch and main run side by side on one runner.
+      # Note: `plugins-main` contains the substring `main`, so these steps
+      # also fire for plugins-main. That is intentional and relied upon:
+      # plugins-main installs its trio from this same second checkout.
       - name: Check out main for the main mode
         if: contains(needs.plan.outputs.modes, 'main')
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -114,6 +126,13 @@ jobs:
         env:
           SHIROBAI_MAIN_TREE: ${{ github.workspace }}/main-tree
         run: BUNDLE_GEMFILE=benches/Gemfile.realconfig.main bundle install --jobs 4
+
+      # plugins-main installs the plugin trio from the same second checkout.
+      - name: Install the plugins-main bench Gemfile
+        if: contains(needs.plan.outputs.modes, 'plugins-main')
+        env:
+          SHIROBAI_MAIN_TREE: ${{ github.workspace }}/main-tree
+        run: BUNDLE_GEMFILE=benches/Gemfile.realconfig.plugins.main bundle install --jobs 4
 
       - name: Clone corpus
         run: bin/setup-corpora ${{ matrix.corpus }}
