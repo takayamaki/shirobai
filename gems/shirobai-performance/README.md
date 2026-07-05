@@ -20,8 +20,9 @@ one shared cdylib, no extra cargo build for users.
   slot layout and the packed-config segment are an internal wire contract.
 - `lib/shirobai-performance.rb` owns the load order (shirobai →
   rubocop-performance → wrappers) and registers the packed-config segment
-  on `Shirobai::Dispatch.performance_packer`. Without this gem the core
-  packs a dormant segment and the Rust side skips every Performance rule.
+  with `Shirobai::Dispatch.register_plugin_packer(:performance)`. Without
+  this gem the core packs a dormant segment and the Rust side skips every
+  Performance rule.
 
 ## Usage
 

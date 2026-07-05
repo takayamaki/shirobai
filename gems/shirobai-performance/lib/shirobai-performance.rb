@@ -30,12 +30,13 @@ require_relative "shirobai/cop/performance/end_with"
 require_relative "shirobai/cop/performance/start_with"
 require_relative "shirobai/cop/performance/times_map"
 
-# Wake up the Performance slots in the shared bundle: from now on every
-# packed config carries `enabled=1` plus this department's cop settings
-# (segment layout: crates/shirobai-core/src/rules/bundle.rs BundleConfig).
-# Without this gem the core packs the dormant segment and the Rust side
-# skips the Performance rules entirely.
-Shirobai::Dispatch.performance_packer = lambda do |config|
+# Wake up the Performance origin in the shared bundle: from now on every
+# packed config carries this origin's segment with `enabled=1` plus the
+# department's cop settings (segment layout:
+# crates/shirobai-core/src/rules/bundle.rs BundleConfig). Without this gem
+# the core packs the dormant segment and the Rust side skips the
+# Performance rules entirely.
+Shirobai::Dispatch.register_plugin_packer(:performance) do |config|
   detect = Shirobai::Cop::Performance::Detect.bundle_args(config)
   end_with = Shirobai::Cop::Performance::EndWith.bundle_args(config)
   start_with = Shirobai::Cop::Performance::StartWith.bundle_args(config)

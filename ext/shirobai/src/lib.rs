@@ -1282,12 +1282,13 @@ thread_local! {
 }
 
 /// Ruby entry point registering a packed [`BundleConfig`] for `check_all`.
-/// `nums` / `lists` follow the packing order documented on `BundleConfig`.
-/// Returns the token to pass to `check_all`.
+/// `nums` / `lists` carry one sub-array per origin (core first, then the
+/// shirobai-performance plugin), following the per-origin packing order
+/// documented on `BundleConfig`. Returns the token to pass to `check_all`.
 fn register_bundle_config(
     ruby: &Ruby,
-    nums: Vec<i64>,
-    lists: Vec<Vec<String>>,
+    nums: Vec<Vec<i64>>,
+    lists: Vec<Vec<Vec<String>>>,
 ) -> Result<usize, Error> {
     let cfg = BundleConfig::from_packed(&nums, lists)
         .map_err(|e| Error::new(ruby.exception_arg_error(), e))?;
@@ -1299,10 +1300,15 @@ fn register_bundle_config(
 }
 
 /// Ruby entry point for the all-cop bundle: computes every cop's result for
-/// `source` in one call, using the config registered under `token`. Returns a
-/// fixed-order 88-slot Array; each slot carries that cop's existing tuple-array
-/// shape (identical to the standalone entry point's return value). The slot
-/// order is mirrored by `Shirobai::Dispatch::SLOTS` on the Ruby side:
+/// `source` in one call, using the config registered under `token`. Returns
+/// one fixed-order Array per origin, wrapped in an outer Array indexed like
+/// `BundleConfig`'s origins (`result[origin][rule]`; origin 0 = core,
+/// 1 = shirobai-performance). Each rule slot carries that cop's existing
+/// tuple-array shape (identical to the standalone entry point's return
+/// value). The `[origin, rule]` pairs are mirrored by
+/// `Shirobai::Dispatch::SLOTS` on the Ruby side.
+///
+/// Core slots (origin 0):
 ///
 /// 0 debugger / 1 block_length / 2 block_nesting / 3 complexity /
 /// 4 variable_number / 5 method_name / 6 safe_navigation_chain /
@@ -1344,10 +1350,13 @@ fn register_bundle_config(
 /// 82 space_inside_parens / 83 space_inside_reference_brackets /
 /// 84 space_before_first_arg /
 /// 85 duplicate_magic_comment / 86 duplicate_methods /
-/// 87 array_alignment /
-/// 88 perf_detect / 89 perf_string_include / 90 perf_end_with /
-/// 91 perf_start_with / 92 perf_times_map (shirobai-performance; empty
-/// unless the plugin gem registered its packed segment)
+/// 87 array_alignment
+///
+/// Performance slots (origin 1; every slot empty unless the plugin gem
+/// registered its packed segment):
+///
+/// 0 perf_detect / 1 perf_string_include / 2 perf_end_with /
+/// 3 perf_start_with / 4 perf_times_map
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1358,7 +1367,8 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
             )
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
-        let ary = ruby.ary_new_capa(93);
+        // Core origin (result[0]).
+        let ary = ruby.ary_new_capa(88);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -1490,12 +1500,19 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(r.duplicate_magic_comment)?;
         ary.push(map_duplicate_methods(r.duplicate_methods))?;
         ary.push(map_array_alignment(r.array_alignment))?;
-        ary.push(map_perf_detect(r.perf_detect))?;
-        ary.push(map_perf_string_include(r.perf_string_include))?;
-        ary.push(map_perf_end_with(r.perf_end_with))?;
-        ary.push(map_perf_start_with(r.perf_start_with))?;
-        ary.push(map_perf_times_map(r.perf_times_map))?;
-        Ok(ary)
+        // Performance origin (result[1]).
+        let perf = ruby.ary_new_capa(5);
+        perf.push(map_perf_detect(r.perf_detect))?;
+        perf.push(map_perf_string_include(r.perf_string_include))?;
+        perf.push(map_perf_end_with(r.perf_end_with))?;
+        perf.push(map_perf_start_with(r.perf_start_with))?;
+        perf.push(map_perf_times_map(r.perf_times_map))?;
+        // The nested result is N_ORIGINS + 1 arrays per file (the outer
+        // one plus one per origin), nothing per cop.
+        let out = ruby.ary_new_capa(2);
+        out.push(ary)?;
+        out.push(perf)?;
+        Ok(out)
     })
 }
 

@@ -13,123 +13,145 @@ module Shirobai
   # bundle (see each wrapper's `bundle_eligible?`) skips this coordinator and
   # calls its standalone entry point directly instead.
   module Dispatch
-    # Slot order of the `Shirobai.check_all` result Array. Mirrors the order
-    # documented on `BundleConfig` and built by `check_all` in
-    # `ext/shirobai/src/lib.rs`; each slot carries the same shape as the cop's
-    # standalone `Shirobai.check_*` return value.
+    # Origin order of the `Shirobai.check_all` result Array and of the packed
+    # config segments: outer index 0 is the core batch, 1 the
+    # shirobai-performance plugin, and so on. Mirrors the origin constants in
+    # `crates/shirobai-core/src/rules/bundle.rs` (`ORIGIN_*` / `N_ORIGINS`);
+    # adding a plugin means one entry here and one constant there — that pair
+    # of one-line edits is the only place plugin batches can conflict.
+    ORIGINS = %i[core performance].freeze
+
+    # `[origin, rule]` slot pairs into the `Shirobai.check_all` result
+    # (`result[origin][rule]`). The rule order within each origin mirrors the
+    # order documented on `BundleConfig` and built by `check_all` in
+    # `ext/shirobai/src/lib.rs`; each slot carries the same shape as the
+    # cop's standalone `Shirobai.check_*` return value. Wrappers never index
+    # the result themselves — they go through `offenses_for`.
     SLOTS = {
-      debugger: 0,
-      block_length: 1,
-      block_nesting: 2,
-      complexity: 3,
-      variable_number: 4,
-      method_name: 5,
-      safe_navigation_chain: 6,
-      multiline_operation: 7,
-      multiline_method_call: 8,
-      dot_position: 9,
-      line_length: 10,
-      line_length_breakables: 11,
-      line_end_concatenation: 12,
-      argument_alignment: 13,
-      first_argument_indentation: 14,
-      redundant_self: 15,
-      indentation_width: 16,
-      predicate_prefix: 17,
-      closing_parenthesis_indentation: 18,
-      first_array_element_indentation: 19,
-      hash_each_methods: 20,
-      void: 21,
-      useless_access_modifier: 22,
-      empty_lines_around_method_body: 23,
-      empty_lines_around_class_body: 24,
-      empty_lines_around_module_body: 25,
-      empty_lines_around_block_body: 26,
-      empty_lines_around_begin_body: 27,
-      empty_lines_around_exception_handling_keywords: 28,
-      block_delimiters: 29,
-      abc_size: 30,
-      indentation_consistency: 31,
-      empty_line_between_defs: 32,
-      end_alignment: 33,
-      block_alignment: 34,
-      else_alignment: 35,
-      first_hash_element_indentation: 36,
-      hash_alignment: 37,
-      empty_lines_around_arguments: 38,
-      hash_syntax: 39,
-      string_literals: 40,
-      trailing_comma_in_arguments: 41,
-      string_literals_in_interpolation: 42,
-      trailing_empty_lines: 43,
-      space_around_method_call_operator: 44,
-      space_around_keyword: 45,
-      space_inside_block_braces: 46,
-      method_length: 47,
-      def_end_alignment: 48,
-      require_parentheses: 49,
-      self_assignment: 50,
-      nested_parenthesized_calls: 51,
-      parentheses_as_grouped_expression: 52,
-      percent_literal_delimiters: 53,
-      multiline_method_call_brace_layout: 54,
-      access_modifier_indentation: 55,
-      assignment_indentation: 56,
-      redundant_self_assignment: 57,
-      colon_method_call: 58,
-      stabby_lambda_parentheses: 59,
-      unreachable_code: 60,
-      hash_transform_keys: 61,
-      ambiguous_block_association: 62,
-      empty_line_after_guard_clause: 63,
-      empty_comment: 64,
-      empty_line_after_magic_comment: 65,
-      empty_lines: 66,
-      leading_empty_lines: 67,
-      class_length: 68,
-      module_length: 69,
-      trailing_comma_in_hash_literal: 70,
-      trailing_comma_in_array_literal: 71,
-      space_inside_hash_literal_braces: 72,
-      space_inside_array_literal_brackets: 73,
-      space_before_block_braces: 74,
-      if_unless_modifier: 75,
-      space_before_comma: 76,
-      space_after_comma: 77,
-      space_before_semicolon: 78,
-      space_after_semicolon: 79,
-      space_after_colon: 80,
-      space_before_comment: 81,
-      space_inside_parens: 82,
-      space_inside_reference_brackets: 83,
-      space_before_first_arg: 84,
-      duplicate_magic_comment: 85,
-      duplicate_methods: 86,
-      array_alignment: 87,
-      # shirobai-performance plugin slots. Always present in the wire format;
-      # the Rust side leaves them empty unless the plugin gem registered its
-      # packed segment (`Dispatch.performance_packer`).
-      perf_detect: 88,
-      perf_string_include: 89,
-      perf_end_with: 90,
-      perf_start_with: 91,
-      perf_times_map: 92
+      debugger: [0, 0].freeze,
+      block_length: [0, 1].freeze,
+      block_nesting: [0, 2].freeze,
+      complexity: [0, 3].freeze,
+      variable_number: [0, 4].freeze,
+      method_name: [0, 5].freeze,
+      safe_navigation_chain: [0, 6].freeze,
+      multiline_operation: [0, 7].freeze,
+      multiline_method_call: [0, 8].freeze,
+      dot_position: [0, 9].freeze,
+      line_length: [0, 10].freeze,
+      line_length_breakables: [0, 11].freeze,
+      line_end_concatenation: [0, 12].freeze,
+      argument_alignment: [0, 13].freeze,
+      first_argument_indentation: [0, 14].freeze,
+      redundant_self: [0, 15].freeze,
+      indentation_width: [0, 16].freeze,
+      predicate_prefix: [0, 17].freeze,
+      closing_parenthesis_indentation: [0, 18].freeze,
+      first_array_element_indentation: [0, 19].freeze,
+      hash_each_methods: [0, 20].freeze,
+      void: [0, 21].freeze,
+      useless_access_modifier: [0, 22].freeze,
+      empty_lines_around_method_body: [0, 23].freeze,
+      empty_lines_around_class_body: [0, 24].freeze,
+      empty_lines_around_module_body: [0, 25].freeze,
+      empty_lines_around_block_body: [0, 26].freeze,
+      empty_lines_around_begin_body: [0, 27].freeze,
+      empty_lines_around_exception_handling_keywords: [0, 28].freeze,
+      block_delimiters: [0, 29].freeze,
+      abc_size: [0, 30].freeze,
+      indentation_consistency: [0, 31].freeze,
+      empty_line_between_defs: [0, 32].freeze,
+      end_alignment: [0, 33].freeze,
+      block_alignment: [0, 34].freeze,
+      else_alignment: [0, 35].freeze,
+      first_hash_element_indentation: [0, 36].freeze,
+      hash_alignment: [0, 37].freeze,
+      empty_lines_around_arguments: [0, 38].freeze,
+      hash_syntax: [0, 39].freeze,
+      string_literals: [0, 40].freeze,
+      trailing_comma_in_arguments: [0, 41].freeze,
+      string_literals_in_interpolation: [0, 42].freeze,
+      trailing_empty_lines: [0, 43].freeze,
+      space_around_method_call_operator: [0, 44].freeze,
+      space_around_keyword: [0, 45].freeze,
+      space_inside_block_braces: [0, 46].freeze,
+      method_length: [0, 47].freeze,
+      def_end_alignment: [0, 48].freeze,
+      require_parentheses: [0, 49].freeze,
+      self_assignment: [0, 50].freeze,
+      nested_parenthesized_calls: [0, 51].freeze,
+      parentheses_as_grouped_expression: [0, 52].freeze,
+      percent_literal_delimiters: [0, 53].freeze,
+      multiline_method_call_brace_layout: [0, 54].freeze,
+      access_modifier_indentation: [0, 55].freeze,
+      assignment_indentation: [0, 56].freeze,
+      redundant_self_assignment: [0, 57].freeze,
+      colon_method_call: [0, 58].freeze,
+      stabby_lambda_parentheses: [0, 59].freeze,
+      unreachable_code: [0, 60].freeze,
+      hash_transform_keys: [0, 61].freeze,
+      ambiguous_block_association: [0, 62].freeze,
+      empty_line_after_guard_clause: [0, 63].freeze,
+      empty_comment: [0, 64].freeze,
+      empty_line_after_magic_comment: [0, 65].freeze,
+      empty_lines: [0, 66].freeze,
+      leading_empty_lines: [0, 67].freeze,
+      class_length: [0, 68].freeze,
+      module_length: [0, 69].freeze,
+      trailing_comma_in_hash_literal: [0, 70].freeze,
+      trailing_comma_in_array_literal: [0, 71].freeze,
+      space_inside_hash_literal_braces: [0, 72].freeze,
+      space_inside_array_literal_brackets: [0, 73].freeze,
+      space_before_block_braces: [0, 74].freeze,
+      if_unless_modifier: [0, 75].freeze,
+      space_before_comma: [0, 76].freeze,
+      space_after_comma: [0, 77].freeze,
+      space_before_semicolon: [0, 78].freeze,
+      space_after_semicolon: [0, 79].freeze,
+      space_after_colon: [0, 80].freeze,
+      space_before_comment: [0, 81].freeze,
+      space_inside_parens: [0, 82].freeze,
+      space_inside_reference_brackets: [0, 83].freeze,
+      space_before_first_arg: [0, 84].freeze,
+      duplicate_magic_comment: [0, 85].freeze,
+      duplicate_methods: [0, 86].freeze,
+      array_alignment: [0, 87].freeze,
+      # shirobai-performance plugin slots (origin 1). Always present in the
+      # wire format; the Rust side leaves them empty unless the plugin gem
+      # registered its packed segment (`Dispatch.register_plugin_packer`).
+      perf_detect: [1, 0].freeze,
+      perf_string_include: [1, 1].freeze,
+      perf_end_with: [1, 2].freeze,
+      perf_start_with: [1, 3].freeze,
+      perf_times_map: [1, 4].freeze
     }.freeze
 
-    # Dormant shirobai-performance segment: `enabled = 0` plus placeholder
-    # cop settings (see the `BundleConfig` docs for the field order). Packed
-    # whenever the plugin gem is not loaded; the Rust side then skips every
-    # Performance rule and leaves their slots empty.
-    PERFORMANCE_SEGMENT_DORMANT = [[0, 0, 0].freeze, [[].freeze].freeze].freeze
+    # Dormant packed-config segment per plugin origin: the enable flag (first
+    # num) is 0 and the cop settings are placeholders (see the `BundleConfig`
+    # docs for each segment's field order). Packed whenever the plugin gem
+    # has not registered a packer; the Rust side then skips that origin's
+    # rules and leaves its slots empty.
+    DORMANT_SEGMENTS = {
+      performance: [[0, 0, 0].freeze, [[].freeze].freeze].freeze
+    }.freeze
 
     class << self
-      # Registration point for the shirobai-performance gem: a callable
-      # `(config) -> [nums, lists]` producing the segment documented on
-      # `BundleConfig` (enabled flag first). Set at plugin require time,
-      # BEFORE any lint run packs a config. Configs packed earlier keep
-      # their dormant tokens (token memoization is per Config identity),
-      # so requiring the plugin mid-run is not supported.
-      attr_accessor :performance_packer
+      # Registration point for plugin gems: `origin` is the ORIGINS key and
+      # the block is a callable `(config) -> [nums, lists]` producing that
+      # origin's segment documented on `BundleConfig` (enable flag first).
+      # Called at plugin require time, BEFORE any lint run packs a config.
+      # Configs packed earlier keep their dormant tokens (token memoization
+      # is per Config identity), so requiring a plugin mid-run is not
+      # supported.
+      def register_plugin_packer(origin, &packer)
+        raise ArgumentError, "unknown origin #{origin.inspect}" unless ORIGINS.include?(origin)
+
+        plugin_packers[origin] = packer
+      end
+
+      def plugin_packers
+        @plugin_packers ||= {}
+      end
       # Returns the raw Rust result for `cop_key` on this source.
       def offenses_for(processed_source, config, cop_key)
         src = processed_source.raw_source
@@ -139,7 +161,8 @@ module Shirobai
           @cached_config = config
           @cached_result = result
         end
-        @cached_result.fetch(SLOTS.fetch(cop_key))
+        origin, rule = SLOTS.fetch(cop_key)
+        @cached_result.fetch(origin).fetch(rule)
       end
 
       # The Rust-side token for `config`, registering its packed bundle config
@@ -310,18 +333,23 @@ module Shirobai
           num(dm[0]), # DuplicateMethods ActiveSupportExtensionsEnabled
           *ara # ArrayAlignment style / indent (2 nums)
         ]
-        perf_nums, perf_lists =
-          if Dispatch.performance_packer
-            Dispatch.performance_packer.call(config)
-          else
-            PERFORMANCE_SEGMENT_DORMANT
-          end
-
-        nums.concat(perf_nums)
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0], aba[0],
-                 cl[2], mol[2], *perf_lists]
-        [nums, lists]
+                 cl[2], mol[2]]
+
+        # One sub-array per origin: `nums[origin]` / `lists[origin]`. Core is
+        # origin 0; every plugin origin packs its registered segment or the
+        # dormant default, so segment offsets never shift when another origin
+        # grows.
+        packed_nums = [nums]
+        packed_lists = [lists]
+        ORIGINS.drop(1).each do |origin|
+          packer = Dispatch.plugin_packers[origin]
+          seg_nums, seg_lists = packer ? packer.call(config) : DORMANT_SEGMENTS.fetch(origin)
+          packed_nums << seg_nums
+          packed_lists << seg_lists
+        end
+        [packed_nums, packed_lists]
       end
 
       def num(value)
