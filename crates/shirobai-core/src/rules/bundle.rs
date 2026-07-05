@@ -16,7 +16,7 @@ use super::{
     closing_parenthesis_indentation, colon_method_call, complexity, debugger, def_end_alignment,
     dot_position,
     duplicate_magic_comment, duplicate_methods,
-    empty_comment,
+    empty_comment, file_null,
     empty_line_after_guard_clause,
     empty_line_after_magic_comment,
     empty_line_between_defs,
@@ -856,6 +856,9 @@ pub struct BundleResult {
     /// Per-file `found_method` event stream in stock callback order (the
     /// Ruby wrapper replays the cross-file bookkeeping).
     pub duplicate_methods: Vec<duplicate_methods::DupMethodEvent>,
+    /// `Style/FileNull`: `[start, end, message]` per offense. The offense range
+    /// is also the `File::NULL` replace range.
+    pub file_null: Vec<file_null::FileNullOffense>,
     /// shirobai-performance plugin slots. Always present in the wire format;
     /// empty when `BundleConfig::performance` is `None` (plugin not loaded).
     pub perf_detect: Vec<perf_detect::PerfDetectOffense>,
@@ -1067,6 +1070,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         ambiguous_block_association::build_rule(source, cfg.ambiguous_block_association.clone());
     let mut ium_rule = if_unless_modifier::build_rule(source, cfg.if_unless_modifier);
     let mut dm_rule = duplicate_methods::build_rule(source, &cfg.duplicate_methods);
+    let mut fn_rule = file_null::build_rule();
     // `Layout/EmptyLines` joins the shared walk only when the file actually
     // contains `\n\n\n` (stock's prefilter); otherwise the rule's collected
     // lines are unused and we skip both the walk push and the finalize. The
@@ -1169,6 +1173,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut ium_rule,
         &mut dm_rule,
         &mut ara_rule,
+        &mut fn_rule,
     ];
     if empty_lines_eligible {
         rules.push(&mut el_rule);
@@ -1276,6 +1281,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let unreachable_code = uc_rule.offenses;
     let hash_transform_keys = htk_rule.offenses;
     let ambiguous_block_association = aba_rule.offenses;
+    let file_null = fn_rule.into_offenses();
     // `Layout/EmptyLineAfterGuardClause` walks the AST on its own (separate
     // `dispatch::run`); joining the shared walk is future work.
     let empty_line_after_guard_clause =
@@ -1403,6 +1409,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         space_before_first_arg,
         duplicate_magic_comment,
         duplicate_methods: dm_rule.events,
+        file_null,
         perf_detect,
         perf_string_include,
         perf_end_with,
@@ -3857,6 +3864,26 @@ mod tests {
             super::duplicate_magic_comment::check_duplicate_magic_comment(src.as_bytes());
         assert!(!alone.is_empty());
         assert_eq!(bundle.duplicate_magic_comment, alone);
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_file_null() {
+        // A `/dev/null` literal (unlocking the gate), a bare `nul` after it,
+        // an exempt array member, a `NUL:`, and a regexp body — several shapes
+        // in one file so the shared walk and the standalone walk must agree.
+        let src = "a = '/dev/null'\nb = 'nul'\nc = ['NUL']\nd = 'NUL:'\ne = %r{/dev/null}\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone = super::file_null::check_file_null(src.as_bytes());
+        assert!(!alone.is_empty());
+        assert_eq!(bundle.file_null.len(), alone.len());
+        for (a, b) in bundle.file_null.iter().zip(&alone) {
+            assert_eq!(
+                (a.start_offset, a.end_offset, &a.message),
+                (b.start_offset, b.end_offset, &b.message)
+            );
+        }
     }
 
     #[test]

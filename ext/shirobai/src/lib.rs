@@ -578,6 +578,16 @@ fn map_void(
         .collect()
 }
 
+/// `Style/FileNull`: `[[start, end, message], ...]`. The Ruby wrapper offends
+/// on `[start, end)` and replaces the same range with `File::NULL`.
+fn map_file_null(
+    v: Vec<shirobai_core::rules::file_null::FileNullOffense>,
+) -> Vec<(usize, usize, String)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.message))
+        .collect()
+}
+
 fn map_useless_access_modifier(
     v: Vec<shirobai_core::rules::useless_access_modifier::UselessAccessModifierOffense>,
 ) -> Vec<(usize, usize, String)> {
@@ -1515,7 +1525,7 @@ fn register_bundle_config(
 /// 82 space_inside_parens / 83 space_inside_reference_brackets /
 /// 84 space_before_first_arg /
 /// 85 duplicate_magic_comment / 86 duplicate_methods /
-/// 87 array_alignment
+/// 87 array_alignment / 88 file_null
 ///
 /// Performance slots (origin 1; every slot empty unless the plugin gem
 /// registered its packed segment):
@@ -1672,6 +1682,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(r.duplicate_magic_comment)?;
         ary.push(map_duplicate_methods(r.duplicate_methods))?;
         ary.push(map_array_alignment(r.array_alignment))?;
+        ary.push(map_file_null(r.file_null))?;
         // Performance origin (result[1]).
         let perf = ruby.ary_new_capa(5);
         perf.push(map_perf_detect(r.perf_detect))?;
@@ -2521,6 +2532,12 @@ fn check_hash_each_methods(
             &allowed_receivers,
         ),
     )
+}
+
+/// Ruby entry point for `Style/FileNull`. Config-less.
+/// Returns `[[start, end, message], ...]`.
+fn check_file_null(source: RString) -> Vec<(usize, usize, String)> {
+    map_file_null(shirobai_core::rules::file_null::check_file_null(bytes(&source)))
 }
 
 /// Ruby entry point for `Style/HashTransformKeys`. Config-less.
@@ -3831,6 +3848,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_hash_each_methods",
         function!(check_hash_each_methods, 2),
+    )?;
+    module.define_module_function(
+        "check_file_null",
+        function!(check_file_null, 1),
     )?;
     module.define_module_function("check_hash_syntax", function!(check_hash_syntax, 2))?;
     module.define_module_function(

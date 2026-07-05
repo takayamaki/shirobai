@@ -92,6 +92,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Style::HashEachMethods,
       "foo.keys.each { |k| p k }\nbar.each { |unused_key, v| p v }\n"
     ],
+    # FileNull autocorrect is UNSAFE (it can change behavior on Windows), so
+    # in lint mode the corrector block still runs and the offense stays
+    # correctable; both sides must agree on that status.
+    "Style/FileNull" => [
+      RuboCop::Cop::Style::FileNull,
+      Shirobai::Cop::Style::FileNull,
+      "x = '/dev/null'\ny = 'NUL'\n"
+    ],
     # One corrected offense (`self`) plus one whose corrector block stays
     # empty (a literal in a modifier-conditional branch): both statuses must
     # match stock.

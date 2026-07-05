@@ -29,6 +29,7 @@ pub mod empty_lines_around_arguments;
 pub mod empty_lines_around_body;
 pub mod else_alignment;
 pub mod end_alignment;
+pub mod file_null;
 pub mod first_argument_indentation;
 pub mod first_array_element_indentation;
 pub mod first_hash_element_indentation;

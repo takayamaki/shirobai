@@ -442,6 +442,29 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     end
   end
 
+  # `Style/FileNull` is `Enabled: pending` (and `SafeAutoCorrect: false`), so
+  # the Team-based runs above would drop it on BOTH sides under the default
+  # config (vacuously green); force-enable it. The offending string node
+  # range IS the `File::NULL` replace range, so converting that one byte
+  # offset covers both the offense caret and the autocorrect after the
+  # multibyte comment.
+  describe "Style/FileNull (pending cop, force-enabled)" do
+    it "matches stock offenses and autocorrect output after a multibyte comment" do
+      enabled_config = RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new(
+          { "Style/FileNull" => { "Enabled" => true } }, "(test)"
+        ),
+        "(test)"
+      )
+      offenses = expect_parity(
+        "Style/FileNull",
+        "#{prefix}x = '/dev/null'\ny = 'nul'\n",
+        enabled_config
+      )
+      expect(offenses).not_to be_empty, "fixture produced no stock offense; fix the source"
+    end
+  end
+
   # `Lint/DuplicateMagicComment` is `Enabled: pending`, so the Team-based
   # runs above would drop it on BOTH sides under the default config
   # (vacuously green); force-enable it. The wrapper passes line numbers

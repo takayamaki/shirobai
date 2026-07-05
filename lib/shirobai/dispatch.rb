@@ -117,6 +117,7 @@ module Shirobai
       duplicate_magic_comment: [0, 85].freeze,
       duplicate_methods: [0, 86].freeze,
       array_alignment: [0, 87].freeze,
+      file_null: [0, 88].freeze,
       # shirobai-performance plugin slots (origin 1). Always present in the
       # wire format; the Rust side leaves them empty unless the plugin gem
       # registered its packed segment (`Dispatch.register_plugin_packer`).
