@@ -614,6 +614,13 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Style::RedundantFreeze,
       "CONST = 1.freeze\n"
     ],
+    # Default style is `always`: a missing comment yields a correctable
+    # insertion offense (empty caret range at file start).
+    "Style/FrozenStringLiteralComment" => [
+      RuboCop::Cop::Style::FrozenStringLiteralComment,
+      Shirobai::Cop::Style::FrozenStringLiteralComment,
+      "puts 1\n"
+    ],
   }
 
   cases.each do |name, (stock_klass, shirobai_klass, source)|

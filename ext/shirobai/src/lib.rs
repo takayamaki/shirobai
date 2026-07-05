@@ -1558,7 +1558,7 @@ fn register_bundle_config(
 /// 84 space_before_first_arg /
 /// 85 duplicate_magic_comment / 86 duplicate_methods /
 /// 87 array_alignment / 88 file_null / 89 semicolon /
-/// 90 redundant_freeze
+/// 90 redundant_freeze / 91 frozen_string_literal_comment
 ///
 /// Performance slots (origin 1; every slot empty unless the plugin gem
 /// registered its packed segment):
@@ -1583,7 +1583,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
         // Core origin (result[0]).
-        let ary = ruby.ary_new_capa(91);
+        let ary = ruby.ary_new_capa(92);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -1718,6 +1718,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_file_null(r.file_null))?;
         ary.push(map_semicolon(r.semicolon))?;
         ary.push(map_redundant_freeze(r.redundant_freeze))?;
+        ary.push(r.frozen_string_literal_comment)?;
         // Performance origin (result[1]).
         let perf = ruby.ary_new_capa(5);
         perf.push(map_perf_detect(r.perf_detect))?;
@@ -2848,6 +2849,20 @@ fn check_duplicate_magic_comment(source: RString) -> Vec<usize> {
     shirobai_core::rules::duplicate_magic_comment::check_duplicate_magic_comment(bytes(&source))
 }
 
+/// Ruby entry point for `Style/FrozenStringLiteralComment` (standalone
+/// fallback). `style`: 0 always, 1 never, 2 always_true. Returns at most one
+/// packed offense `(kind, start, fin, line, insert_line, is_emacs)`; byte
+/// offsets are converted by the wrapper.
+fn check_frozen_string_literal_comment(
+    source: RString,
+    style: u8,
+) -> Vec<(i64, i64, i64, i64, i64, i64)> {
+    shirobai_core::rules::frozen_string_literal_comment::check_frozen_string_literal_comment(
+        bytes(&source),
+        style,
+    )
+}
+
 /// Ruby entry point for `Lint/DuplicateMethods` (standalone fallback).
 /// `active_support` mirrors `AllCops/ActiveSupportExtensionsEnabled`.
 /// Returns the shape documented on `map_duplicate_methods`.
@@ -3700,6 +3715,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_duplicate_magic_comment",
         function!(check_duplicate_magic_comment, 1),
+    )?;
+    module.define_module_function(
+        "check_frozen_string_literal_comment",
+        function!(check_frozen_string_literal_comment, 2),
     )?;
     module.define_module_function(
         "check_duplicate_methods",

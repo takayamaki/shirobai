@@ -33,6 +33,7 @@ pub mod file_null;
 pub mod first_argument_indentation;
 pub mod first_array_element_indentation;
 pub mod first_hash_element_indentation;
+pub mod frozen_string_literal_comment;
 pub mod hash_alignment;
 pub mod hash_each_methods;
 pub mod hash_syntax;

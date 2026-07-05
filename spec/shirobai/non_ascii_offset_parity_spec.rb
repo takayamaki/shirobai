@@ -498,6 +498,46 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     end
   end
 
+  # `Style/FrozenStringLiteralComment` default style is `always`, whose offense
+  # is a zero-length range at byte 0 (no conversion needed). The `never` and
+  # `always_true` styles instead anchor the offense at the frozen-string-literal
+  # COMMENT, whose byte range sits after the multibyte prefix comment, so the
+  # byte→char conversion runs on the offense highlight AND the removal /
+  # replacement corrector range.
+  describe "Style/FrozenStringLiteralComment (never, force-configured)" do
+    it "matches stock offenses and autocorrect output after a multibyte comment" do
+      never_config = RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new(
+          { "Style/FrozenStringLiteralComment" => { "EnforcedStyle" => "never" } }, "(test)"
+        ),
+        "(test)"
+      )
+      offenses = expect_parity(
+        "Style/FrozenStringLiteralComment",
+        "#{prefix}# frozen_string_literal: true\nx = \"あ\"\n",
+        never_config
+      )
+      expect(offenses).not_to be_empty, "fixture produced no stock offense; fix the source"
+    end
+  end
+
+  describe "Style/FrozenStringLiteralComment (always_true, force-configured)" do
+    it "matches stock offenses and autocorrect output after a multibyte comment" do
+      always_true_config = RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new(
+          { "Style/FrozenStringLiteralComment" => { "EnforcedStyle" => "always_true" } }, "(test)"
+        ),
+        "(test)"
+      )
+      offenses = expect_parity(
+        "Style/FrozenStringLiteralComment",
+        "#{prefix}# frozen_string_literal: false\nx = \"あ\"\n",
+        always_true_config
+      )
+      expect(offenses).not_to be_empty, "fixture produced no stock offense; fix the source"
+    end
+  end
+
   # Real-file sweep: Ruby's own fileutils.rb carries multibyte comments and is
   # the file where the byte/char divergence was first demonstrated against
   # stock (2-byte shift; DotPosition dropping offenses). Replays the parity

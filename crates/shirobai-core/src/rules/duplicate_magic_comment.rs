@@ -95,7 +95,7 @@ use super::parse_cache;
 pub type DuplicateLine = usize;
 
 /// Ruby regex `\s` (no `/m`): ASCII whitespace.
-fn is_rb_space(b: u8) -> bool {
+pub(crate) fn is_rb_space(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\r' | b'\n' | 0x0C | 0x0B)
 }
 
@@ -104,22 +104,10 @@ pub fn check_duplicate_magic_comment(source: &[u8]) -> Vec<DuplicateLine> {
         return Vec::new();
     }
 
-    let (scan, last_comment_start) =
-        parse_cache::with_parsed_and_comments(source, |_owner, _root, comments| {
-            let scan = first_token_pos(source, &comments);
-            let stop = match scan {
-                ScanEnd::Token(pos) => pos,
-                ScanEnd::NoToken { stop } => stop,
-            };
-            // The last comment token the (stopped) lexer produced — drives
-            // `ProcessedSource#lines`' `__END__` cut below.
-            let last_comment_start = comments
-                .iter()
-                .take_while(|c| c.0 < stop)
-                .last()
-                .map(|c| c.0);
-            (scan, last_comment_start)
-        });
+    let (scan, last_comment_start) = parse_cache::with_parsed_and_comments(
+        source,
+        |_owner, _root, comments| scan_front(source, &comments),
+    );
 
     line_index::with_line_index(source, |li| {
         // Leading line count (`leading_comment_lines.size`): the lines
@@ -163,7 +151,8 @@ pub fn check_duplicate_magic_comment(source: &[u8]) -> Vec<DuplicateLine> {
 }
 
 /// How the token scan ended.
-enum ScanEnd {
+#[derive(Clone, Copy)]
+pub(crate) enum ScanEnd {
     /// First non-comment token found at this byte offset.
     Token(usize),
     /// Lexing stopped (EOF, `__END__` data marker, NUL-family byte) with no
@@ -282,7 +271,7 @@ fn classify(line: &[u8]) -> Magic {
 
 /// `EmacsComment::REGEXP = /-\*-(?<token>.+)-\*-/`: token spans the first
 /// `-*-` (with at least one byte after it) to the LAST closing `-*-`.
-fn emacs_token(line: &[u8]) -> Option<&[u8]> {
+pub(crate) fn emacs_token(line: &[u8]) -> Option<&[u8]> {
     let open = find(line, b"-*-", 0)?;
     // Greedy `.+`: the closer is the last `-*-` starting at least one byte
     // past the opener's end. (`.` does not match `\n`; lines contain none.)
@@ -526,11 +515,40 @@ fn strip_rb(s: &[u8]) -> &[u8] {
     &s[start..end]
 }
 
+/// The token-scan front shared by every leading-comment consumer: how the
+/// scan for the first non-comment token ended, plus the start offset of the
+/// last comment token before that point (which drives the
+/// `ProcessedSource#lines` `__END__` cut in [`leading_line_count`]).
+pub(crate) fn scan_front(
+    source: &[u8],
+    comments: &[(usize, usize)],
+) -> (ScanEnd, Option<usize>) {
+    let scan = first_token_pos(source, comments);
+    let stop = match scan {
+        ScanEnd::Token(pos) => pos,
+        ScanEnd::NoToken { stop } => stop,
+    };
+    let last_comment_start = comments
+        .iter()
+        .take_while(|c| c.0 < stop)
+        .last()
+        .map(|c| c.0);
+    (scan, last_comment_start)
+}
+
+/// The line's bytes from `start` up to (excluding) the next `\n`, mirroring
+/// `Buffer#source_lines` (chomp(`"\n"`) only — a stray `\r` stays).
+pub(crate) fn line_slice(source: &[u8], start: usize) -> &[u8] {
+    let rest = &source[start.min(source.len())..];
+    let end = rest.iter().position(|&b| b == b'\n').unwrap_or(rest.len());
+    &rest[..end]
+}
+
 /// `leading_comment_lines.size` — shared by `Lint/DuplicateMagicComment` and
 /// `RuboCop::Cop::FrozenStringLiteral#frozen_string_literals_enabled?` (see
 /// [`frozen_string_literals_enabled`]). See the call site above for the exact
 /// `ProcessedSource#lines` / `__END__` semantics.
-fn leading_line_count(
+pub(crate) fn leading_line_count(
     source: &[u8],
     li: &line_index::LineIndex,
     scan: &ScanEnd,
@@ -545,15 +563,7 @@ fn leading_line_count(
                 Some(cstart) => {
                     let last_token_line = li.line_of(cstart);
                     (last_token_line..all)
-                        .find(|&ix| {
-                            let start = li.line_starts()[ix];
-                            let rest = &source[start.min(source.len())..];
-                            let end = rest
-                                .iter()
-                                .position(|&b| b == b'\n')
-                                .unwrap_or(rest.len());
-                            &rest[..end] == b"__END__"
-                        })
+                        .find(|&ix| line_slice(source, li.line_starts()[ix]) == b"__END__")
                         .unwrap_or(all)
                 }
             }
@@ -576,44 +586,48 @@ pub(crate) fn frozen_string_literals_enabled(source: &[u8], sfbd_default: bool) 
         return sfbd_default;
     }
 
-    let (scan, last_comment_start) =
-        parse_cache::with_parsed_and_comments(source, |_owner, _root, comments| {
-            let scan = first_token_pos(source, &comments);
-            let stop = match scan {
-                ScanEnd::Token(pos) => pos,
-                ScanEnd::NoToken { stop } => stop,
-            };
-            let last_comment_start = comments
-                .iter()
-                .take_while(|c| c.0 < stop)
-                .last()
-                .map(|c| c.0);
-            (scan, last_comment_start)
-        });
+    let (scan, last_comment_start) = parse_cache::with_parsed_and_comments(
+        source,
+        |_owner, _root, comments| scan_front(source, &comments),
+    );
 
     line_index::with_line_index(source, |li| {
         let leading = leading_line_count(source, li, &scan, last_comment_start);
         for &start in li.line_starts().iter().take(leading) {
-            let rest = &source[start.min(source.len())..];
-            let end = rest
-                .iter()
-                .position(|&b| b == b'\n')
-                .unwrap_or(rest.len());
-            let line = &rest[..end];
-            if let Some(value_is_true) = line_fsl_value(line) {
-                return value_is_true;
+            if let Some(value) = line_fsl(line_slice(source, start)) {
+                return value == FslValue::True;
             }
         }
         sfbd_default
     })
 }
 
-/// `MagicComment.parse(line).frozen_string_literal_specified?` +
-/// `.frozen_string_literal? (== true)`. `Some(true)` when an fsl value is
-/// specified and it is `true`, `Some(false)` when specified but any other
-/// value, `None` when not specified. Follows `MagicComment.parse`'s
-/// Emacs-then-Vim-then-Simple format dispatch.
-fn line_fsl_value(line: &[u8]) -> Option<bool> {
+/// Frozen-string-literal value of one line's `MagicComment.parse` result:
+/// stock downcases the token and coerces `"true"`/`"false"` to booleans; any
+/// other token stays a plain string (`Other`). `valid_literal_value?` is
+/// `True | False`; `frozen_string_literal?` is `True`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FslValue {
+    True,
+    False,
+    /// Specified, but neither `true` nor `false`.
+    Other,
+}
+
+fn fsl_value_of(tok: &[u8]) -> FslValue {
+    if tok.eq_ignore_ascii_case(b"true") {
+        FslValue::True
+    } else if tok.eq_ignore_ascii_case(b"false") {
+        FslValue::False
+    } else {
+        FslValue::Other
+    }
+}
+
+/// `MagicComment.parse(line).frozen_string_literal` collapsed to a value
+/// kind: `None` when not specified, otherwise the coerced value. Follows
+/// `MagicComment.parse`'s Emacs-then-Vim-then-Simple format dispatch.
+pub(crate) fn line_fsl(line: &[u8]) -> Option<FslValue> {
     if let Some(token) = emacs_token(line) {
         // EditorComment#match returns the first token matching the fsl keyword.
         for tok in split_strip(token, b";") {
@@ -631,9 +645,8 @@ fn line_fsl_value(line: &[u8]) -> Option<bool> {
 }
 
 /// Emacs editor token value for `\Afrozen[_-]string[_-]literal\s*:\s*TOKEN\z`
-/// (case-SENSITIVE keyword, like `EditorComment#match`). Returns
-/// `Some(value.downcase == "true")`.
-fn emacs_fsl_token_value(tok: &[u8]) -> Option<bool> {
+/// (case-SENSITIVE keyword, like `EditorComment#match`; value downcased).
+fn emacs_fsl_token_value(tok: &[u8]) -> Option<FslValue> {
     let klen = fsl_keyword_len(tok, false)?;
     let rest = &tok[klen..];
     let mut p = skip_space(rest, 0);
@@ -645,13 +658,13 @@ fn emacs_fsl_token_value(tok: &[u8]) -> Option<bool> {
     if tlen == 0 || p + tlen != rest.len() {
         return None;
     }
-    Some(rest[p..p + tlen].eq_ignore_ascii_case(b"true"))
+    Some(fsl_value_of(&rest[p..p + tlen]))
 }
 
 /// SimpleComment fsl value:
-/// `\A\s*#\s*frozen[_-]string[_-]literal:\s*(?<token>TOKEN)\s*\z` (/i).
-/// Returns `Some(token.downcase == "true")`.
-fn simple_fsl_value(line: &[u8]) -> Option<bool> {
+/// `\A\s*#\s*frozen[_-]string[_-]literal:\s*(?<token>TOKEN)\s*\z` (/i,
+/// value downcased).
+fn simple_fsl_value(line: &[u8]) -> Option<FslValue> {
     let mut p = skip_space(line, 0);
     if line.get(p) != Some(&b'#') {
         return None;
@@ -672,7 +685,7 @@ fn simple_fsl_value(line: &[u8]) -> Option<bool> {
     if p != line.len() {
         return None;
     }
-    Some(value.eq_ignore_ascii_case(b"true"))
+    Some(fsl_value_of(value))
 }
 
 #[cfg(test)]

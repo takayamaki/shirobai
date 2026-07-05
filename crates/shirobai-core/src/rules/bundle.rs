@@ -24,6 +24,7 @@ use super::{
     block_alignment, else_alignment, empty_lines_around_arguments, empty_lines_around_body,
     end_alignment,
     first_argument_indentation, first_array_element_indentation, first_hash_element_indentation,
+    frozen_string_literal_comment,
     hash_alignment, hash_each_methods, hash_syntax, hash_transform_keys,
     if_unless_modifier,
     indentation_consistency, indentation_width,
@@ -168,6 +169,7 @@ pub fn check_multiline_bundle(
 /// | 113 | array_alignment indentation width (`IndentationWidth` falling back to `Layout/IndentationWidth.Width` falling back to 2) |
 /// | 114 | redundant_freeze target_ruby_30_plus (`Style/RedundantFreeze`'s `AllCops/TargetRubyVersion >= 3.0`) |
 /// | 115 | redundant_freeze string_literals_frozen_by_default (`AllCops/StringLiteralsFrozenByDefault` is literally `true`) |
+/// | 116 | frozen_string_literal_comment style (`Style/FrozenStringLiteralComment` `EnforcedStyle`: 0 always, 1 never, 2 always_true) |
 ///
 /// Core segment `lists[0]` (`Vec<String>`):
 ///
@@ -353,6 +355,9 @@ pub struct BundleConfig {
     /// `Style/RedundantFreeze`: `AllCops/StringLiteralsFrozenByDefault` is
     /// literally `true` (the fallback for `frozen_string_literals_enabled?`).
     pub redundant_freeze_string_literals_frozen_by_default: bool,
+    /// `Style/FrozenStringLiteralComment` `EnforcedStyle`: 0 always, 1 never,
+    /// 2 always_true.
+    pub frozen_string_literal_comment_style: u8,
     /// `Some` only when the shirobai-performance plugin gem is loaded on the
     /// Ruby side (`performance_enabled` num is 1). `None` keeps the
     /// Performance rules out of the shared walk entirely — their slots are
@@ -393,7 +398,7 @@ pub const ORIGIN_PERFORMANCE: usize = 1;
 pub const ORIGIN_RSPEC: usize = 2;
 pub const N_ORIGINS: usize = 3;
 
-const CORE_NUMS_LEN: usize = 116;
+const CORE_NUMS_LEN: usize = 117;
 const CORE_LISTS_LEN: usize = 25;
 const PERF_NUMS_LEN: usize = 3;
 const PERF_LISTS_LEN: usize = 1;
@@ -482,6 +487,7 @@ impl BundleConfig {
             argument_alignment_incompatible: nums[23] != 0,
             array_alignment_style: nums[112] as u8,
             array_alignment_indent: nums[113] as usize,
+            frozen_string_literal_comment_style: nums[116] as u8,
             first_argument_style: nums[24] as u8,
             first_argument_indent: nums[25] as usize,
             first_argument_enforce_fixed_no_line_break: nums[26] != 0,
@@ -874,6 +880,9 @@ pub struct BundleResult {
     /// offenses. Path (b) (expression separators) is computed in the wrapper.
     pub semicolon: Vec<semicolon::PathAOffense>,
     pub redundant_freeze: Vec<redundant_freeze::RedundantFreezeOffense>,
+    /// `Style/FrozenStringLiteralComment`: at most one packed offense
+    /// `(kind, start, fin, line, insert_line, is_emacs)`.
+    pub frozen_string_literal_comment: Vec<frozen_string_literal_comment::FslResult>,
     /// shirobai-performance plugin slots. Always present in the wire format;
     /// empty when `BundleConfig::performance` is `None` (plugin not loaded).
     pub perf_detect: Vec<perf_detect::PerfDetectOffense>,
@@ -1325,6 +1334,13 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // once-per-file `frozen_string_literals_enabled?` decision, folded in here.
     let redundant_freeze =
         rf_rule.finalize(cfg.redundant_freeze_string_literals_frozen_by_default);
+    // `Style/FrozenStringLiteralComment` is a leading-byte scan (comments +
+    // first non-comment token position from the cached parse), no AST walk.
+    let frozen_string_literal_comment =
+        frozen_string_literal_comment::check_frozen_string_literal_comment(
+            source,
+            cfg.frozen_string_literal_comment_style,
+        );
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor; a `MethodName` whose
@@ -1435,6 +1451,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         file_null,
         semicolon: semicolon_rule.into_offenses(),
         redundant_freeze,
+        frozen_string_literal_comment,
         perf_detect,
         perf_string_include,
         perf_end_with,
@@ -1538,6 +1555,7 @@ mod tests {
             0, // duplicate_methods: active_support_extensions_enabled
             0, 2, // array_alignment: style(with_first_element) / indent
             1, 0, // redundant_freeze: target_ruby_30_plus / string_literals_frozen_by_default
+            0, // frozen_string_literal_comment: style(always)
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -3952,6 +3970,23 @@ mod tests {
                 (b.start_offset, b.end_offset, &b.message)
             );
         }
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_frozen_string_literal_comment() {
+        // default_packed sets the fsl style to `always` (0); the missing
+        // comment is flagged both ways.
+        let src = "puts 1\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        assert_eq!(cfg.frozen_string_literal_comment_style, 0);
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone = super::frozen_string_literal_comment::check_frozen_string_literal_comment(
+            src.as_bytes(),
+            cfg.frozen_string_literal_comment_style,
+        );
+        assert!(!alone.is_empty());
+        assert_eq!(bundle.frozen_string_literal_comment, alone);
     }
 
     #[test]
