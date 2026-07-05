@@ -129,29 +129,7 @@ pub fn check_duplicate_magic_comment(source: &[u8]) -> Vec<DuplicateLine> {
         // to exactly `__END__` strictly after the last token's line
         // (`ProcessedSource#lines`; comments are tokens, and with no tokens
         // at all there is no cut), phantom trailing entry included.
-        let leading = match scan {
-            ScanEnd::Token(pos) => li.line_of(pos) - 1,
-            ScanEnd::NoToken { .. } => {
-                let all = li.line_starts().len();
-                match last_comment_start {
-                    None => all,
-                    Some(cstart) => {
-                        let last_token_line = li.line_of(cstart);
-                        (last_token_line..all)
-                            .find(|&ix| {
-                                let start = li.line_starts()[ix];
-                                let rest = &source[start.min(source.len())..];
-                                let end = rest
-                                    .iter()
-                                    .position(|&b| b == b'\n')
-                                    .unwrap_or(rest.len());
-                                &rest[..end] == b"__END__"
-                            })
-                            .unwrap_or(all)
-                    }
-                }
-            }
-        };
+        let leading = leading_line_count(source, li, &scan, last_comment_start);
 
         // `lines[i]` = bytes from line_start to the next `\n` (exclusive),
         // mirroring `Buffer#source_lines` (chomp("\n") only — a stray `\r`
@@ -548,12 +526,201 @@ fn strip_rb(s: &[u8]) -> &[u8] {
     &s[start..end]
 }
 
+/// `leading_comment_lines.size` — shared by `Lint/DuplicateMagicComment` and
+/// `RuboCop::Cop::FrozenStringLiteral#frozen_string_literals_enabled?` (see
+/// [`frozen_string_literals_enabled`]). See the call site above for the exact
+/// `ProcessedSource#lines` / `__END__` semantics.
+fn leading_line_count(
+    source: &[u8],
+    li: &line_index::LineIndex,
+    scan: &ScanEnd,
+    last_comment_start: Option<usize>,
+) -> usize {
+    match scan {
+        ScanEnd::Token(pos) => li.line_of(*pos) - 1,
+        ScanEnd::NoToken { .. } => {
+            let all = li.line_starts().len();
+            match last_comment_start {
+                None => all,
+                Some(cstart) => {
+                    let last_token_line = li.line_of(cstart);
+                    (last_token_line..all)
+                        .find(|&ix| {
+                            let start = li.line_starts()[ix];
+                            let rest = &source[start.min(source.len())..];
+                            let end = rest
+                                .iter()
+                                .position(|&b| b == b'\n')
+                                .unwrap_or(rest.len());
+                            &rest[..end] == b"__END__"
+                        })
+                        .unwrap_or(all)
+                }
+            }
+        }
+    }
+}
+
+/// `RuboCop::Cop::FrozenStringLiteral#frozen_string_literals_enabled?`.
+///
+/// Scans the same leading comment lines as `Lint/DuplicateMagicComment` and
+/// returns the first line whose `MagicComment.parse` specifies a
+/// `frozen_string_literal` value: `true` iff that value is `true`. With no such
+/// line the result is `sfbd_default` (`AllCops/StringLiteralsFrozenByDefault`
+/// coerced to a plain boolean; `nil`/`false` both map to `false` on the Ruby
+/// side, so the wrapper passes `false` for either).
+///
+/// Pure bytes plus the shared prism parse (comments only) — no parser tokens.
+pub(crate) fn frozen_string_literals_enabled(source: &[u8], sfbd_default: bool) -> bool {
+    if source.is_empty() {
+        return sfbd_default;
+    }
+
+    let (scan, last_comment_start) =
+        parse_cache::with_parsed_and_comments(source, |_owner, _root, comments| {
+            let scan = first_token_pos(source, &comments);
+            let stop = match scan {
+                ScanEnd::Token(pos) => pos,
+                ScanEnd::NoToken { stop } => stop,
+            };
+            let last_comment_start = comments
+                .iter()
+                .take_while(|c| c.0 < stop)
+                .last()
+                .map(|c| c.0);
+            (scan, last_comment_start)
+        });
+
+    line_index::with_line_index(source, |li| {
+        let leading = leading_line_count(source, li, &scan, last_comment_start);
+        for &start in li.line_starts().iter().take(leading) {
+            let rest = &source[start.min(source.len())..];
+            let end = rest
+                .iter()
+                .position(|&b| b == b'\n')
+                .unwrap_or(rest.len());
+            let line = &rest[..end];
+            if let Some(value_is_true) = line_fsl_value(line) {
+                return value_is_true;
+            }
+        }
+        sfbd_default
+    })
+}
+
+/// `MagicComment.parse(line).frozen_string_literal_specified?` +
+/// `.frozen_string_literal? (== true)`. `Some(true)` when an fsl value is
+/// specified and it is `true`, `Some(false)` when specified but any other
+/// value, `None` when not specified. Follows `MagicComment.parse`'s
+/// Emacs-then-Vim-then-Simple format dispatch.
+fn line_fsl_value(line: &[u8]) -> Option<bool> {
+    if let Some(token) = emacs_token(line) {
+        // EditorComment#match returns the first token matching the fsl keyword.
+        for tok in split_strip(token, b";") {
+            if let Some(v) = emacs_fsl_token_value(tok) {
+                return Some(v);
+            }
+        }
+        return None;
+    }
+    if vim_token(line).is_some() {
+        // Vim comments never specify frozen_string_literal.
+        return None;
+    }
+    simple_fsl_value(line)
+}
+
+/// Emacs editor token value for `\Afrozen[_-]string[_-]literal\s*:\s*TOKEN\z`
+/// (case-SENSITIVE keyword, like `EditorComment#match`). Returns
+/// `Some(value.downcase == "true")`.
+fn emacs_fsl_token_value(tok: &[u8]) -> Option<bool> {
+    let klen = fsl_keyword_len(tok, false)?;
+    let rest = &tok[klen..];
+    let mut p = skip_space(rest, 0);
+    if rest.get(p) != Some(&b':') {
+        return None;
+    }
+    p = skip_space(rest, p + 1);
+    let tlen = token_len(&rest[p..]);
+    if tlen == 0 || p + tlen != rest.len() {
+        return None;
+    }
+    Some(rest[p..p + tlen].eq_ignore_ascii_case(b"true"))
+}
+
+/// SimpleComment fsl value:
+/// `\A\s*#\s*frozen[_-]string[_-]literal:\s*(?<token>TOKEN)\s*\z` (/i).
+/// Returns `Some(token.downcase == "true")`.
+fn simple_fsl_value(line: &[u8]) -> Option<bool> {
+    let mut p = skip_space(line, 0);
+    if line.get(p) != Some(&b'#') {
+        return None;
+    }
+    p = skip_space(line, p + 1);
+    let kw_end = fsl_keyword_len(&line[p..], true)?;
+    p += kw_end;
+    if line.get(p) != Some(&b':') {
+        return None;
+    }
+    p = skip_space(line, p + 1);
+    let tlen = token_len(&line[p..]);
+    if tlen == 0 {
+        return None;
+    }
+    let value = &line[p..p + tlen];
+    p = skip_space(line, p + tlen);
+    if p != line.len() {
+        return None;
+    }
+    Some(value.eq_ignore_ascii_case(b"true"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn run(src: &str) -> Vec<usize> {
         check_duplicate_magic_comment(src.as_bytes())
+    }
+
+    fn fsl_enabled(src: &str, sfbd: bool) -> bool {
+        frozen_string_literals_enabled(src.as_bytes(), sfbd)
+    }
+
+    #[test]
+    fn fsl_enabled_simple_comment() {
+        assert!(fsl_enabled("# frozen_string_literal: true\nx = 1\n", false));
+        assert!(!fsl_enabled("# frozen_string_literal: false\nx = 1\n", false));
+        // Non-true/false value is "specified" but not enabled.
+        assert!(!fsl_enabled("# frozen_string_literal: yes\nx = 1\n", true));
+    }
+
+    #[test]
+    fn fsl_enabled_falls_back_to_sfbd() {
+        assert!(fsl_enabled("x = 1\n", true));
+        assert!(!fsl_enabled("x = 1\n", false));
+        assert!(!fsl_enabled("# encoding: utf-8\nx = 1\n", false));
+    }
+
+    #[test]
+    fn fsl_enabled_first_specified_wins() {
+        // First fsl-specified leading comment decides.
+        assert!(!fsl_enabled(
+            "# frozen_string_literal: false\n# frozen_string_literal: true\nx = 1\n",
+            true
+        ));
+    }
+
+    #[test]
+    fn fsl_enabled_only_leading_lines() {
+        // A comment after the first non-comment token is not leading.
+        assert!(!fsl_enabled("x = 1\n# frozen_string_literal: true\n", false));
+    }
+
+    #[test]
+    fn fsl_enabled_emacs_and_dash_forms() {
+        assert!(fsl_enabled("# -*- frozen_string_literal: true -*-\nx = 1\n", false));
+        assert!(fsl_enabled("# frozen-string-literal: true\nx = 1\n", false));
     }
 
     // Typical: two identical fsl comments -> second line flagged.

@@ -607,6 +607,13 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Style::Semicolon,
       "a = 1; b = 2\n"
     ],
+    # A `dot` + `selector` removal corrector: the offense must stay
+    # `:uncorrected` (correctable) in lint mode on both sides.
+    "Style/RedundantFreeze" => [
+      RuboCop::Cop::Style::RedundantFreeze,
+      Shirobai::Cop::Style::RedundantFreeze,
+      "CONST = 1.freeze\n"
+    ],
   }
 
   cases.each do |name, (stock_klass, shirobai_klass, source)|

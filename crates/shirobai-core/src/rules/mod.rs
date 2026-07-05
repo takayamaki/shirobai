@@ -63,6 +63,7 @@ pub mod perf_string_include;
 pub mod perf_times_map;
 pub mod predicate_prefix;
 pub mod punctuation_spacing;
+pub mod redundant_freeze;
 pub mod redundant_self;
 pub mod redundant_self_assignment;
 pub mod require_parentheses;

@@ -420,6 +420,12 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # last-token remove corrector).
     "Style/Semicolon" =>
       "puts \"日本語\";\n",
+    # The offense highlight spans a parenthesized comparison whose operands are
+    # multibyte, and the `.freeze` dot + selector removal ranges sit after the
+    # multibyte receiver, so every offset field is exercised past a multibyte
+    # character.
+    "Style/RedundantFreeze" =>
+      "(あ > い).freeze\n",
   }
 
   cases.each do |cop_name, body|
