@@ -124,11 +124,13 @@ module Shirobai
       perf_string_include: [1, 1].freeze,
       perf_end_with: [1, 2].freeze,
       perf_start_with: [1, 3].freeze,
-      perf_times_map: [1, 4].freeze
-      # shirobai-rspec plugin slots (origin 2) are added as RSpec cops are
-      # implemented. The rspec origin is additionally gated per file (see
-      # `register_plugin_packer`'s `gate`): the RSpec department only runs
-      # on spec files, so other files use a dormant-rspec token.
+      perf_times_map: [1, 4].freeze,
+      # shirobai-rspec plugin slots (origin 2), all filled by the single
+      # RSpecDispatcherRule. The rspec origin is additionally gated per
+      # file (see `register_plugin_packer`'s `gate`): the RSpec department
+      # only runs on spec files, so other files use a dormant-rspec token.
+      rspec_variable_name: [2, 0].freeze,
+      rspec_let_setup: [2, 1].freeze
     }.freeze
 
     # Dormant packed-config segment per plugin origin: the enable flag (first
@@ -139,8 +141,9 @@ module Shirobai
     # then skips that origin's rules and leaves its slots empty.
     DORMANT_SEGMENTS = {
       performance: [[0, 0, 0].freeze, [[].freeze].freeze].freeze,
-      # rspec: enable flag + the sixteen RSpec/Language role lists.
-      rspec: [[0].freeze, ([[].freeze] * 16).freeze].freeze
+      # rspec: enable flag + per-cop nums, then the sixteen RSpec/Language
+      # role lists.
+      rspec: [[0, 0].freeze, ([[].freeze] * 16).freeze].freeze
     }.freeze
 
     class << self

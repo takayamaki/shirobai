@@ -55,19 +55,43 @@ pub const RUNNERS: [&[u8]; 3] = [b"to", b"to_not", b"not_to"];
 /// Stock `Language::HookScopes::ALL` (not configurable).
 pub const HOOK_SCOPES: [&[u8]; 5] = [b"each", b"example", b"context", b"all", b"suite"];
 
+/// Length of the rspec segment's `nums`:
+/// `[rspec_enabled, variable_name_style]`.
+pub const SEGMENT_NUMS_LEN: usize = 2;
+
 /// Packed configuration for the shirobai-rspec plugin: the role table plus
-/// (as cops land) per-cop settings.
+/// per-cop settings.
 #[derive(Debug, Clone)]
 pub struct RSpecConfig {
     /// Method-name bytes -> OR of every sub-role the name belongs to.
     /// A name registered in several roles (user aliases can overlap)
     /// carries all of its bits.
     role_of: HashMap<Box<[u8]>, u32>,
+    /// `RSpec/VariableName` `EnforcedStyle`: 0 = snake_case, 1 = camelCase.
+    pub variable_name_style: u8,
 }
 
 impl RSpecConfig {
+    /// Parse a whole rspec wire segment. `Ok(None)` when the enable flag is
+    /// off (dormant segment: core-only install, or the per-file gate said
+    /// "not a spec file").
+    pub fn from_segment(nums: &[i64], lists: &[Vec<String>]) -> Result<Option<Self>, String> {
+        if nums.len() != SEGMENT_NUMS_LEN {
+            return Err(format!(
+                "rspec segment expects {SEGMENT_NUMS_LEN} nums, got {}",
+                nums.len()
+            ));
+        }
+        if nums[0] == 0 {
+            return Ok(None);
+        }
+        let mut cfg = Self::from_role_lists(lists)?;
+        cfg.variable_name_style = nums[1] as u8;
+        Ok(Some(cfg))
+    }
+
     /// Build the role table from the sixteen wire lists (wire order is the
-    /// bit order of [`roles`]).
+    /// bit order of [`roles`]); cop settings stay at their defaults.
     pub fn from_role_lists(lists: &[Vec<String>]) -> Result<Self, String> {
         if lists.len() != N_ROLE_LISTS {
             return Err(format!(
@@ -84,7 +108,10 @@ impl RSpecConfig {
                     .or_insert(0) |= bit;
             }
         }
-        Ok(RSpecConfig { role_of })
+        Ok(RSpecConfig {
+            role_of,
+            variable_name_style: 0,
+        })
     }
 
     /// Role mask for a method name — `0` when the name is not part of the

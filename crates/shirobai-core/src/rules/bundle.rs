@@ -35,7 +35,7 @@ use super::{
     percent_literal_delimiters,
     perf_detect, perf_end_with, perf_start_with, perf_string_include, perf_times_map,
     predicate_prefix, punctuation_spacing, redundant_self, redundant_self_assignment,
-    require_parentheses, rspec_language, safe_navigation_chain, self_assignment,
+    require_parentheses, rspec_dispatcher, rspec_language, safe_navigation_chain, self_assignment,
     space_around_keyword, space_around_method_call_operator, space_before_block_braces,
     space_before_first_arg,
     space_inside_array_literal_brackets, space_inside_block_braces,
@@ -219,6 +219,7 @@ pub fn check_multiline_bundle(
 /// | idx | field |
 /// |-----|-------|
 /// |  0  | rspec_enabled — the plugin gem's wake-up flag. `0` keeps every RSpec rule out of the walk and its slots empty. Unlike performance this flag is also per-file: the rspec origin is gated on the RSpec department's Include/Exclude, so non-spec files use a token whose rspec segment is dormant (`Shirobai::Dispatch` registers one token per (config, active-origin set)) |
+/// |  1  | rspec_variable_name_style (`RSpec/VariableName` `EnforcedStyle`: 0 snake_case / 1 camelCase) |
 ///
 /// RSpec segment `lists[2]`: the sixteen `RSpec/Language` role lists in
 /// [`rspec_language`] wire order —
@@ -384,8 +385,6 @@ const CORE_NUMS_LEN: usize = 114;
 const CORE_LISTS_LEN: usize = 25;
 const PERF_NUMS_LEN: usize = 3;
 const PERF_LISTS_LEN: usize = 1;
-const RSPEC_NUMS_LEN: usize = 1;
-const RSPEC_LISTS_LEN: usize = rspec_language::N_ROLE_LISTS;
 
 impl BundleConfig {
     /// Build a config from the per-origin wire format (see the struct docs
@@ -424,12 +423,6 @@ impl BundleConfig {
             ));
         }
         let rspec_nums = &packed_nums[ORIGIN_RSPEC];
-        if rspec_nums.len() != RSPEC_NUMS_LEN {
-            return Err(format!(
-                "rspec segment expects {RSPEC_NUMS_LEN} nums, got {}",
-                rspec_nums.len()
-            ));
-        }
         let mut segments = packed_lists.into_iter();
         let core_lists = segments.next().expect("length checked above");
         let perf_lists = segments.next().expect("length checked above");
@@ -444,12 +437,6 @@ impl BundleConfig {
             return Err(format!(
                 "performance segment expects {PERF_LISTS_LEN} lists, got {}",
                 perf_lists.len()
-            ));
-        }
-        if rspec_lists.len() != RSPEC_LISTS_LEN {
-            return Err(format!(
-                "rspec segment expects {RSPEC_LISTS_LEN} lists, got {}",
-                rspec_lists.len()
             ));
         }
         let mut lists = core_lists.into_iter();
@@ -712,14 +699,9 @@ impl BundleConfig {
                     None
                 }
             },
-            // The shirobai-rspec origin, read from its own segment.
-            rspec: {
-                if rspec_nums[0] != 0 {
-                    Some(rspec_language::RSpecConfig::from_role_lists(&rspec_lists)?)
-                } else {
-                    None
-                }
-            },
+            // The shirobai-rspec origin, read from its own segment (the
+            // per-cop nums and list lengths are checked there).
+            rspec: rspec_language::RSpecConfig::from_segment(rspec_nums, &rspec_lists)?,
         })
     }
 }
@@ -878,6 +860,14 @@ pub struct BundleResult {
     pub perf_end_with: Vec<perf_end_with::PerfEndWithOffense>,
     pub perf_start_with: Vec<perf_start_with::PerfStartWithOffense>,
     pub perf_times_map: Vec<perf_times_map::PerfTimesMapOffense>,
+    /// shirobai-rspec plugin slots. All computed by the single
+    /// `RSpecDispatcherRule`; empty when `BundleConfig::rspec` is `None`
+    /// (plugin not loaded, or the per-file gate packed a dormant segment).
+    pub rspec_variable_name: (
+        Vec<rspec_dispatcher::VarNameOffense>,
+        Vec<(String, u8)>,
+    ),
+    pub rspec_let_setup: Vec<(usize, usize)>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -1096,6 +1086,11 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         .performance
         .as_ref()
         .map(|_| perf_times_map::build_rule());
+    // shirobai-rspec: ONE dispatcher rule feeds every RSpec cop (see
+    // rspec_dispatcher.rs). Built only when the segment is awake; dormant
+    // segments (core-only installs, or non-spec files under the per-file
+    // gate) pay nothing here.
+    let mut rspec_rule = cfg.rspec.as_ref().map(rspec_dispatcher::build_rule);
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -1192,7 +1187,11 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     if let Some(rule) = ptm_rule.as_mut() {
         rules.push(rule);
     }
+    if let Some(rule) = rspec_rule.as_mut() {
+        rules.push(rule);
+    }
     super::dispatch::run(source, &mut rules);
+    let rspec_result = rspec_rule.map(|r| r.finish()).unwrap_or_default();
 
     let multiline_operation = op_rule.offenses;
     let multiline_method_call = mc_rule.offenses;
@@ -1399,6 +1398,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         perf_end_with,
         perf_start_with,
         perf_times_map,
+        rspec_variable_name: rspec_result.variable_name,
+        rspec_let_setup: rspec_result.let_setup,
     }
 }
 
@@ -1545,8 +1546,8 @@ mod tests {
         let perf_nums = vec![1, 1, 1];
         let perf_lists = vec![vec!["find".to_string()]];
         // RSpec segment (origin 2): enabled, with the rubocop-rspec 3.10.2
-        // default Language lists.
-        let rspec_nums = vec![1];
+        // default Language lists and snake_case VariableName style.
+        let rspec_nums = vec![1, 0];
         let rspec_lists = rspec_language::tests::default_role_lists();
         (
             vec![nums, perf_nums, rspec_nums],
@@ -1622,6 +1623,34 @@ mod tests {
         use super::rspec_language::roles;
         assert_eq!(rspec.roles_of(b"describe"), roles::EG_REGULAR);
         assert_eq!(rspec.roles_of(b"let!"), roles::HELPERS);
+        assert_eq!(rspec.variable_name_style, 0);
+    }
+
+    /// The two RSpec cops merged into the shared walk must report exactly
+    /// what their standalone entry points report.
+    #[test]
+    fn shared_walk_matches_standalone_rspec_cops() {
+        let src = "describe 'x' do\n\
+                   \x20 let(:userName) { 1 }\n\
+                   \x20 let!(:unused) { create(:widget) }\n\
+                   \x20 subject(:okay_name) { 2 }\n\
+                   \x20 it('a') { expect(1).to eq 1 }\n\
+                   end\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let rspec_cfg = cfg.rspec.as_ref().unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let standalone_vn =
+            rspec_dispatcher::check_rspec_variable_name(src.as_bytes(), rspec_cfg);
+        assert_eq!(bundle.rspec_variable_name.0, standalone_vn.0);
+        assert_eq!(bundle.rspec_variable_name.1, standalone_vn.1);
+        assert_eq!(bundle.rspec_variable_name.0.len(), 1);
+        // `unused` (the let! name) and `okay_name` both pass snake_case.
+        assert_eq!(bundle.rspec_variable_name.1.len(), 2);
+        let standalone_ls =
+            rspec_dispatcher::check_rspec_let_setup(src.as_bytes(), rspec_cfg);
+        assert_eq!(bundle.rspec_let_setup, standalone_ls);
+        assert_eq!(bundle.rspec_let_setup.len(), 1);
     }
 
     #[test]

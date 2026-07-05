@@ -24,6 +24,8 @@ require "shirobai"
 require "rubocop-rspec"
 
 require_relative "shirobai/rspec/version"
+require_relative "shirobai/cop/rspec/variable_name"
+require_relative "shirobai/cop/rspec/let_setup"
 
 module Shirobai
   # Glue for the shirobai-rspec plugin gem: the packed-config segment
@@ -32,7 +34,10 @@ module Shirobai
     # Wrapper cop classes, appended as cops land. The per-file gate below is
     # the union of their `relevant_file?` — by construction it can never be
     # narrower than what any wrapper will ask for.
-    COP_CLASSES = [].freeze
+    COP_CLASSES = [
+      Shirobai::Cop::RSpec::VariableName,
+      Shirobai::Cop::RSpec::LetSetup
+    ].freeze
 
     # `config['RSpec']['Language']` sub-role paths in the fixed wire order of
     # the rspec segment's lists (see BundleConfig in
@@ -87,7 +92,8 @@ module Shirobai
           value = lang.dig(*path)
           value.is_a?(Array) ? value.grep(String) : []
         end
-        [[1], lists]
+        vn = Shirobai::Cop::RSpec::VariableName.bundle_args(config)
+        [[1, vn[0]], lists]
       end
 
       # One wrapper instance per class per config, only for gate use.

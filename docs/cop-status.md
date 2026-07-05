@@ -148,6 +148,51 @@ Stock behaves the same for `TargetRubyVersion >= 3.4`; for targets `<= 3.3`
 stock parses `it` as a plain method call and DOES flag it.
 `Performance/TimesMap` is unaffected (its pattern is `any_block`).
 
+## Plugin cops: shirobai-rspec (R1 cluster)
+
+`gems/shirobai-rspec` replaces rubocop-rspec (pinned `= 3.10.2`) cops.
+Unlike the performance batch this IS a speed play: measured on Mastodon
+spec/, stock RSpec cops re-answer the `RSpec/Language` role question
+about 87 times per send node and re-walk ancestors/subtrees per cop for
+every structural question. shirobai routes ALL RSpec cops through one
+`RSpecDispatcherRule` on the shared walk (a single second-layer
+dispatcher): the role classification is one hash probe against a
+per-config `name -> role mask` table, and the example-group scope tree
+(stock's `find_all_in_scope`) is built once per file and shared.
+
+The rspec origin is gated per file: the RSpec department only includes
+spec files, so other files use a bundle token whose rspec segment is
+dormant. The gate is the union of the wrapper cops' `relevant_file?`;
+if they ever disagree, `Dispatch.offenses_for` returns nil and the
+wrapper falls back to its standalone entry point (speed bug, never an
+offense bug).
+
+### Implemented (2 cops)
+
+- `RSpec/LetSetup`
+- `RSpec/VariableName`
+
+Verified with the same bar as core cops: vendor specs from the
+`vendor/rubocop-rspec` submodule (plus its shared contexts and smoke
+tests), differential edge-case specs pinning the probed quirks (the
+`inside_example_group?` top-level-statement gate, block/numblock/itblock
+matcher asymmetries, `LetSetup`'s zero-argument-use search, sym/str
+non-shadowing, Unicode style properties, AllowedPatterns +
+detected-style bookkeeping), lint-mode correctable parity, non-ASCII
+offset parity, and the rspec parity oracle (`benches/parity_diff_rspec.sh`
+with its synthetic-fixture self-test) at zero diff.
+
+### Known limitation (same family as the README `TargetRubyVersion` note)
+
+RSpec matchers split on the parser block kind (`block` / `numblock` /
+`itblock`), and shirobai recovers the split from prism Latest. A block
+whose body uses a bare `it` (e.g. `let(:x) { it }`) is an it-block under
+prism Latest and under stock with `TargetRubyVersion >= 3.4`, but a plain
+`block` (with `it` as a method call) under stock with older targets, so
+block-kind-sensitive matchers can disagree there. Real spec code calling
+a bare `it` inside a block is essentially nonexistent (RSpec's own `it`
+requires arguments or a block).
+
 ## Attempted but reverted
 
 These cops were implemented to full drop-in compatibility but reverted because

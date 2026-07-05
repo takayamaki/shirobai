@@ -1272,6 +1272,73 @@ fn map_perf_times_map(
         .collect()
 }
 
+/// `RSpec/VariableName`: `([offense...], [passing...])` where an offense is
+/// `[var_start, var_end, kind, value, valid_alt]` (kind 0 = sym, 1 = str;
+/// value = unescaped literal; valid_alt = valid under the other style) and a
+/// passing entry is `[value, kind]` (feeds `correct_style_detected` after
+/// the wrapper's AllowedPatterns filter).
+#[allow(clippy::type_complexity)]
+fn map_rspec_variable_name(
+    r: (
+        Vec<shirobai_core::rules::rspec_dispatcher::VarNameOffense>,
+        Vec<(String, u8)>,
+    ),
+) -> (Vec<(usize, usize, u8, String, bool)>, Vec<(String, u8)>) {
+    (
+        r.0.into_iter()
+            .map(|o| (o.start, o.end, o.kind, o.value, o.valid_alt))
+            .collect(),
+        r.1,
+    )
+}
+
+/// Parse one rspec wire segment (the same `[nums, lists]` the packer
+/// registers) for the standalone RSpec entry points. Errors on length
+/// mismatches; a dormant segment yields `None` (no offenses).
+fn rspec_segment_config(
+    ruby: &Ruby,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Result<Option<shirobai_core::rules::rspec_language::RSpecConfig>, Error> {
+    shirobai_core::rules::rspec_language::RSpecConfig::from_segment(&nums, &lists)
+        .map_err(|e| Error::new(ruby.exception_arg_error(), e))
+}
+
+/// Standalone entry point for `RSpec/VariableName` (per-cop fallback).
+/// Takes the rspec segment (nums, lists) and returns the
+/// `map_rspec_variable_name` shape.
+#[allow(clippy::type_complexity)]
+fn check_rspec_variable_name(
+    ruby: &Ruby,
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Result<(Vec<(usize, usize, u8, String, bool)>, Vec<(String, u8)>), Error> {
+    let Some(cfg) = rspec_segment_config(ruby, nums, lists)? else {
+        return Ok((Vec::new(), Vec::new()));
+    };
+    Ok(map_rspec_variable_name(
+        shirobai_core::rules::rspec_dispatcher::check_rspec_variable_name(bytes(&source), &cfg),
+    ))
+}
+
+/// Standalone entry point for `RSpec/LetSetup` (per-cop fallback). Returns
+/// `[[send_start, send_end], ...]`.
+fn check_rspec_let_setup(
+    ruby: &Ruby,
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Result<Vec<(usize, usize)>, Error> {
+    let Some(cfg) = rspec_segment_config(ruby, nums, lists)? else {
+        return Ok(Vec::new());
+    };
+    Ok(shirobai_core::rules::rspec_dispatcher::check_rspec_let_setup(
+        bytes(&source),
+        &cfg,
+    ))
+}
+
 thread_local! {
     /// Bundle configs registered by `register_bundle_config` (token = index,
     /// no eviction: a lint run registers one entry per distinct `Config`
@@ -1359,10 +1426,10 @@ fn register_bundle_config(
 /// 0 perf_detect / 1 perf_string_include / 2 perf_end_with /
 /// 3 perf_start_with / 4 perf_times_map
 ///
-/// RSpec slots (origin 2; empty until RSpec cops are implemented — the
-/// origin itself is wired so the segment order is fixed):
+/// RSpec slots (origin 2; every slot empty unless the plugin gem
+/// registered its packed segment AND the per-file gate kept it awake):
 ///
-/// (none yet)
+/// 0 rspec_variable_name / 1 rspec_let_setup
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1513,9 +1580,10 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         perf.push(map_perf_end_with(r.perf_end_with))?;
         perf.push(map_perf_start_with(r.perf_start_with))?;
         perf.push(map_perf_times_map(r.perf_times_map))?;
-        // RSpec origin (result[2]); rule slots land here as RSpec cops are
-        // implemented.
-        let rspec = ruby.ary_new_capa(0);
+        // RSpec origin (result[2]).
+        let rspec = ruby.ary_new_capa(2);
+        rspec.push(map_rspec_variable_name(r.rspec_variable_name))?;
+        rspec.push(r.rspec_let_setup)?;
         // The nested result is N_ORIGINS + 1 arrays per file (the outer
         // one plus one per origin), nothing per cop.
         let out = ruby.ary_new_capa(3);
@@ -3586,6 +3654,14 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_perf_times_map",
         function!(check_perf_times_map, 1),
+    )?;
+    module.define_module_function(
+        "check_rspec_variable_name",
+        function!(check_rspec_variable_name, 3),
+    )?;
+    module.define_module_function(
+        "check_rspec_let_setup",
+        function!(check_rspec_let_setup, 3),
     )?;
     module.define_module_function(
         "check_stabby_lambda_parentheses",
