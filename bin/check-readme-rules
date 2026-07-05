@@ -1,0 +1,39 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Check the directory-README rules convention (.claude/CLAUDE.md):
+# every tracked directory README starts with frontmatter (description +
+# paths) and is symlinked from .claude/rules/. The root README is the
+# one exception: symlink only, no frontmatter.
+
+root = File.expand_path("..", __dir__)
+Dir.chdir(root)
+
+readmes = `git ls-files "*/README.md"`.split("\n")
+symlinks = Dir[".claude/rules/*.md"].select { |p| File.symlink?(p) }
+targets = symlinks.to_h { |p| [File.expand_path(File.readlink(p), File.dirname(p)), p] }
+
+errors = []
+
+readmes.each do |readme|
+  content = File.read(readme)
+  unless content.start_with?("---\n") &&
+         content.match?(/^description: \S/) &&
+         content.match?(/^paths:$/)
+    errors << "#{readme}: missing or incomplete frontmatter (needs description: and paths:)"
+  end
+  errors << "#{readme}: no symlink in .claude/rules/" unless targets.key?(File.expand_path(readme))
+end
+
+errors << ".claude/rules/: no symlink to the root README" unless targets.key?(File.expand_path("README.md"))
+
+symlinks.each do |link|
+  errors << "#{link}: dangling symlink" unless File.exist?(link)
+end
+
+if errors.empty?
+  puts "readme rules convention OK (#{readmes.size} directory READMEs, #{symlinks.size} symlinks)"
+else
+  errors.each { |e| warn "error: #{e}" }
+  exit 1
+end

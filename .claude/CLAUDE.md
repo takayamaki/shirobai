@@ -9,6 +9,17 @@ This file only has rules that are not in the README.
 All documents in this repository — including commit messages — must be in **simple, easy English**.
 The only exception is `README.ja.md` (Japanese).
 
+## Directory READMEs are also Claude rules
+
+Every directory README doubles as a rules file for agents:
+
+1. Start it with frontmatter: a one-line `description:` and `paths:` globs
+   covering the directory (see `benches/README.md` for the shape).
+2. Symlink it into `.claude/rules/` (e.g. `.claude/rules/benches.md -> ../../benches/README.md`).
+
+When you add a new directory with a README, do both.
+Without them, agents working under that path never see the README.
+
 ## Core principle: full drop-in compatibility
 
 Two things matter, and both are required:
