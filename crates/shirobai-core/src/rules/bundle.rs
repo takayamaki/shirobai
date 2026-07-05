@@ -220,6 +220,9 @@ pub fn check_multiline_bundle(
 /// |-----|-------|
 /// |  0  | rspec_enabled — the plugin gem's wake-up flag. `0` keeps every RSpec rule out of the walk and its slots empty. Unlike performance this flag is also per-file: the rspec origin is gated on the RSpec department's Include/Exclude, so non-spec files use a token whose rspec segment is dormant (`Shirobai::Dispatch` registers one token per (config, active-origin set)) |
 /// |  1  | rspec_variable_name_style (`RSpec/VariableName` `EnforcedStyle`: 0 snake_case / 1 camelCase) |
+/// |  2  | rspec_variable_definition_style (`RSpec/VariableDefinition` `EnforcedStyle`: 0 symbols / 1 strings) |
+/// |  3  | rspec_mmh_max (`RSpec/MultipleMemoizedHelpers` `Max`) |
+/// |  4  | rspec_mmh_allow_subject (`RSpec/MultipleMemoizedHelpers` `AllowSubject`: 0 / 1) |
 ///
 /// RSpec segment `lists[2]`: the sixteen `RSpec/Language` role lists in
 /// [`rspec_language`] wire order —
@@ -238,8 +241,8 @@ pub fn check_multiline_bundle(
 ///
 /// The values come from the resolved `config['RSpec']['Language']` hash
 /// (RuboCop's config layer has already applied `inherit_mode: merge`); the
-/// packer flattens, it never merges. The dormant rspec segment is `[0]` plus
-/// sixteen empty lists.
+/// packer flattens, it never merges. The dormant rspec segment is
+/// `[0, 0, 0, 0, 0]` plus sixteen empty lists.
 ///
 /// `Layout/IndentationWidth`'s `allowed_lines` and `prior_ranges` are fixed to
 /// empty in the bundle: the non-empty cases (configured `AllowedPatterns`,
@@ -868,6 +871,8 @@ pub struct BundleResult {
         Vec<(String, u8)>,
     ),
     pub rspec_let_setup: Vec<(usize, usize)>,
+    pub rspec_variable_definition: Vec<rspec_dispatcher::VarDefOffense>,
+    pub rspec_multiple_memoized_helpers: Vec<rspec_dispatcher::MmhGroup>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -1400,6 +1405,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         perf_times_map,
         rspec_variable_name: rspec_result.variable_name,
         rspec_let_setup: rspec_result.let_setup,
+        rspec_variable_definition: rspec_result.variable_definition,
+        rspec_multiple_memoized_helpers: rspec_result.multiple_memoized_helpers,
     }
 }
 
@@ -1546,8 +1553,9 @@ mod tests {
         let perf_nums = vec![1, 1, 1];
         let perf_lists = vec![vec!["find".to_string()]];
         // RSpec segment (origin 2): enabled, with the rubocop-rspec 3.10.2
-        // default Language lists and snake_case VariableName style.
-        let rspec_nums = vec![1, 0];
+        // default Language lists, snake_case VariableName style, symbols
+        // VariableDefinition style, and MMH Max 5 / AllowSubject true.
+        let rspec_nums = vec![1, 0, 0, 5, 1];
         let rspec_lists = rspec_language::tests::default_role_lists();
         (
             vec![nums, perf_nums, rspec_nums],
@@ -1624,9 +1632,12 @@ mod tests {
         assert_eq!(rspec.roles_of(b"describe"), roles::EG_REGULAR);
         assert_eq!(rspec.roles_of(b"let!"), roles::HELPERS);
         assert_eq!(rspec.variable_name_style, 0);
+        assert_eq!(rspec.variable_definition_style, 0);
+        assert_eq!(rspec.mmh_max, 5);
+        assert!(rspec.mmh_allow_subject);
     }
 
-    /// The two RSpec cops merged into the shared walk must report exactly
+    /// The four RSpec cops merged into the shared walk must report exactly
     /// what their standalone entry points report.
     #[test]
     fn shared_walk_matches_standalone_rspec_cops() {
@@ -1634,9 +1645,14 @@ mod tests {
                    \x20 let(:userName) { 1 }\n\
                    \x20 let!(:unused) { create(:widget) }\n\
                    \x20 subject(:okay_name) { 2 }\n\
+                   \x20 context 'y' do\n\
+                   \x20   let('other') { 3 }\n\
+                   \x20 end\n\
                    \x20 it('a') { expect(1).to eq 1 }\n\
                    end\n";
-        let (nums, lists) = default_packed();
+        // MMH Max 1 so the inner context (2 helpers) crosses the threshold.
+        let (mut nums, lists) = default_packed();
+        nums[2][3] = 1;
         let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
         let rspec_cfg = cfg.rspec.as_ref().unwrap();
         let bundle = check_all_bundle(src.as_bytes(), &cfg);
@@ -1645,12 +1661,21 @@ mod tests {
         assert_eq!(bundle.rspec_variable_name.0, standalone_vn.0);
         assert_eq!(bundle.rspec_variable_name.1, standalone_vn.1);
         assert_eq!(bundle.rspec_variable_name.0.len(), 1);
-        // `unused` (the let! name) and `okay_name` both pass snake_case.
-        assert_eq!(bundle.rspec_variable_name.1.len(), 2);
         let standalone_ls =
             rspec_dispatcher::check_rspec_let_setup(src.as_bytes(), rspec_cfg);
         assert_eq!(bundle.rspec_let_setup, standalone_ls);
         assert_eq!(bundle.rspec_let_setup.len(), 1);
+        // `let('other')` fails symbols style -> one VariableDefinition offense.
+        let standalone_vd =
+            rspec_dispatcher::check_rspec_variable_definition(src.as_bytes(), rspec_cfg);
+        assert_eq!(bundle.rspec_variable_definition, standalone_vd);
+        assert_eq!(bundle.rspec_variable_definition.len(), 1);
+        let standalone_mmh =
+            rspec_dispatcher::check_rspec_multiple_memoized_helpers(src.as_bytes(), rspec_cfg);
+        assert_eq!(bundle.rspec_multiple_memoized_helpers, standalone_mmh);
+        // Both the describe (2 helpers) and the inner context (3 helpers) are
+        // over Max 1.
+        assert_eq!(bundle.rspec_multiple_memoized_helpers.len(), 2);
     }
 
     #[test]

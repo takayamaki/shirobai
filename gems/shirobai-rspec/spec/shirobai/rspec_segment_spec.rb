@@ -40,20 +40,24 @@ RSpec.describe Shirobai::RSpec do
         }
       )
       nums, lists = described_class.segment(config)
-      expect(nums).to eq([1, 0])
+      expect(nums).to eq([1, 0, 0, 5, 1])
       expect(lists.length).to eq(16)
       expect(lists[0]).to eq(%w[describe context])
       expect(lists[8]).to eq(%w[let let!])
       expect(lists[15]).to eq(%w[subject])
     end
 
-    it "packs the VariableName style num" do
+    it "packs the per-cop nums" do
       config = config_with(
         "RSpec" => { "Language" => {} },
-        "RSpec/VariableName" => { "EnforcedStyle" => "camelCase" }
+        "RSpec/VariableName" => { "EnforcedStyle" => "camelCase" },
+        "RSpec/VariableDefinition" => { "EnforcedStyle" => "strings" },
+        "RSpec/MultipleMemoizedHelpers" => { "Max" => 3, "AllowSubject" => false }
       )
       nums, = described_class.segment(config)
-      expect(nums).to eq([1, 1])
+      # [enabled, VariableName style, VariableDefinition style, MMH Max,
+      #  MMH AllowSubject]
+      expect(nums).to eq([1, 1, 1, 3, 0])
     end
 
     it "is memoized per config identity" do
@@ -92,7 +96,7 @@ RSpec.describe Shirobai::RSpec do
       # its default.yml into the default configuration.
       config = RuboCop::ConfigLoader.default_configuration
       nums, lists = described_class.segment(config)
-      expect(nums).to eq([1, 0])
+      expect(nums).to eq([1, 0, 0, 5, 1])
       expect(lists[0]).to include("describe", "context", "feature", "example_group")
       expect(lists[3]).to include("it", "specify", "its")
       expect(lists[8]).to eq(%w[let let!])
@@ -138,6 +142,8 @@ RSpec.describe Shirobai::RSpec do
       # Dormant segment: the RSpec slots exist but stay empty.
       expect(result[2][0]).to eq([[], []])
       expect(result[2][1]).to eq([])
+      expect(result[2][2]).to eq([])
+      expect(result[2][3]).to eq([])
     end
 
     it "computes RSpec results through the awake token" do

@@ -130,7 +130,9 @@ module Shirobai
       # file (see `register_plugin_packer`'s `gate`): the RSpec department
       # only runs on spec files, so other files use a dormant-rspec token.
       rspec_variable_name: [2, 0].freeze,
-      rspec_let_setup: [2, 1].freeze
+      rspec_let_setup: [2, 1].freeze,
+      rspec_variable_definition: [2, 2].freeze,
+      rspec_multiple_memoized_helpers: [2, 3].freeze
     }.freeze
 
     # Dormant packed-config segment per plugin origin: the enable flag (first
@@ -141,9 +143,10 @@ module Shirobai
     # then skips that origin's rules and leaves its slots empty.
     DORMANT_SEGMENTS = {
       performance: [[0, 0, 0].freeze, [[].freeze].freeze].freeze,
-      # rspec: enable flag + per-cop nums, then the sixteen RSpec/Language
-      # role lists.
-      rspec: [[0, 0].freeze, ([[].freeze] * 16).freeze].freeze
+      # rspec: enable flag + per-cop nums (VariableName style,
+      # VariableDefinition style, MMH Max, MMH AllowSubject), then the
+      # sixteen RSpec/Language role lists.
+      rspec: [[0, 0, 0, 0, 0].freeze, ([[].freeze] * 16).freeze].freeze
     }.freeze
 
     class << self

@@ -2,21 +2,22 @@
 
 require "spec_helper"
 
-# Byte-vs-character offset parity for the RSpec cops — same guard as the
-# core suite's spec/shirobai/non_ascii_offset_parity_spec.rb (see there for
-# the full rationale: Rust reports prism BYTE offsets while
-# `Parser::Source::Range` indexes by CHARACTERS, so every offset field a
-# wrapper receives must go through `SourceOffsets`).
+# Byte-vs-character offset parity for the RSpec cops — same guard as the core
+# suite's spec/shirobai/non_ascii_offset_parity_spec.rb (Rust reports prism
+# BYTE offsets while `Parser::Source::Range` indexes by CHARACTERS, so every
+# offset field a wrapper receives must go through `SourceOffsets`).
 #
-# Each fixture puts a multibyte comment BEFORE the offense so that every
-# byte offset is ahead of its char offset. The R1 cops have no autocorrect,
-# so lint-mode offense position parity is the whole check.
+# Each fixture puts a multibyte comment BEFORE the offense so that every byte
+# offset is ahead of its char offset. Lint-only cops (VariableName, LetSetup,
+# MultipleMemoizedHelpers) check offense-position parity; VariableDefinition
+# additionally runs autocorrect to convergence with a multibyte variable name,
+# asserting the corrected bytes match stock exactly.
 RSpec.describe "non-ASCII source offset parity with stock rubocop-rspec" do
   include EdgeCaseParity
 
   prefix = "# 多バイト文字を含むコメント\n"
 
-  cases = {
+  lint_cases = {
     "RSpec/VariableName" => [
       RuboCop::Cop::RSpec::VariableName,
       Shirobai::Cop::RSpec::VariableName,
@@ -31,13 +32,32 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rspec" do
       RuboCop::Cop::RSpec::LetSetup,
       Shirobai::Cop::RSpec::LetSetup,
       "#{prefix}describe 'x' do\n  let!(:未使用) { create(:widget) }\n  it('a') { expect(1).to eq 1 }\nend\n"
+    ],
+    "RSpec/MultipleMemoizedHelpers" => [
+      RuboCop::Cop::RSpec::MultipleMemoizedHelpers,
+      Shirobai::Cop::RSpec::MultipleMemoizedHelpers,
+      "#{prefix}describe 'x' do\n#{(1..6).map { |i| "  let(:変数#{i}) { #{i} }\n" }.join}end\n"
     ]
   }
 
-  cases.each do |name, (stock, shirobai, source)|
+  lint_cases.each do |name, (stock, shirobai, source)|
     it "keeps offense positions identical for #{name}" do
       config = RuboCop::ConfigLoader.default_configuration
       expect_lint_parity(stock, shirobai, source, config)
     end
+  end
+
+  it "autocorrects RSpec/VariableDefinition with a multibyte name byte-identically" do
+    config = RuboCop::ConfigLoader.default_configuration
+    # Multibyte comment ahead of a multibyte string name; symbols style turns
+    # `let("ユーザ")` into `let(:ユーザ)`.
+    source = "#{prefix}describe 'x' do\n  let(\"ユーザ\") { 1 }\nend\n"
+    corrected = expect_autocorrect_parity(
+      RuboCop::Cop::RSpec::VariableDefinition,
+      Shirobai::Cop::RSpec::VariableDefinition,
+      source,
+      config
+    )
+    expect(corrected).to include("let(:ユーザ)")
   end
 end

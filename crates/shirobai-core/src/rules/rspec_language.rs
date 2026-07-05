@@ -56,8 +56,9 @@ pub const RUNNERS: [&[u8]; 3] = [b"to", b"to_not", b"not_to"];
 pub const HOOK_SCOPES: [&[u8]; 5] = [b"each", b"example", b"context", b"all", b"suite"];
 
 /// Length of the rspec segment's `nums`:
-/// `[rspec_enabled, variable_name_style]`.
-pub const SEGMENT_NUMS_LEN: usize = 2;
+/// `[rspec_enabled, variable_name_style, variable_definition_style, mmh_max,
+/// mmh_allow_subject]`.
+pub const SEGMENT_NUMS_LEN: usize = 5;
 
 /// Packed configuration for the shirobai-rspec plugin: the role table plus
 /// per-cop settings.
@@ -69,6 +70,13 @@ pub struct RSpecConfig {
     role_of: HashMap<Box<[u8]>, u32>,
     /// `RSpec/VariableName` `EnforcedStyle`: 0 = snake_case, 1 = camelCase.
     pub variable_name_style: u8,
+    /// `RSpec/VariableDefinition` `EnforcedStyle`: 0 = symbols, 1 = strings.
+    pub variable_definition_style: u8,
+    /// `RSpec/MultipleMemoizedHelpers` `Max`.
+    pub mmh_max: i64,
+    /// `RSpec/MultipleMemoizedHelpers` `AllowSubject` (true = subjects are
+    /// not counted).
+    pub mmh_allow_subject: bool,
 }
 
 impl RSpecConfig {
@@ -87,6 +95,9 @@ impl RSpecConfig {
         }
         let mut cfg = Self::from_role_lists(lists)?;
         cfg.variable_name_style = nums[1] as u8;
+        cfg.variable_definition_style = nums[2] as u8;
+        cfg.mmh_max = nums[3];
+        cfg.mmh_allow_subject = nums[4] != 0;
         Ok(Some(cfg))
     }
 
@@ -111,6 +122,9 @@ impl RSpecConfig {
         Ok(RSpecConfig {
             role_of,
             variable_name_style: 0,
+            variable_definition_style: 0,
+            mmh_max: 5,
+            mmh_allow_subject: true,
         })
     }
 

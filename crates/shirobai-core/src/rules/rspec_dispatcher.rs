@@ -59,10 +59,44 @@
 //! `w(&b)` do NOT count as uses (probed: F3/F12) while `w { }` does (F9).
 //! An inner `let!` overridden check compares (kind, value): `let!('w')`
 //! and `let!(:w)` do not shadow each other (F6).
+//!
+//! `RSpec/VariableDefinition`: shares the SEND-shaped candidate matcher and
+//! the top-level-spec-group gate with `RSpec/VariableName`. The `EnforcedStyle`
+//! decides which literal names are offenses: `symbols` (default) flags plain
+//! `str` names only; `strings` flags `sym` AND `dsym` names. `dstr`
+//! (plain-string-interpolation) names are NEVER flagged under either style
+//! (probed). The offense range is the first-argument literal node. The wrapper
+//! autocorrects from the wire tuple `(start, end, kind, value)` (kind 0 sym /
+//! 1 str / 2 dsym): a sym becomes `value.inspect`, a str becomes
+//! `value.to_sym.inspect`, and a dsym becomes the offense source minus the
+//! leading colon (`variable.source[1..]`). Rust filters by style so the wire
+//! carries only real offenders.
+//!
+//! `RSpec/MultipleMemoizedHelpers`: gates on PLAIN-block spec groups (EG/SG
+//! with an rspec receiver; a numblock group never gets an offense because
+//! stock's `on_block` has no numblock handler — probed). The count for a
+//! group G is `all_helpers(G).uniq.count`, where `all_helpers` unions the
+//! helpers collected in G's own frame with those of every parser-block
+//! ancestor frame (the arena parent chain), then maps each collected `let`
+//! (plus `subject` when `AllowSubject: false`) to its
+//! `variable_definition?` first-argument literal node — or `nil` when the
+//! call has no literal sym/str/dsym/dstr first argument — and `uniq`s by
+//! Ruby structural node equality. Two `dstr`/`dsym` names differing only in
+//! interpolation whitespace are structurally EQUAL (E11), so they cannot be
+//! deduplicated bytewise. Rust therefore counts only the identities that are
+//! decidable bytewise (sym value / str value / a single nil bucket) as
+//! `rust_distinct` and passes the source ranges of the `dsym`/`dstr` items to
+//! the wrapper, which locates them in the parser AST, dedups them with node
+//! equality and computes `count = rust_distinct + located_uniq`. Rust emits a
+//! group only when `rust_distinct + dsym_dstr_item_count > Max` (a safe upper
+//! bound: below it no offense is possible); the wrapper does the exact check
+//! and calls `self.max = count` (`exclude_limit 'Max'`) on a real offense.
+//! The `subjects` collection mirrors `lets` but with the subject-role barrier
+//! (a `let` frame does not stop the subjects query and vice versa).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use ruby_prism::{CallNode, Node};
+use ruby_prism::{CallNode, Node, StringNode};
 
 use super::dispatch::{Interest, Rule};
 use super::rspec_language::{roles, RSpecConfig};
@@ -81,6 +115,52 @@ pub struct VarNameOffense {
     pub valid_alt: bool,
 }
 
+/// One `RSpec/VariableDefinition` offense. `kind`: 0 = sym, 1 = str,
+/// 2 = dsym (the styles that stock flags — `dstr` never fails). `value` is
+/// the unescaped literal value for sym/str (the wrapper runs
+/// `value.inspect` / `value.to_sym.inspect` on it) and empty for dsym (the
+/// wrapper slices the offense source via the range instead).
+#[derive(Debug, Clone, PartialEq)]
+pub struct VarDefOffense {
+    pub start: usize,
+    pub end: usize,
+    pub kind: u8,
+    pub value: String,
+}
+
+/// One `RSpec/MultipleMemoizedHelpers` candidate group over threshold. Rust
+/// gates on the upper bound `rust_distinct + dsym_dstr_ranges.len() > Max`;
+/// the wrapper locates `dsym_dstr_ranges` in the parser AST, dedups them and
+/// applies the exact `count > Max` test.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MmhGroup {
+    pub start: usize,
+    pub end: usize,
+    /// Distinct sym-value / str-value / nil identities among the visible
+    /// helpers (the identities decidable bytewise).
+    pub rust_distinct: usize,
+    /// Source ranges of the visible helpers whose name is a `dsym`/`dstr`
+    /// literal (one per unique item; the wrapper dedups structurally).
+    pub dsym_dstr_ranges: Vec<(usize, usize)>,
+}
+
+/// A memoized-helper variable identity: the node `variable_definition?`
+/// captures as the first argument, or `Nil` when the call has no literal
+/// sym/str/dsym/dstr first argument.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum VarDef {
+    /// `sym` name — the unescaped value (identity is value equality).
+    Sym(Vec<u8>),
+    /// `str` name — the unescaped value.
+    Str(Vec<u8>),
+    /// `dsym`/`dstr` name — the source range (structural equality is decided
+    /// in the wrapper, not here).
+    Dyn(usize, usize),
+    /// No literal name (`let(foo)`, `subject { }`, ...). All nils are one
+    /// identity.
+    Nil,
+}
+
 /// Everything the RSpec cops produced for one file.
 #[derive(Debug, Default)]
 pub struct RSpecResult {
@@ -90,6 +170,10 @@ pub struct RSpecResult {
     pub variable_name: (Vec<VarNameOffense>, Vec<(String, u8)>),
     /// `RSpec/LetSetup` offenses: the `let!` send node ranges.
     pub let_setup: Vec<(usize, usize)>,
+    /// `RSpec/VariableDefinition` offenses (already style-filtered).
+    pub variable_definition: Vec<VarDefOffense>,
+    /// `RSpec/MultipleMemoizedHelpers` over-threshold candidate groups.
+    pub multiple_memoized_helpers: Vec<MmhGroup>,
 }
 
 /// parser block-kind recovery from a prism call (see module doc).
@@ -191,6 +275,8 @@ struct LetItem {
     /// name (extra args, dsym/dstr names and aliases never match stock's
     /// hard-coded `let_bang` pattern).
     bang_name: Option<(u8, Vec<u8>)>,
+    /// `variable_definition?` identity for `MultipleMemoizedHelpers`.
+    var_def: VarDef,
 }
 
 /// One parser-block frame in the (post-walk) arena.
@@ -201,12 +287,22 @@ struct Scope {
     /// `(block {(send #rspec? {SG|EG} ...) (send nil? #Includes.all ...)})`
     /// — halts every role collection; also the `LetSetup` query-root set.
     scope_change: bool,
+    /// `spec_group?` — a plain-block EG/SG with an rspec receiver: the
+    /// `MultipleMemoizedHelpers` candidate set (a subset of `scope_change`,
+    /// excluding `include_*` blocks).
+    spec_group: bool,
     /// `example?` — halts every role collection.
     example: bool,
     /// The frame is itself a `let?` node — halts the lets collection only.
     let_barrier: bool,
+    /// The frame is itself a `subject?` node — halts the subjects collection
+    /// only.
+    subject_barrier: bool,
     /// Collected `let?` items (indexes into `let_items`), document order.
     lets: Vec<u32>,
+    /// Collected `subject?` items (indexes into `subject_items`), document
+    /// order.
+    subjects: Vec<u32>,
 }
 
 struct StackEntry {
@@ -223,6 +319,9 @@ pub struct RSpecDispatcherRule<'c> {
     /// All parser-block frames, document order; survives the walk.
     scopes: Vec<Scope>,
     let_items: Vec<LetItem>,
+    /// Collected `subject?` items' `variable_definition?` identities
+    /// (indexed by `Scope::subjects`).
+    subject_items: Vec<VarDef>,
     /// Positive while inside a top-level statement that is `spec_group?`
     /// (any_block; see module doc on `inside_example_group?`).
     top_spec_depth: u32,
@@ -231,6 +330,7 @@ pub struct RSpecDispatcherRule<'c> {
     zero_arg_calls: HashMap<Vec<u8>, Vec<usize>>,
     vn_offenses: Vec<VarNameOffense>,
     vn_passing: Vec<(String, u8)>,
+    vd_offenses: Vec<VarDefOffense>,
 }
 
 pub fn build_rule<'c>(cfg: &'c RSpecConfig) -> RSpecDispatcherRule<'c> {
@@ -240,10 +340,12 @@ pub fn build_rule<'c>(cfg: &'c RSpecConfig) -> RSpecDispatcherRule<'c> {
         scope_stack: Vec::with_capacity(16),
         scopes: Vec::new(),
         let_items: Vec::new(),
+        subject_items: Vec::new(),
         top_spec_depth: 0,
         zero_arg_calls: HashMap::new(),
         vn_offenses: Vec::new(),
         vn_passing: Vec::new(),
+        vd_offenses: Vec::new(),
     }
 }
 
@@ -305,6 +407,15 @@ impl RSpecDispatcherRule<'_> {
             self.collect_let(call, name, n_args, kind);
         }
 
+        // `subject?` collection (block form only — stock's `subject?` has no
+        // send-form pattern). Feeds `MultipleMemoizedHelpers` when
+        // `AllowSubject: false`.
+        let is_subject =
+            recv_none && role_mask & roles::SUBJECTS != 0 && kind == BlockKind::Plain;
+        if is_subject {
+            self.collect_subject(call);
+        }
+
         // parser-block frames: barriers + collection roots.
         if kind == BlockKind::Plain {
             let spec_group_send =
@@ -316,9 +427,12 @@ impl RSpecDispatcherRule<'_> {
                 parent: self.scope_stack.last().copied(),
                 range: (loc.start_offset(), loc.end_offset()),
                 scope_change: spec_group_send || include_block,
+                spec_group: spec_group_send,
                 example,
                 let_barrier: is_let,
+                subject_barrier: is_subject,
                 lets: Vec::new(),
+                subjects: Vec::new(),
             });
             self.scope_stack.push(self.scopes.len() - 1);
             entry.opened_scope = true;
@@ -327,30 +441,61 @@ impl RSpecDispatcherRule<'_> {
     }
 
     /// `(send nil? {#Subjects.all #Helpers.all} $({any_sym str dstr} ...)
-    /// ...)` under a top-level spec group. Only sym/str feed
-    /// `RSpec/VariableName` (stock skips dstr/dsym).
+    /// ...)` under a top-level spec group. Feeds both `RSpec/VariableName`
+    /// (sym/str only — stock skips dstr/dsym) and `RSpec/VariableDefinition`
+    /// (sym/str/dsym, style-filtered; dstr never fails).
     fn variable_candidate(&mut self, call: &CallNode<'_>) {
         let Some(args) = call.arguments() else { return };
         let Some(first) = args.arguments().iter().next() else {
             return;
         };
-        let (vkind, value) = if let Some(s) = first.as_symbol_node() {
-            (0u8, String::from_utf8_lossy(s.unescaped()).into_owned())
+        let loc = first.location();
+        let (start, end) = (loc.start_offset(), loc.end_offset());
+        if let Some(s) = first.as_symbol_node() {
+            let value = String::from_utf8_lossy(s.unescaped()).into_owned();
+            self.variable_name_candidate(0, value.clone(), start, end);
+            // VariableDefinition: a `sym` name fails only under `strings`.
+            if self.cfg.variable_definition_style == 1 {
+                self.vd_offenses.push(VarDefOffense { start, end, kind: 0, value });
+            }
         } else if let Some(s) = first.as_string_node() {
-            (1u8, String::from_utf8_lossy(s.unescaped()).into_owned())
-        } else {
-            // dstr / dsym / non-literal: no VariableName candidate.
-            return;
-        };
+            // An empty percent-string is a parser-gem `dstr` (see
+            // `string_is_parser_dstr`): neither cop treats it as a `str`.
+            if string_is_parser_dstr(&s) {
+                return;
+            }
+            let value = String::from_utf8_lossy(s.unescaped()).into_owned();
+            self.variable_name_candidate(1, value.clone(), start, end);
+            // VariableDefinition: a `str` name fails only under `symbols`.
+            if self.cfg.variable_definition_style == 0 {
+                self.vd_offenses.push(VarDefOffense { start, end, kind: 1, value });
+            }
+        } else if first.as_interpolated_symbol_node().is_some() {
+            // dsym: a `RSpec/VariableName` non-candidate, but a
+            // VariableDefinition offense under `strings` (the wrapper slices
+            // the source, so no value is carried).
+            if self.cfg.variable_definition_style == 1 {
+                self.vd_offenses.push(VarDefOffense {
+                    start,
+                    end,
+                    kind: 2,
+                    value: String::new(),
+                });
+            }
+        }
+        // dstr / non-literal first argument: neither cop fires.
+    }
+
+    /// `RSpec/VariableName` style classification for one sym/str candidate.
+    fn variable_name_candidate(&mut self, vkind: u8, value: String, start: usize, end: usize) {
         let style = self.cfg.variable_name_style;
         if matches_style(&value, style) {
             self.vn_passing.push((value, vkind));
         } else {
-            let loc = first.location();
             let valid_alt = matches_style(&value, 1 - style);
             self.vn_offenses.push(VarNameOffense {
-                start: loc.start_offset(),
-                end: loc.end_offset(),
+                start,
+                end,
                 kind: vkind,
                 value,
                 valid_alt,
@@ -376,6 +521,7 @@ impl RSpecDispatcherRule<'_> {
         self.let_items.push(LetItem {
             send_range: parser_send_range(call, kind),
             bang_name,
+            var_def: classify_var_def(call),
         });
         // Attribute to open frames, innermost outward, stopping at (and
         // including) the first lets-barrier.
@@ -383,6 +529,22 @@ impl RSpecDispatcherRule<'_> {
             self.scopes[s].lets.push(idx);
             let sc = &self.scopes[s];
             if sc.scope_change || sc.example || sc.let_barrier {
+                break;
+            }
+        }
+    }
+
+    /// Collect a `subject?` node for `MultipleMemoizedHelpers`, attributing
+    /// it to every open frame from the innermost outward until (and
+    /// including) the first subjects-barrier (`scope_change` / `example` /
+    /// a `subject?` frame). A `let?` frame does NOT stop the query.
+    fn collect_subject(&mut self, call: &CallNode<'_>) {
+        let idx = u32::try_from(self.subject_items.len()).expect("more subjects than u32");
+        self.subject_items.push(classify_var_def(call));
+        for &s in self.scope_stack.iter().rev() {
+            self.scopes[s].subjects.push(idx);
+            let sc = &self.scopes[s];
+            if sc.scope_change || sc.example || sc.subject_barrier {
                 break;
             }
         }
@@ -407,10 +569,78 @@ impl RSpecDispatcherRule<'_> {
                 let_setup.push(item.send_range);
             }
         }
+        let multiple_memoized_helpers = self.multiple_memoized_helpers();
         RSpecResult {
             variable_name: (self.vn_offenses, self.vn_passing),
             let_setup,
+            variable_definition: self.vd_offenses,
+            multiple_memoized_helpers,
         }
+    }
+
+    /// `MultipleMemoizedHelpers`: for every plain-block spec group, union the
+    /// helpers visible from the group's own frame and every parser-block
+    /// ancestor frame (`all_helpers`), classify them into bytewise-decidable
+    /// identities (`rust_distinct`) plus dsym/dstr source ranges, and emit
+    /// the group when the safe upper bound exceeds `Max`.
+    fn multiple_memoized_helpers(&self) -> Vec<MmhGroup> {
+        let mut groups = Vec::new();
+        let allow_subject = self.cfg.mmh_allow_subject;
+        for (gi, scope) in self.scopes.iter().enumerate() {
+            if !scope.spec_group {
+                continue;
+            }
+            // Gather the unique visible helper items (the same physical item
+            // reached through several ancestor paths is one item).
+            let mut let_idxs: Vec<u32> = Vec::new();
+            let mut subj_idxs: Vec<u32> = Vec::new();
+            let mut cur = Some(gi);
+            while let Some(f) = cur {
+                let frame = &self.scopes[f];
+                let_idxs.extend_from_slice(&frame.lets);
+                if !allow_subject {
+                    subj_idxs.extend_from_slice(&frame.subjects);
+                }
+                cur = frame.parent;
+            }
+            let_idxs.sort_unstable();
+            let_idxs.dedup();
+            subj_idxs.sort_unstable();
+            subj_idxs.dedup();
+
+            let mut distinct: HashSet<(u8, &[u8])> = HashSet::new();
+            let mut dsym_dstr_ranges: Vec<(usize, usize)> = Vec::new();
+            let var_defs = let_idxs
+                .iter()
+                .map(|&li| &self.let_items[li as usize].var_def)
+                .chain(subj_idxs.iter().map(|&si| &self.subject_items[si as usize]));
+            for var_def in var_defs {
+                match var_def {
+                    VarDef::Sym(v) => {
+                        distinct.insert((0, v.as_slice()));
+                    }
+                    VarDef::Str(v) => {
+                        distinct.insert((1, v.as_slice()));
+                    }
+                    VarDef::Nil => {
+                        distinct.insert((2, b""));
+                    }
+                    VarDef::Dyn(s, e) => dsym_dstr_ranges.push((*s, *e)),
+                }
+            }
+            let rust_distinct = distinct.len();
+            // Safe upper bound: below it no offense is possible even before
+            // the wrapper dedups the dsym/dstr items structurally.
+            if (rust_distinct + dsym_dstr_ranges.len()) as i64 > self.cfg.mmh_max {
+                groups.push(MmhGroup {
+                    start: scope.range.0,
+                    end: scope.range.1,
+                    rust_distinct,
+                    dsym_dstr_ranges,
+                });
+            }
+        }
+        groups
     }
 
     /// `overrides_outer_let_bang?`: some ancestor scope-change frame
@@ -441,6 +671,50 @@ impl RSpecDispatcherRule<'_> {
         };
         let from = positions.partition_point(|&p| p < range.0);
         positions.get(from).is_some_and(|&p| p < range.1)
+    }
+}
+
+/// A prism `StringNode` that the parser gem parses as an (empty) `dstr`
+/// rather than a `str`: an EMPTY percent-string literal (`%()`, `%q()`,
+/// `%Q()`, `%{}`, `%[]`). prism 1.9 folds these into `StringNode`, but every
+/// stock RSpec matcher's `{str dstr}` split follows the parser gem, which
+/// treats an empty percent-string as an empty `dstr` (probed). Non-empty
+/// percent-strings and empty quote strings (`''`) stay `str` in both. This is
+/// the only str/dstr divergence between the two parsers for these matchers
+/// (adjacent string concatenation is already an `InterpolatedStringNode` in
+/// prism, so it never reaches the `StringNode` arm).
+fn string_is_parser_dstr(s: &StringNode<'_>) -> bool {
+    s.unescaped().is_empty()
+        && s.opening_loc()
+            .is_some_and(|o| o.as_slice().first() == Some(&b'%'))
+}
+
+/// `variable_definition?` first-argument classification for a `let?`/
+/// `subject?` call: the captured `{any_sym str dstr}` node, or `Nil` when the
+/// call has no such literal first argument.
+fn classify_var_def(call: &CallNode<'_>) -> VarDef {
+    let Some(args) = call.arguments() else {
+        return VarDef::Nil;
+    };
+    let Some(first) = args.arguments().iter().next() else {
+        return VarDef::Nil;
+    };
+    if let Some(s) = first.as_symbol_node() {
+        VarDef::Sym(s.unescaped().to_vec())
+    } else if let Some(s) = first.as_string_node() {
+        if string_is_parser_dstr(&s) {
+            let loc = first.location();
+            VarDef::Dyn(loc.start_offset(), loc.end_offset())
+        } else {
+            VarDef::Str(s.unescaped().to_vec())
+        }
+    } else if first.as_interpolated_symbol_node().is_some()
+        || first.as_interpolated_string_node().is_some()
+    {
+        let loc = first.location();
+        VarDef::Dyn(loc.start_offset(), loc.end_offset())
+    } else {
+        VarDef::Nil
     }
 }
 
@@ -511,6 +785,17 @@ pub fn check_rspec_let_setup(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, us
     run(source, cfg).let_setup
 }
 
+/// Standalone entry point for `RSpec/VariableDefinition` (the wrapper's
+/// fallback path).
+pub fn check_rspec_variable_definition(source: &[u8], cfg: &RSpecConfig) -> Vec<VarDefOffense> {
+    run(source, cfg).variable_definition
+}
+
+/// Standalone entry point for `RSpec/MultipleMemoizedHelpers`.
+pub fn check_rspec_multiple_memoized_helpers(source: &[u8], cfg: &RSpecConfig) -> Vec<MmhGroup> {
+    run(source, cfg).multiple_memoized_helpers
+}
+
 fn run(source: &[u8], cfg: &RSpecConfig) -> RSpecResult {
     let mut rule = build_rule(cfg);
     super::dispatch::run(source, &mut [&mut rule]);
@@ -550,6 +835,51 @@ mod tests {
         check_rspec_let_setup(src.as_bytes(), &cfg())
             .into_iter()
             .map(|(s, e)| String::from_utf8_lossy(&src.as_bytes()[s..e]).into_owned())
+            .collect()
+    }
+
+    fn cfg_vd(style: u8) -> RSpecConfig {
+        let mut c = cfg();
+        c.variable_definition_style = style;
+        c
+    }
+
+    /// `(offense source slice, kind, value)` per VariableDefinition offense.
+    fn vd(src: &str, style: u8) -> Vec<(String, u8, String)> {
+        check_rspec_variable_definition(src.as_bytes(), &cfg_vd(style))
+            .into_iter()
+            .map(|o| {
+                (
+                    String::from_utf8_lossy(&src.as_bytes()[o.start..o.end]).into_owned(),
+                    o.kind,
+                    o.value,
+                )
+            })
+            .collect()
+    }
+
+    fn cfg_mmh(max: i64, allow_subject: bool) -> RSpecConfig {
+        let mut c = cfg();
+        c.mmh_max = max;
+        c.mmh_allow_subject = allow_subject;
+        c
+    }
+
+    /// `(group source slice, rust_distinct, dsym/dstr source slices)` per
+    /// emitted MMH group.
+    fn mmh(src: &str, max: i64, allow_subject: bool) -> Vec<(String, usize, Vec<String>)> {
+        check_rspec_multiple_memoized_helpers(src.as_bytes(), &cfg_mmh(max, allow_subject))
+            .into_iter()
+            .map(|g| {
+                (
+                    String::from_utf8_lossy(&src.as_bytes()[g.start..g.end]).into_owned(),
+                    g.rust_distinct,
+                    g.dsym_dstr_ranges
+                        .into_iter()
+                        .map(|(s, e)| String::from_utf8_lossy(&src.as_bytes()[s..e]).into_owned())
+                        .collect(),
+                )
+            })
             .collect()
     }
 
@@ -744,5 +1074,176 @@ mod tests {
     fn no_parens_send_range() {
         let src = "describe 'x' do\n  let! :w do\n    create(:widget)\n  end\n  it('a') { expect(1).to eq 1 }\nend\n";
         assert_eq!(ls_sources(src), vec!["let! :w"]);
+    }
+
+    // --- VariableDefinition (probes B1/B2) ---
+
+    #[test]
+    fn variable_definition_symbols_flags_only_str() {
+        // symbols style: str names fail, sym / dsym / dstr do not.
+        let src = "describe 'x' do\n  let('user') { 1 }\n  subject(\"other\") { 2 }\n  let(:okay) { 3 }\n  let(:\"a#{b}\") { 4 }\n  let(\"dstr#{x}\") { 5 }\nend\n";
+        assert_eq!(
+            vd(src, 0),
+            vec![
+                ("'user'".to_string(), 1, "user".to_string()),
+                ("\"other\"".to_string(), 1, "other".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn variable_definition_strings_flags_sym_and_dsym() {
+        // strings style: sym AND dsym fail (dsym carries no value — the
+        // wrapper slices the source), str / dstr do not.
+        let src = "describe 'x' do\n  let(:user) { 1 }\n  let(:\"a b\") { 2 }\n  let(:\"a#{x}\") { 3 }\n  let('str') { 4 }\n  let(\"dstr#{x}\") { 5 }\nend\n";
+        assert_eq!(
+            vd(src, 1),
+            vec![
+                (":user".to_string(), 0, "user".to_string()),
+                (":\"a b\"".to_string(), 0, "a b".to_string()),
+                (":\"a#{x}\"".to_string(), 2, String::new()),
+            ]
+        );
+    }
+
+    #[test]
+    fn variable_definition_needs_the_top_level_group_gate() {
+        // Same gate as VariableName: a top-level let is not a candidate.
+        assert_eq!(vd("let('user') { 1 }\n", 0), Vec::new());
+        // A group wrapped in a top-level class does not count.
+        let src = "class Foo\n  describe 'x' do\n    let('user') { 1 }\n  end\nend\n";
+        assert_eq!(vd(src, 0), Vec::new());
+    }
+
+    #[test]
+    fn variable_definition_empty_percent_string_is_dstr() {
+        // `%()` is a dstr (never flagged); `%(abc)` is a str (flagged under
+        // symbols).
+        let src = "describe 'x' do\n  let(%()) { 1 }\n  let(%(abc)) { 2 }\nend\n";
+        assert_eq!(vd(src, 0), vec![("%(abc)".to_string(), 1, "abc".to_string())]);
+    }
+
+    // --- MultipleMemoizedHelpers (probes E1-E12) ---
+
+    #[test]
+    fn mmh_flags_the_inner_context_when_helpers_accumulate() {
+        // E1: the inner context sees the outer `let` too -> 2 > 1.
+        let src = "describe 'x' do\n  let(:a) { 1 }\n  context 'y' do\n    let(:b) { 1 }\n  end\nend\n";
+        let groups = mmh(src, 1, true);
+        assert_eq!(groups.len(), 1);
+        assert!(groups[0].0.starts_with("context 'y' do"));
+        assert_eq!(groups[0].1, 2);
+        assert!(groups[0].2.is_empty());
+    }
+
+    #[test]
+    fn mmh_later_let_counts_for_an_earlier_nested_context() {
+        // E2: a `let` after the nested context still counts (post-walk).
+        let src = "describe 'x' do\n  context 'y' do\n    let(:b) { 1 }\n  end\n  let(:a) { 1 }\nend\n";
+        let groups = mmh(src, 1, true);
+        assert_eq!(groups.len(), 1);
+        assert!(groups[0].0.starts_with("context 'y' do"));
+        assert_eq!(groups[0].1, 2);
+    }
+
+    #[test]
+    fn mmh_overridden_and_distinct_names() {
+        // E3: overridden `let(:a)` in parent and child is one identity.
+        let overridden = "describe 'x' do\n  let(:a) { 1 }\n  context 'y' do\n    let(:a) { 2 }\n  end\nend\n";
+        assert_eq!(mmh(overridden, 1, true), Vec::new());
+        // E5: sym vs str are distinct.
+        let distinct = "describe 'x' do\n  let(:a) { 1 }\n  let('a') { 2 }\nend\n";
+        let groups = mmh(distinct, 1, true);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].1, 2);
+    }
+
+    #[test]
+    fn mmh_non_literal_and_nil_merging() {
+        // E4: a non-literal name is one nil item -> :a + nil = 2.
+        let nil_item = "describe 'x' do\n  let(:a) { 1 }\n  let(foo) { 2 }\nend\n";
+        assert_eq!(mmh(nil_item, 1, true)[0].1, 2);
+        // E6: unnamed subject + non-literal let merge into ONE nil (AllowSubject
+        // false) -> 1, no offense.
+        let merge = "describe 'x' do\n  subject { 1 }\n  let(foo) { 2 }\nend\n";
+        assert_eq!(mmh(merge, 1, false), Vec::new());
+    }
+
+    #[test]
+    fn mmh_arbitrary_dsl_block_is_transparent_and_an_ancestor() {
+        // E7: describe sees [a, b] (context'y' is a barrier for its lets);
+        // context'y' sees [a, b, c] via the ancestor union.
+        let src = "describe 'x' do\n  let(:a) { 1 }\n  weird_dsl do\n    let(:b) { 1 }\n    context 'y' do\n      let(:c) { 1 }\n    end\n  end\nend\n";
+        let groups = mmh(src, 1, true);
+        assert_eq!(groups.len(), 2);
+        assert!(groups[0].0.starts_with("describe 'x' do"));
+        assert_eq!(groups[0].1, 2);
+        assert!(groups[1].0.starts_with("context 'y' do"));
+        assert_eq!(groups[1].1, 3);
+    }
+
+    #[test]
+    fn mmh_numblock_context_is_transparent() {
+        // E8: the numblock context's lets belong to the outer describe, and
+        // the numblock context itself never gets an offense.
+        let src = "describe 'x' do\n  let(:a) { 1 }\n  context('y') {\n    _1\n    let(:b) { 1 }\n    let(:c) { 1 }\n  }\nend\n";
+        let groups = mmh(src, 1, true);
+        assert_eq!(groups.len(), 1);
+        assert!(groups[0].0.starts_with("describe 'x' do"));
+        assert_eq!(groups[0].1, 3);
+    }
+
+    #[test]
+    fn mmh_lets_in_hook_and_subject_bodies_and_shared_groups() {
+        // E9: a let inside a `before` hook body counts.
+        let hook = "describe 'x' do\n  let(:a) { 1 }\n  before do\n    let(:b) { 1 }\n  end\nend\n";
+        assert_eq!(mmh(hook, 1, true)[0].1, 2);
+        // E12: a let inside a `subject(:s)` body counts (subject is not a
+        // lets barrier).
+        let subj = "describe 'x' do\n  subject(:s) do\n    let(:inner) { 1 }\n  end\n  let(:a) { 1 }\nend\n";
+        assert_eq!(mmh(subj, 1, true)[0].1, 2);
+        // E10: shared groups are checked.
+        let shared = "shared_examples 'x' do\n  let(:a) { 1 }\n  let(:b) { 1 }\nend\n";
+        let groups = mmh(shared, 1, true);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].1, 2);
+    }
+
+    #[test]
+    fn mmh_subject_counting_respects_allow_subject() {
+        let src = "describe 'x' do\n  subject(:bar) { 1 }\n  let(:foo) { 2 }\nend\n";
+        // AllowSubject true (default): subjects ignored -> 1, no offense.
+        assert_eq!(mmh(src, 1, true), Vec::new());
+        // AllowSubject false: subject counts -> 2.
+        let groups = mmh(src, 1, false);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].1, 2);
+    }
+
+    #[test]
+    fn mmh_dsym_dstr_items_are_left_for_the_wrapper() {
+        // E11: two dstr names differ only in interpolation whitespace ->
+        // Rust cannot dedup them, so it passes both ranges (rust_distinct 0)
+        // and gates on the upper bound 2 > 1.
+        let src = "describe 'x' do\n  let(\"a#{ b }\") { 1 }\n  let(\"a#{b}\") { 2 }\nend\n";
+        let groups = mmh(src, 1, true);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].1, 0);
+        assert_eq!(groups[0].2, vec!["\"a#{ b }\"".to_string(), "\"a#{b}\"".to_string()]);
+        // A dsym + dstr + sym under Max 2: rust_distinct 1 (:c) + 2 dyn = 3.
+        let mixed = "describe 'x' do\n  let(:\"a#{x}\") { 1 }\n  let(\"a#{x}\") { 2 }\n  let(:c) { 3 }\nend\n";
+        let groups = mmh(mixed, 2, true);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].1, 1);
+        assert_eq!(groups[0].2.len(), 2);
+    }
+
+    #[test]
+    fn mmh_ignores_a_reasonable_number() {
+        let src = "describe 'x' do\n  let(:a) { 1 }\nend\n";
+        assert_eq!(mmh(src, 1, true), Vec::new());
+        // Distributed lets in sibling contexts do not accumulate.
+        let distributed = "describe 'x' do\n  context 'a' do\n    let(:a) { 1 }\n  end\n  context 'b' do\n    let(:b) { 1 }\n  end\nend\n";
+        assert_eq!(mmh(distributed, 1, true), Vec::new());
     }
 }

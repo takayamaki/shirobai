@@ -1292,6 +1292,32 @@ fn map_rspec_variable_name(
     )
 }
 
+/// `RSpec/VariableDefinition`: `[[var_start, var_end, kind, value], ...]`
+/// (kind 0 = sym, 1 = str, 2 = dsym; `value` = unescaped literal for
+/// sym/str, empty for dsym). The wrapper builds the correction from the tuple
+/// (see `variable_definition.rb`).
+fn map_rspec_variable_definition(
+    v: Vec<shirobai_core::rules::rspec_dispatcher::VarDefOffense>,
+) -> Vec<(usize, usize, u8, String)> {
+    v.into_iter()
+        .map(|o| (o.start, o.end, o.kind, o.value))
+        .collect()
+}
+
+/// `RSpec/MultipleMemoizedHelpers`: `[[group_start, group_end, rust_distinct,
+/// [[dyn_start, dyn_end], ...]], ...]`. `rust_distinct` is the count of
+/// bytewise-decidable helper identities; the range list carries the
+/// `dsym`/`dstr` items the wrapper locates, dedups structurally and adds to
+/// `rust_distinct` before the exact `count > Max` test.
+#[allow(clippy::type_complexity)]
+fn map_rspec_multiple_memoized_helpers(
+    v: Vec<shirobai_core::rules::rspec_dispatcher::MmhGroup>,
+) -> Vec<(usize, usize, usize, Vec<(usize, usize)>)> {
+    v.into_iter()
+        .map(|g| (g.start, g.end, g.rust_distinct, g.dsym_dstr_ranges))
+        .collect()
+}
+
 /// Parse one rspec wire segment (the same `[nums, lists]` the packer
 /// registers) for the standalone RSpec entry points. Errors on length
 /// mismatches; a dormant segment yields `None` (no offenses).
@@ -1336,6 +1362,41 @@ fn check_rspec_let_setup(
     Ok(shirobai_core::rules::rspec_dispatcher::check_rspec_let_setup(
         bytes(&source),
         &cfg,
+    ))
+}
+
+/// Standalone entry point for `RSpec/VariableDefinition` (per-cop fallback).
+fn check_rspec_variable_definition(
+    ruby: &Ruby,
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Result<Vec<(usize, usize, u8, String)>, Error> {
+    let Some(cfg) = rspec_segment_config(ruby, nums, lists)? else {
+        return Ok(Vec::new());
+    };
+    Ok(map_rspec_variable_definition(
+        shirobai_core::rules::rspec_dispatcher::check_rspec_variable_definition(bytes(&source), &cfg),
+    ))
+}
+
+/// Standalone entry point for `RSpec/MultipleMemoizedHelpers` (per-cop
+/// fallback).
+#[allow(clippy::type_complexity)]
+fn check_rspec_multiple_memoized_helpers(
+    ruby: &Ruby,
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Result<Vec<(usize, usize, usize, Vec<(usize, usize)>)>, Error> {
+    let Some(cfg) = rspec_segment_config(ruby, nums, lists)? else {
+        return Ok(Vec::new());
+    };
+    Ok(map_rspec_multiple_memoized_helpers(
+        shirobai_core::rules::rspec_dispatcher::check_rspec_multiple_memoized_helpers(
+            bytes(&source),
+            &cfg,
+        ),
     ))
 }
 
@@ -1429,7 +1490,8 @@ fn register_bundle_config(
 /// RSpec slots (origin 2; every slot empty unless the plugin gem
 /// registered its packed segment AND the per-file gate kept it awake):
 ///
-/// 0 rspec_variable_name / 1 rspec_let_setup
+/// 0 rspec_variable_name / 1 rspec_let_setup /
+/// 2 rspec_variable_definition / 3 rspec_multiple_memoized_helpers
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1581,9 +1643,13 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         perf.push(map_perf_start_with(r.perf_start_with))?;
         perf.push(map_perf_times_map(r.perf_times_map))?;
         // RSpec origin (result[2]).
-        let rspec = ruby.ary_new_capa(2);
+        let rspec = ruby.ary_new_capa(4);
         rspec.push(map_rspec_variable_name(r.rspec_variable_name))?;
         rspec.push(r.rspec_let_setup)?;
+        rspec.push(map_rspec_variable_definition(r.rspec_variable_definition))?;
+        rspec.push(map_rspec_multiple_memoized_helpers(
+            r.rspec_multiple_memoized_helpers,
+        ))?;
         // The nested result is N_ORIGINS + 1 arrays per file (the outer
         // one plus one per origin), nothing per cop.
         let out = ruby.ary_new_capa(3);
@@ -3662,6 +3728,14 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_rspec_let_setup",
         function!(check_rspec_let_setup, 3),
+    )?;
+    module.define_module_function(
+        "check_rspec_variable_definition",
+        function!(check_rspec_variable_definition, 3),
+    )?;
+    module.define_module_function(
+        "check_rspec_multiple_memoized_helpers",
+        function!(check_rspec_multiple_memoized_helpers, 3),
     )?;
     module.define_module_function(
         "check_stabby_lambda_parentheses",

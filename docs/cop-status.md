@@ -167,9 +167,11 @@ if they ever disagree, `Dispatch.offenses_for` returns nil and the
 wrapper falls back to its standalone entry point (speed bug, never an
 offense bug).
 
-### Implemented (2 cops)
+### Implemented (4 cops)
 
 - `RSpec/LetSetup`
+- `RSpec/MultipleMemoizedHelpers`
+- `RSpec/VariableDefinition`
 - `RSpec/VariableName`
 
 Verified with the same bar as core cops: vendor specs from the
@@ -178,9 +180,25 @@ tests), differential edge-case specs pinning the probed quirks (the
 `inside_example_group?` top-level-statement gate, block/numblock/itblock
 matcher asymmetries, `LetSetup`'s zero-argument-use search, sym/str
 non-shadowing, Unicode style properties, AllowedPatterns +
-detected-style bookkeeping), lint-mode correctable parity, non-ASCII
-offset parity, and the rspec parity oracle (`benches/parity_diff_rspec.sh`
-with its synthetic-fixture self-test) at zero diff.
+detected-style bookkeeping, `VariableDefinition`'s style-filtered
+autocorrect, `MultipleMemoizedHelpers`' cross-frame helper union with
+structural dedup of interpolated names), lint-mode correctable parity,
+non-ASCII offset parity, and the rspec parity oracle
+(`benches/parity_diff_rspec.sh` with its synthetic-fixture self-test) at
+zero diff.
+
+`RSpec/VariableDefinition` and `RSpec/MultipleMemoizedHelpers` reuse the
+`RSpecDispatcherRule`: the former shares `VariableName`'s send-shaped
+candidate and top-level-group gate (style filtering happens in Rust); the
+latter unions each spec group's own helper frame with its parser-block
+ancestor frames (adding a per-role `subjects` collection alongside
+`lets`), counts the bytewise-decidable identities in Rust and hands the
+rare `dsym`/`dstr` names to the wrapper, which relocates them through the
+shared `Shirobai::RSpec::NodeLocator` and dedups them with parser-gem
+structural equality. One probed parser divergence is handled centrally:
+an empty percent-string (`%()`) is a `str` node in prism 1.9 but a `dstr`
+in the parser gem, so `string_is_parser_dstr` treats it as `dstr`
+(matching every stock `{str dstr}` matcher).
 
 ### Known limitation (same family as the README `TargetRubyVersion` note)
 
