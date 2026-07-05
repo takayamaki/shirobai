@@ -1,3 +1,9 @@
+---
+description: shirobai-performance plugin gem — thin Ruby shell over the shared native extension
+paths:
+  - gems/shirobai-performance/**
+---
+
 # shirobai-performance
 
 Drop-in Rust replacement for [rubocop-performance](https://github.com/rubocop/rubocop-performance)
