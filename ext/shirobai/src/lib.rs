@@ -1123,6 +1123,16 @@ fn map_colon_method_call(
     v.into_iter().map(|o| (o.dot_start, o.dot_end)).collect()
 }
 
+/// `Style/Semicolon` path (a): `[[offset, last_token], ...]` — the byte offset
+/// of each flagged `;` and whether it is the "last token of the line" pattern
+/// (the wrapper then reads the preceding token for endless-range / value-omission
+/// autocorrect).
+fn map_semicolon(
+    v: Vec<shirobai_core::rules::semicolon::PathAOffense>,
+) -> Vec<(usize, bool)> {
+    v.into_iter().map(|o| (o.offset, o.last_token)).collect()
+}
+
 /// `Layout/BlockAlignment`: `[[end_start, end_end, message, align_column], ...]`
 /// — `[end_start, end_end)` is the closing-token range (`end` / `}`);
 /// `message`/`align_column` carry the offense detail (only misaligned blocks
@@ -1525,7 +1535,7 @@ fn register_bundle_config(
 /// 82 space_inside_parens / 83 space_inside_reference_brackets /
 /// 84 space_before_first_arg /
 /// 85 duplicate_magic_comment / 86 duplicate_methods /
-/// 87 array_alignment / 88 file_null
+/// 87 array_alignment / 88 file_null / 89 semicolon
 ///
 /// Performance slots (origin 1; every slot empty unless the plugin gem
 /// registered its packed segment):
@@ -1550,7 +1560,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
         // Core origin (result[0]).
-        let ary = ruby.ary_new_capa(88);
+        let ary = ruby.ary_new_capa(90);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -1683,6 +1693,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_duplicate_methods(r.duplicate_methods))?;
         ary.push(map_array_alignment(r.array_alignment))?;
         ary.push(map_file_null(r.file_null))?;
+        ary.push(map_semicolon(r.semicolon))?;
         // Performance origin (result[1]).
         let perf = ruby.ary_new_capa(5);
         perf.push(map_perf_detect(r.perf_detect))?;
@@ -3288,6 +3299,12 @@ fn check_colon_method_call(source: RString) -> Vec<(usize, usize)> {
     )
 }
 
+/// Ruby entry point for `Style/Semicolon` detection path (a). Config-less.
+/// Returns `[[offset, last_token], ...]`.
+fn check_semicolon(source: RString) -> Vec<(usize, bool)> {
+    map_semicolon(shirobai_core::rules::semicolon::check_semicolon(bytes(&source)))
+}
+
 /// Ruby entry point for `Performance/Detect` (shirobai-performance).
 /// `preferred` is `Style/CollectionMethods` `PreferredMethods['detect']`
 /// resolved on the Ruby side (`detect` when unset). Returns the
@@ -3758,6 +3775,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_assignment_indentation",
         function!(check_assignment_indentation, 2),
+    )?;
+    module.define_module_function(
+        "check_semicolon",
+        function!(check_semicolon, 1),
     )?;
     module.define_module_function(
         "check_colon_method_call",

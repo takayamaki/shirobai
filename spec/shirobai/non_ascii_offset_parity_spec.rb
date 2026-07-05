@@ -415,6 +415,11 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     "Lint/DuplicateMethods" =>
       "class A\n  def foo; end\n  def foo; end\nend\n" \
       "def B.zzz\n  \"あいう\"\nend\ndef B.zzz\n  \"あいう\"\nend\n",
+    # The `;` offense range sits after a multibyte string on the same line, so
+    # the byte offset Rust reports must be mapped to a char offset (path (a)
+    # last-token remove corrector).
+    "Style/Semicolon" =>
+      "puts \"日本語\";\n",
   }
 
   cases.each do |cop_name, body|

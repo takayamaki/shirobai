@@ -36,6 +36,7 @@ use super::{
     perf_detect, perf_end_with, perf_start_with, perf_string_include, perf_times_map,
     predicate_prefix, punctuation_spacing, redundant_self, redundant_self_assignment,
     require_parentheses, rspec_dispatcher, rspec_language, safe_navigation_chain, self_assignment,
+    semicolon,
     space_around_keyword, space_around_method_call_operator, space_before_block_braces,
     space_before_first_arg,
     space_inside_array_literal_brackets, space_inside_block_braces,
@@ -859,6 +860,9 @@ pub struct BundleResult {
     /// `Style/FileNull`: `[start, end, message]` per offense. The offense range
     /// is also the `File::NULL` replace range.
     pub file_null: Vec<file_null::FileNullOffense>,
+    /// `Style/Semicolon` detection path (a): the per-line token-index
+    /// offenses. Path (b) (expression separators) is computed in the wrapper.
+    pub semicolon: Vec<semicolon::PathAOffense>,
     /// shirobai-performance plugin slots. Always present in the wire format;
     /// empty when `BundleConfig::performance` is `None` (plugin not loaded).
     pub perf_detect: Vec<perf_detect::PerfDetectOffense>,
@@ -1071,6 +1075,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut ium_rule = if_unless_modifier::build_rule(source, cfg.if_unless_modifier);
     let mut dm_rule = duplicate_methods::build_rule(source, &cfg.duplicate_methods);
     let mut fn_rule = file_null::build_rule();
+    let mut semicolon_rule = semicolon::build_rule(source);
     // `Layout/EmptyLines` joins the shared walk only when the file actually
     // contains `\n\n\n` (stock's prefilter); otherwise the rule's collected
     // lines are unused and we skip both the walk push and the finalize. The
@@ -1172,6 +1177,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut aba_rule,
         &mut ium_rule,
         &mut dm_rule,
+        &mut semicolon_rule,
         &mut ara_rule,
         &mut fn_rule,
     ];
@@ -1410,6 +1416,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         duplicate_magic_comment,
         duplicate_methods: dm_rule.events,
         file_null,
+        semicolon: semicolon_rule.into_offenses(),
         perf_detect,
         perf_string_include,
         perf_end_with,
@@ -1575,6 +1582,20 @@ mod tests {
             vec![nums, perf_nums, rspec_nums],
             vec![lists, perf_lists, rspec_lists],
         )
+    }
+
+    #[test]
+    fn semicolon_bundle_matches_standalone() {
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let src = "foo;\nfoo {; bar }\n\"#{foo;}\"\n42..;\nx = <<~T;\n  b\nT\n";
+        let bundled = check_all_bundle(src.as_bytes(), &cfg).semicolon;
+        let alone = semicolon::check_semicolon(src.as_bytes());
+        assert_eq!(bundled.len(), alone.len());
+        assert!(!bundled.is_empty());
+        for (a, b) in bundled.iter().zip(&alone) {
+            assert_eq!((a.offset, a.last_token), (b.offset, b.last_token));
+        }
     }
 
     #[test]

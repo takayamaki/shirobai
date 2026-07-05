@@ -118,6 +118,7 @@ module Shirobai
       duplicate_methods: [0, 86].freeze,
       array_alignment: [0, 87].freeze,
       file_null: [0, 88].freeze,
+      semicolon: [0, 89].freeze,
       # shirobai-performance plugin slots (origin 1). Always present in the
       # wire format; the Rust side leaves them empty unless the plugin gem
       # registered its packed segment (`Dispatch.register_plugin_packer`).
@@ -334,6 +335,10 @@ module Shirobai
         # `[]` and contributes nothing to `nums` / `lists`.
         _ = Cop::Lint::DuplicateMagicComment.bundle_args(config)
         dm = Cop::Lint::DuplicateMethods.bundle_args(config)
+        # Style/Semicolon is config-less (path (a) needs no config; path (b)'s
+        # AllowAsExpressionSeparator is handled in the wrapper); its
+        # `bundle_args` returns `[]` and contributes nothing to `nums` / `lists`.
+        _ = Cop::Style::Semicolon.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)

@@ -70,6 +70,7 @@ pub mod rspec_dispatcher;
 pub mod rspec_language;
 pub mod safe_navigation_chain;
 pub mod self_assignment;
+pub mod semicolon;
 pub mod space_around_keyword;
 pub mod space_around_method_call_operator;
 pub mod space_before_block_braces;

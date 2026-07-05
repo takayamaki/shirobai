@@ -594,6 +594,19 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Lint::DuplicateMethods,
       "def foo; end\ndef foo; end\n"
     ],
+    # A trailing `;` (path (a) last-token, remove corrector) is correctable.
+    "Style/Semicolon (path a terminator)" => [
+      RuboCop::Cop::Style::Semicolon,
+      Shirobai::Cop::Style::Semicolon,
+      "puts x;\n"
+    ],
+    # Two expressions separated by `;` (path (b), replace-with-newline
+    # corrector) is correctable too.
+    "Style/Semicolon (path b separator)" => [
+      RuboCop::Cop::Style::Semicolon,
+      Shirobai::Cop::Style::Semicolon,
+      "a = 1; b = 2\n"
+    ],
   }
 
   cases.each do |name, (stock_klass, shirobai_klass, source)|
