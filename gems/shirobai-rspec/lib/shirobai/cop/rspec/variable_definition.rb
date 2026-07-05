@@ -20,6 +20,7 @@ module Shirobai
       # colon (`variable.source[1..]`).
       class VariableDefinition < RuboCop::Cop::Base
         extend RuboCop::Cop::AutoCorrector
+        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::ConfigurableEnforcedStyle
 
         MSG = "Use %<style>s for variable names."
@@ -33,15 +34,12 @@ module Shirobai
         end
 
         def on_new_investigation
-          offenses = Dispatch.offenses_for(processed_source, config, :rspec_variable_definition)
-          # Gated-off file (see Dispatch#offenses_for): standalone fallback.
-          offenses ||= Shirobai.check_rspec_variable_definition(
-            processed_source.raw_source, *Shirobai::RSpec.segment(config)
-          )
+          offenses = resolved_offenses
           return if offenses.empty?
 
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          source = bundle_eligible? ? processed_source.raw_source : buffer.source
+          off = SourceOffsets.for(source)
           offenses.each do |(start, fin, kind, value)|
             range = Parser::Source::Range.new(buffer, off[start], off[fin])
             add_offense(range, message: format(MSG, style: style)) do |corrector|
@@ -51,6 +49,21 @@ module Shirobai
         end
 
         private
+
+        # Bundle path only when raw_source and the parser buffer agree byte
+        # for byte (CRLF/BOM break that — see Shirobai::Cop::BundleEligible);
+        # a gated-off file (nil from Dispatch) also falls back. The fallback
+        # scans `buffer.source` so every offset lines up with parser-gem's
+        # index.
+        def resolved_offenses
+          if bundle_eligible?
+            offenses = Dispatch.offenses_for(processed_source, config, :rspec_variable_definition)
+            return offenses unless offenses.nil?
+          end
+          Shirobai.check_rspec_variable_definition(
+            processed_source.buffer.source, *Shirobai::RSpec.segment(config)
+          )
+        end
 
         # Reproduces stock `correct_variable`, keyed by the Rust `kind`
         # (0 sym / 1 str / 2 dsym). Only one kind reaches this per style, so

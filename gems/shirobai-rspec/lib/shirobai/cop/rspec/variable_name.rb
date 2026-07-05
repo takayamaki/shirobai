@@ -25,6 +25,7 @@ module Shirobai
       # `class_emitter_method?` escape hatch is dead code on send nodes,
       # so `valid_name?` reduces to the regexp.
       class VariableName < RuboCop::Cop::Base
+        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::ConfigurableNaming
         include RuboCop::Cop::AllowedPattern
 
@@ -40,19 +41,15 @@ module Shirobai
         end
 
         def on_new_investigation
-          data = Dispatch.offenses_for(processed_source, config, :rspec_variable_name)
-          # Gated-off file (see Dispatch#offenses_for): standalone fallback.
-          data ||= Shirobai.check_rspec_variable_name(
-            processed_source.raw_source, *Shirobai::RSpec.segment(config)
-          )
-          offenses, passing = data
+          offenses, passing = resolved_data
           return if offenses.empty? && passing.empty?
 
           passing.each do |(value, kind)|
             correct_style_detected unless matches_allowed_pattern?(wrap(value, kind))
           end
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          source = bundle_eligible? ? processed_source.raw_source : buffer.source
+          off = SourceOffsets.for(source)
           offenses.each do |(start, fin, kind, value, valid_alt)|
             next if matches_allowed_pattern?(wrap(value, kind))
 
@@ -68,6 +65,21 @@ module Shirobai
         end
 
         private
+
+        # Bundle path only when raw_source and the parser buffer agree byte
+        # for byte (CRLF/BOM break that — see Shirobai::Cop::BundleEligible);
+        # a gated-off file (nil from Dispatch) also falls back. The fallback
+        # scans `buffer.source` so every offset lines up with parser-gem's
+        # index.
+        def resolved_data
+          if bundle_eligible?
+            data = Dispatch.offenses_for(processed_source, config, :rspec_variable_name)
+            return data unless data.nil?
+          end
+          Shirobai.check_rspec_variable_name(
+            processed_source.buffer.source, *Shirobai::RSpec.segment(config)
+          )
+        end
 
         # Stock passes `variable.value` around: a Symbol for sym nodes, a
         # String for str nodes (both respond to the pattern predicates).

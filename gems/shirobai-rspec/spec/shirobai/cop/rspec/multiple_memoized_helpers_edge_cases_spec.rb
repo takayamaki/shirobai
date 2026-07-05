@@ -191,4 +191,19 @@ RSpec.describe Shirobai::Cop::RSpec::MultipleMemoizedHelpers do
       RUBY
     end
   end
+
+  describe "CRLF sources (bundle-ineligible fallback)" do
+    # A CRLF source normalizes to LF in the parser buffer while `raw_source`
+    # keeps the `\r`s, so shared-walk offsets no longer line up with parser
+    # positions. `bundle_eligible?` must route these files to the standalone
+    # entry point over `buffer.source` (this also keeps the NodeLocator
+    # char ranges for dsym/dstr names aligned with the parser AST).
+    it "matches stock offense positions on a CRLF source" do
+      expect_parity(
+        "describe 'x' do\r\n  let(:a) { 1 }\r\n  let(\"b\#{x}\") { 2 }\r\n" \
+        "  let(\"b\#{y}\") { 3 }\r\nend\r\n",
+        max: 2
+      )
+    end
+  end
 end

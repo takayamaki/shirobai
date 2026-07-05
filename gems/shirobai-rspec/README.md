@@ -1,3 +1,9 @@
+---
+description: shirobai-rspec plugin gem — RSpec cop wrappers, Language segment, per-file gate
+paths:
+  - gems/shirobai-rspec/**
+---
+
 # shirobai-rspec
 
 Drop-in Rust replacement for [rubocop-rspec](https://github.com/rubocop/rubocop-rspec)

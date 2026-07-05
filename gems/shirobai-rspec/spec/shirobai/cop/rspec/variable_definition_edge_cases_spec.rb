@@ -136,4 +136,20 @@ RSpec.describe Shirobai::Cop::RSpec::VariableDefinition do
       expect(corrected).to include('let("tab\tname")', 'let("ユーザ")')
     end
   end
+
+  describe "CRLF sources (bundle-ineligible fallback)" do
+    # A CRLF source normalizes to LF in the parser buffer while `raw_source`
+    # keeps the `\r`s, so shared-walk offsets no longer line up with parser
+    # positions. `bundle_eligible?` must route these files to the standalone
+    # entry point over `buffer.source` — both the offense positions and the
+    # autocorrected bytes must stay byte-identical to stock.
+    it "matches stock offenses and autocorrect on a CRLF source" do
+      src = "describe 'x' do\r\n  let('user') { 1 }\r\nend\r\n"
+      expect_lint(src, style: "symbols")
+      # Both sides rewrite from the LF-normalized parser buffer, so the
+      # corrected output is byte-identical (and LF) on both.
+      corrected = expect_ac(src, style: "symbols")
+      expect(corrected).to include("let(:user)")
+    end
+  end
 end

@@ -23,6 +23,8 @@ module Shirobai
       # reports the group and records `self.max = count` through the same
       # `exclude_limit 'Max'` DSL stock uses (drives `--auto-gen-config`).
       class MultipleMemoizedHelpers < RuboCop::Cop::Base
+        include Shirobai::Cop::BundleEligible
+
         MSG = "Example group has too many memoized helpers [%<count>d/%<max>d]"
 
         exclude_limit "Max"
@@ -37,16 +39,13 @@ module Shirobai
         end
 
         def on_new_investigation
-          groups = Dispatch.offenses_for(processed_source, config, :rspec_multiple_memoized_helpers)
-          # Gated-off file (see Dispatch#offenses_for): standalone fallback.
-          groups ||= Shirobai.check_rspec_multiple_memoized_helpers(
-            processed_source.raw_source, *Shirobai::RSpec.segment(config)
-          )
+          groups = resolved_groups
           return if groups.empty?
 
           max = cop_config["Max"]
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          source = bundle_eligible? ? processed_source.raw_source : buffer.source
+          off = SourceOffsets.for(source)
           located = locate_dynamic_names(groups, off)
 
           groups.each do |(gstart, gend, rust_distinct, dyn_ranges)|
@@ -65,6 +64,21 @@ module Shirobai
         end
 
         private
+
+        # Bundle path only when raw_source and the parser buffer agree byte
+        # for byte (CRLF/BOM break that — see Shirobai::Cop::BundleEligible);
+        # a gated-off file (nil from Dispatch) also falls back. The fallback
+        # scans `buffer.source` so every offset lines up with parser-gem's
+        # index.
+        def resolved_groups
+          if bundle_eligible?
+            groups = Dispatch.offenses_for(processed_source, config, :rspec_multiple_memoized_helpers)
+            return groups unless groups.nil?
+          end
+          Shirobai.check_rspec_multiple_memoized_helpers(
+            processed_source.buffer.source, *Shirobai::RSpec.segment(config)
+          )
+        end
 
         # One AST descent for every group's `dsym`/`dstr` ranges (converted to
         # char offsets). Returns the `[begin, end] => node` map.
