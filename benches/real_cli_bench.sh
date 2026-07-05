@@ -19,6 +19,18 @@
 #                              main      - rubocop + shirobai from a second checkout
 #                                          of the main branch (Gemfile.realconfig.main).
 #                                          Requires SHIROBAI_MAIN_TREE.
+#                              plugins   - rubocop + shirobai core + the plugin shells
+#                                          (shirobai-performance / shirobai-rspec) from
+#                                          this tree (Gemfile.realconfig.plugins).
+#                                          Measures the plugin replacement end to end.
+#                                          Each shell is required only when the corpus's
+#                                          resolved config really loads the matching
+#                                          stock plugin, mirroring what a real user
+#                                          would write (see the resolution block below).
+#                              plugins-main - the plugins trio from a second checkout of
+#                                          the main branch (Gemfile.realconfig.plugins.main),
+#                                          with the same conditional requires as plugins.
+#                                          Requires SHIROBAI_MAIN_TREE.
 #   rounds=N                 Timed rounds (the positional [rounds] arg wins over this).
 #   SHIROBAI_MAIN_TREE=dir   Checkout of shirobai's main branch (required by main).
 #   VERIFY=1                 Before the timed rounds, run each mode once with JSON
@@ -40,8 +52,8 @@ corpus_name="$(basename "$corpus")"
 read -ra modes <<< "${MODES:-stock shirobai}"
 for m in "${modes[@]}"; do
   case "$m" in
-    stock|shirobai|removed|main) ;;
-    *) echo "error: unknown mode '$m' (valid: stock shirobai removed main)" >&2; exit 1 ;;
+    stock|shirobai|removed|main|plugins|plugins-main) ;;
+    *) echo "error: unknown mode '$m' (valid: stock shirobai removed main plugins plugins-main)" >&2; exit 1 ;;
   esac
 done
 
@@ -51,9 +63,10 @@ modes_contains() {
   return 1
 }
 
-# main needs a second checkout; fail early and clearly if it is missing.
-if modes_contains main; then
-  : "${SHIROBAI_MAIN_TREE:?main mode requires SHIROBAI_MAIN_TREE (a checkout of the shirobai main branch)}"
+# main and plugins-main need a second checkout; fail early and clearly if it is
+# missing. modes_contains is an exact-match loop, so both modes are listed.
+if modes_contains main || modes_contains plugins-main; then
+  : "${SHIROBAI_MAIN_TREE:?main/plugins-main mode requires SHIROBAI_MAIN_TREE (a checkout of the shirobai main branch)}"
   export SHIROBAI_MAIN_TREE
 fi
 
@@ -65,6 +78,8 @@ mode_gemfile() {
     stock|removed) echo "$benchdir/Gemfile.realconfig.stock" ;;
     shirobai)      echo "$benchdir/Gemfile.realconfig.shirobai" ;;
     main)          echo "$benchdir/Gemfile.realconfig.main" ;;
+    plugins)       echo "$benchdir/Gemfile.realconfig.plugins" ;;
+    plugins-main)  echo "$benchdir/Gemfile.realconfig.plugins.main" ;;
   esac
 }
 
@@ -80,6 +95,40 @@ if modes_contains removed; then
   echo
 fi
 
+# The plugins modes require each shell only when the corpus really loads the
+# matching stock plugin. A real user adds `require: shirobai-rspec` only when
+# the project already uses rubocop-rspec; force-requiring it elsewhere loads
+# stock rubocop-rspec without its default.yml Includes, and under
+# `NewCops: enable` its non-replaced cops fire on non-spec files (seen on
+# Redmine). Resolve once from the corpus's RESOLVED config, not by grepping
+# .rubocop.yml — Discourse loads rubocop-rspec indirectly through
+# rubocop-discourse's inherit_gem chain, so a raw-file grep would miss it.
+# Department keys (Performance/... / RSpec/...) only exist in the resolved
+# config when the plugin's default.yml was merged.
+plugin_requires=""
+if modes_contains plugins || modes_contains plugins-main; then
+  echo "=== resolving plugin shells for the plugins modes ==="
+  plugin_requires="$(cd "$corpus" && BUNDLE_GEMFILE="$benchdir/Gemfile.realconfig.stock" \
+    bundle exec ruby -e '
+      require "rubocop"
+      config = RuboCop::ConfigStore.new.for_pwd
+      shells = []
+      shells << "--require shirobai-performance" if config.keys.any? { |k| k.start_with?("Performance/") }
+      shells << "--require shirobai-rspec" if config.keys.any? { |k| k.start_with?("RSpec/") }
+      puts shells.join(" ")
+    ')"
+  if [[ -n "$plugin_requires" ]]; then
+    echo "plugins modes use: $plugin_requires"
+  else
+    # Neither plugin is loaded by this corpus: the plugins modes degenerate
+    # to core-only shirobai.
+    plugin_requires="--require shirobai"
+    echo "note: corpus loads neither rubocop-performance nor rubocop-rspec;"
+    echo "      plugins modes run core-only shirobai ($plugin_requires)"
+  fi
+  echo
+fi
+
 run_rubocop() {
   local mode="$1"; shift
   local gemfile extra_args
@@ -89,6 +138,12 @@ run_rubocop() {
     removed)  extra_args="--except $except_list" ;;
     shirobai) extra_args="--require shirobai" ;;
     main)     extra_args="--require shirobai" ;;
+    # $plugin_requires holds the shells that match the corpus's resolved
+    # config (resolved once above). Each shell requires the shirobai core
+    # itself (load order is owned by the entry files), so --require shirobai
+    # is not needed when at least one shell applies. This is the same
+    # require line a real user of those plugin gems would write.
+    plugins|plugins-main) extra_args="$plugin_requires" ;;
   esac
   # Run from inside the corpus, like a user of that project would.
   # Relative Exclude patterns in default configs (rubocop core and
@@ -107,7 +162,7 @@ for mode in "${modes[@]}"; do
   line="$(BENCH_MODE="$mode" BUNDLE_GEMFILE="$(mode_gemfile "$mode")" bundle exec ruby -e '
     require "bundler"
     versions = Bundler.load.specs.each_with_object({}) { |s, h| h[s.name] = s.version.to_s }
-    want = %w[rubocop rubocop-ast parser prism rubocop-performance]
+    want = %w[rubocop rubocop-ast parser prism rubocop-performance rubocop-rspec shirobai-performance shirobai-rspec]
     parts = want.filter_map { |n| "#{n}=#{versions[n]}" if versions[n] }
     puts "provenance: mode=#{ENV["BENCH_MODE"]} #{parts.join(" ")}"
   ')"
@@ -134,7 +189,7 @@ if [ "${VERIFY:-0}" = "1" ]; then
   if modes_contains stock; then
     for mode in "${modes[@]}"; do
       case "$mode" in
-        shirobai|main)
+        shirobai|main|plugins|plugins-main)
           echo "--- offense diff: stock vs $mode ---"
           ruby "$benchdir/offense_diff.rb" "$workdir/stock.json" "$workdir/$mode.json"
           ;;
@@ -191,11 +246,20 @@ modes.each do |m|
 end
 
 sm = med["stock"]; hm = med["shirobai"]; mm = med["main"]; rm = med["removed"]
+pm = med["plugins"]; pmm = med["plugins-main"]
 branch_saving     = (sm && hm) ? sm - hm : nil
 main_saving       = (sm && mm) ? sm - mm : nil
 branch_minus_main = (branch_saving && main_saving) ? branch_saving - main_saving : nil
 upper_bound       = (sm && rm) ? sm - rm : nil
 achieved          = (branch_saving && upper_bound && upper_bound != 0) ? branch_saving / upper_bound * 100 : nil
+# Plugins rows: plugins_saving is stock - plugins; plugin_effect is the e2e
+# speed effect of the plugin replacement itself (shirobai core-only - plugins,
+# + = plugins faster). plugins_branch_minus_main mirrors branch_minus_main.
+plugins_saving          = (sm && pm) ? sm - pm : nil
+plugin_effect           = (hm && pm) ? hm - pm : nil
+# (stock - plugins) - (stock - plugins-main) reduces to plugins-main - plugins;
+# stock cancels, so this decision line prints even without a stock run.
+plugins_branch_minus_main = (pm && pmm) ? pmm - pm : nil
 pct = ->(x) { (sm && sm != 0) ? x / sm * 100 : 0.0 }
 
 puts
@@ -204,6 +268,9 @@ printf "main saving   (stock - main):         %.2fs (%.1f%%)\n", main_saving, pc
 printf "branch - main (+ = branch faster):    %.2fs (%.1f%%)\n", branch_minus_main, pct.call(branch_minus_main) if branch_minus_main
 printf "upper bound   (stock - removed):      %.2fs (%.1f%%)\n", upper_bound, pct.call(upper_bound) if upper_bound
 printf "achieved      (branch / upper bound): %.1f%%\n", achieved if achieved
+printf "plugins saving (stock - plugins):     %.2fs (%.1f%%)\n", plugins_saving, pct.call(plugins_saving) if plugins_saving
+printf "plugin effect  (shirobai - plugins):  %.2fs (%.1f%%)\n", plugin_effect, pct.call(plugin_effect) if plugin_effect
+printf "plugins: branch - main (+ = faster):  %.2fs (%.1f%%)\n", plugins_branch_minus_main, pct.call(plugins_branch_minus_main) if plugins_branch_minus_main
 
 summary = ENV["SUMMARY_FILE"].to_s
 unless summary.empty?
@@ -229,6 +296,9 @@ unless summary.empty?
     f.puts format("| branch - main (+ = branch faster) | **%.2fs (%.1f%%)** |", branch_minus_main, pct.call(branch_minus_main)) if branch_minus_main
     f.puts format("| upper bound (stock - removed) | %.2fs (%.1f%%) |", upper_bound, pct.call(upper_bound)) if upper_bound
     f.puts format("| achieved (branch / upper bound) | %.1f%% |", achieved) if achieved
+    f.puts format("| plugins saving (stock - plugins) | **%.2fs (%.1f%%)** |", plugins_saving, pct.call(plugins_saving)) if plugins_saving
+    f.puts format("| plugin effect (shirobai - plugins) | **%.2fs (%.1f%%)** |", plugin_effect, pct.call(plugin_effect)) if plugin_effect
+    f.puts format("| plugins: branch - main (+ = branch faster) | **%.2fs (%.1f%%)** |", plugins_branch_minus_main, pct.call(plugins_branch_minus_main)) if plugins_branch_minus_main
     f.puts
     prov = ENV["PROVENANCE"].to_s
     unless prov.strip.empty?
