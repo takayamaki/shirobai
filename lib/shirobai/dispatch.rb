@@ -132,7 +132,9 @@ module Shirobai
       rspec_variable_name: [2, 0].freeze,
       rspec_let_setup: [2, 1].freeze,
       rspec_variable_definition: [2, 2].freeze,
-      rspec_multiple_memoized_helpers: [2, 3].freeze
+      rspec_multiple_memoized_helpers: [2, 3].freeze,
+      rspec_repeated_description: [2, 4].freeze,
+      rspec_repeated_example: [2, 5].freeze
     }.freeze
 
     # Dormant packed-config segment per plugin origin: the enable flag (first

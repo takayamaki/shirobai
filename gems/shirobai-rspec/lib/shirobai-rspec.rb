@@ -29,6 +29,8 @@ require_relative "shirobai/cop/rspec/variable_name"
 require_relative "shirobai/cop/rspec/let_setup"
 require_relative "shirobai/cop/rspec/variable_definition"
 require_relative "shirobai/cop/rspec/multiple_memoized_helpers"
+require_relative "shirobai/cop/rspec/repeated_description"
+require_relative "shirobai/cop/rspec/repeated_example"
 
 module Shirobai
   # Glue for the shirobai-rspec plugin gem: the packed-config segment
@@ -41,7 +43,9 @@ module Shirobai
       Shirobai::Cop::RSpec::VariableName,
       Shirobai::Cop::RSpec::LetSetup,
       Shirobai::Cop::RSpec::VariableDefinition,
-      Shirobai::Cop::RSpec::MultipleMemoizedHelpers
+      Shirobai::Cop::RSpec::MultipleMemoizedHelpers,
+      Shirobai::Cop::RSpec::RepeatedDescription,
+      Shirobai::Cop::RSpec::RepeatedExample
     ].freeze
 
     # `config['RSpec']['Language']` sub-role paths in the fixed wire order of

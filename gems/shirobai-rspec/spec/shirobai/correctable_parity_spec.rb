@@ -35,6 +35,18 @@ RSpec.describe "lint-mode correctable parity with stock rubocop-rspec" do
       Shirobai::Cop::RSpec::MultipleMemoizedHelpers,
       "describe 'x' do\n#{(1..6).map { |i| "  let(:v#{i}) { #{i} }\n" }.join}end\n",
       false
+    ],
+    "RSpec/RepeatedDescription" => [
+      RuboCop::Cop::RSpec::RepeatedDescription,
+      Shirobai::Cop::RSpec::RepeatedDescription,
+      "describe 'x' do\n  it 'a' do\n    foo\n  end\n  it 'a' do\n    bar\n  end\nend\n",
+      false
+    ],
+    "RSpec/RepeatedExample" => [
+      RuboCop::Cop::RSpec::RepeatedExample,
+      Shirobai::Cop::RSpec::RepeatedExample,
+      "describe 'x' do\n  it 'a' do\n    foo\n  end\n  it 'b' do\n    foo\n  end\nend\n",
+      false
     ]
   }
 

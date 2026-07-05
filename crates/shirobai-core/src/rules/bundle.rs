@@ -873,6 +873,11 @@ pub struct BundleResult {
     pub rspec_let_setup: Vec<(usize, usize)>,
     pub rspec_variable_definition: Vec<rspec_dispatcher::VarDefOffense>,
     pub rspec_multiple_memoized_helpers: Vec<rspec_dispatcher::MmhGroup>,
+    /// `RSpec/RepeatedDescription` / `RSpec/RepeatedExample`: per example group
+    /// (>= 2 examples), the example block ranges. Identical content in both
+    /// slots (each cop owns its slot).
+    pub rspec_repeated_description: Vec<Vec<(usize, usize)>>,
+    pub rspec_repeated_example: Vec<Vec<(usize, usize)>>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -1407,6 +1412,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         rspec_let_setup: rspec_result.let_setup,
         rspec_variable_definition: rspec_result.variable_definition,
         rspec_multiple_memoized_helpers: rspec_result.multiple_memoized_helpers,
+        rspec_repeated_description: rspec_result.repeated_description,
+        rspec_repeated_example: rspec_result.repeated_example,
     }
 }
 
@@ -1676,6 +1683,36 @@ mod tests {
         // Both the describe (2 helpers) and the inner context (3 helpers) are
         // over Max 1.
         assert_eq!(bundle.rspec_multiple_memoized_helpers.len(), 2);
+        // The two Repeated* cops read the SAME group data from the shared walk
+        // and must match their standalone entry points.
+        let standalone_rd =
+            rspec_dispatcher::check_rspec_repeated_description(src.as_bytes(), rspec_cfg);
+        let standalone_re =
+            rspec_dispatcher::check_rspec_repeated_example(src.as_bytes(), rspec_cfg);
+        assert_eq!(bundle.rspec_repeated_description, standalone_rd);
+        assert_eq!(bundle.rspec_repeated_example, standalone_re);
+        assert_eq!(bundle.rspec_repeated_description, bundle.rspec_repeated_example);
+    }
+
+    /// The Repeated* group collection on the shared walk matches the
+    /// standalone entry points on a source that produces a real group.
+    #[test]
+    fn shared_walk_matches_standalone_rspec_repeated() {
+        let src = "describe 'x' do\n  it('a') { foo }\n  it('b') { foo }\nend\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let rspec_cfg = cfg.rspec.as_ref().unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        assert_eq!(
+            bundle.rspec_repeated_description,
+            rspec_dispatcher::check_rspec_repeated_description(src.as_bytes(), rspec_cfg)
+        );
+        assert_eq!(
+            bundle.rspec_repeated_example,
+            rspec_dispatcher::check_rspec_repeated_example(src.as_bytes(), rspec_cfg)
+        );
+        assert_eq!(bundle.rspec_repeated_description.len(), 1);
+        assert_eq!(bundle.rspec_repeated_description[0].len(), 2);
     }
 
     #[test]

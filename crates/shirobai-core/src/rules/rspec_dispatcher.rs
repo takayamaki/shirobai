@@ -93,6 +93,25 @@
 //! and calls `self.max = count` (`exclude_limit 'Max'`) on a real offense.
 //! The `subjects` collection mirrors `lets` but with the subject-role barrier
 //! (a `let` frame does not stop the subjects query and vice versa).
+//!
+//! `RSpec/RepeatedDescription` / `RSpec/RepeatedExample`: both gate on an
+//! `example_group?` — a PLAIN-block frame with an rspec receiver and a name in
+//! `ExampleGroups.all` (EG ONLY, not shared groups, not `include_*` blocks;
+//! probed). For every such group the walk collects its `examples`
+//! (`find_all_in_scope(node, :example?)`): a PLAIN-block call with nil receiver
+//! and a name in `Examples.all`, attributed innermost-outward through the open
+//! frames and stopping at (and including) the first `scope_change` OR `example`
+//! frame — a `let?`/`subject?` frame is NOT a barrier, so an example inside a
+//! `let` body belongs to the group (probed). Numblock/itblock groups never open
+//! a frame, so they are transparent: an example inside `context('y') { _1; ...}`
+//! belongs to the outer describe (probed: offenses at both nesting levels). Rust
+//! puts the example BLOCK node ranges of every group with >= 2 examples on the
+//! wire (document order); the wrappers relocate the parser nodes, wrap them in
+//! the stock `RuboCop::RSpec::Example`, and run stock's structural grouping
+//! (`[metadata, doc_string]` / `[doc_string, example]` for descriptions,
+//! `[metadata, implementation]` + `its` arguments for examples) VERBATIM — the
+//! equality-sensitive comparison stays on real parser nodes, so it cannot be
+//! decided bytewise here. Both cops read identical group data.
 
 use std::collections::{HashMap, HashSet};
 
@@ -174,6 +193,15 @@ pub struct RSpecResult {
     pub variable_definition: Vec<VarDefOffense>,
     /// `RSpec/MultipleMemoizedHelpers` over-threshold candidate groups.
     pub multiple_memoized_helpers: Vec<MmhGroup>,
+    /// `RSpec/RepeatedDescription`: per example group with >= 2 collected
+    /// examples, the example BLOCK node ranges in document order. The wrapper
+    /// runs stock's `[metadata, doc_string]` / `[doc_string, example]`
+    /// grouping over the located parser nodes.
+    pub repeated_description: Vec<Vec<(usize, usize)>>,
+    /// `RSpec/RepeatedExample`: the SAME group data as `repeated_description`
+    /// (each cop owns its slot; the collection is computed once). The wrapper
+    /// runs stock's `[metadata, implementation]` (+ `its` args) grouping.
+    pub repeated_example: Vec<Vec<(usize, usize)>>,
 }
 
 /// parser block-kind recovery from a prism call (see module doc).
@@ -291,6 +319,10 @@ struct Scope {
     /// `MultipleMemoizedHelpers` candidate set (a subset of `scope_change`,
     /// excluding `include_*` blocks).
     spec_group: bool,
+    /// `example_group?` — a plain-block EG (rspec receiver + `ExampleGroups.all`
+    /// name) ONLY, excluding shared groups: the `RepeatedDescription` /
+    /// `RepeatedExample` candidate set (a subset of `spec_group`).
+    example_group: bool,
     /// `example?` — halts every role collection.
     example: bool,
     /// The frame is itself a `let?` node — halts the lets collection only.
@@ -303,6 +335,9 @@ struct Scope {
     /// Collected `subject?` items (indexes into `subject_items`), document
     /// order.
     subjects: Vec<u32>,
+    /// Collected `example?` items (indexes into `example_items`), document
+    /// order.
+    examples: Vec<u32>,
 }
 
 struct StackEntry {
@@ -322,6 +357,9 @@ pub struct RSpecDispatcherRule<'c> {
     /// Collected `subject?` items' `variable_definition?` identities
     /// (indexed by `Scope::subjects`).
     subject_items: Vec<VarDef>,
+    /// Collected `example?` items' BLOCK node ranges (prism call range ==
+    /// parser block node range), indexed by `Scope::examples`.
+    example_items: Vec<(usize, usize)>,
     /// Positive while inside a top-level statement that is `spec_group?`
     /// (any_block; see module doc on `inside_example_group?`).
     top_spec_depth: u32,
@@ -341,6 +379,7 @@ pub fn build_rule<'c>(cfg: &'c RSpecConfig) -> RSpecDispatcherRule<'c> {
         scopes: Vec::new(),
         let_items: Vec::new(),
         subject_items: Vec::new(),
+        example_items: Vec::new(),
         top_spec_depth: 0,
         zero_arg_calls: HashMap::new(),
         vn_offenses: Vec::new(),
@@ -416,23 +455,33 @@ impl RSpecDispatcherRule<'_> {
             self.collect_subject(call);
         }
 
+        // `example?` collection (plain block only). Feeds
+        // `RepeatedDescription` / `RepeatedExample`.
+        let is_example =
+            recv_none && role_mask & roles::EX_ALL != 0 && kind == BlockKind::Plain;
+        if is_example {
+            self.collect_example(call);
+        }
+
         // parser-block frames: barriers + collection roots.
         if kind == BlockKind::Plain {
             let spec_group_send =
                 rspec_recv && role_mask & (roles::EG_ALL | roles::SG_ALL) != 0;
+            let example_group = rspec_recv && role_mask & roles::EG_ALL != 0;
             let include_block = recv_none && role_mask & roles::INC_ALL != 0;
-            let example = recv_none && role_mask & roles::EX_ALL != 0;
             let loc = call.location();
             self.scopes.push(Scope {
                 parent: self.scope_stack.last().copied(),
                 range: (loc.start_offset(), loc.end_offset()),
                 scope_change: spec_group_send || include_block,
                 spec_group: spec_group_send,
-                example,
+                example_group,
+                example: is_example,
                 let_barrier: is_let,
                 subject_barrier: is_subject,
                 lets: Vec::new(),
                 subjects: Vec::new(),
+                examples: Vec::new(),
             });
             self.scope_stack.push(self.scopes.len() - 1);
             entry.opened_scope = true;
@@ -550,6 +599,25 @@ impl RSpecDispatcherRule<'_> {
         }
     }
 
+    /// Collect an `example?` node for `RepeatedDescription` / `RepeatedExample`,
+    /// attributing it to every open frame from the innermost outward until (and
+    /// including) the first examples-barrier (`scope_change` / `example`). A
+    /// `let?`/`subject?` frame does NOT stop the query, so an example inside a
+    /// `let` body still belongs to the enclosing group. Called before this
+    /// example's own frame is pushed, so it attributes to ancestors only.
+    fn collect_example(&mut self, call: &CallNode<'_>) {
+        let loc = call.location();
+        let idx = u32::try_from(self.example_items.len()).expect("more examples than u32");
+        self.example_items.push((loc.start_offset(), loc.end_offset()));
+        for &s in self.scope_stack.iter().rev() {
+            self.scopes[s].examples.push(idx);
+            let sc = &self.scopes[s];
+            if sc.scope_change || sc.example {
+                break;
+            }
+        }
+    }
+
     /// Post-walk verdicts.
     pub fn finish(self) -> RSpecResult {
         let mut let_setup = Vec::new();
@@ -570,12 +638,39 @@ impl RSpecDispatcherRule<'_> {
             }
         }
         let multiple_memoized_helpers = self.multiple_memoized_helpers();
+        // Both cops read identical group data (each owns its slot); the
+        // collection is computed once and cloned.
+        let groups = self.repeated_example_groups();
         RSpecResult {
             variable_name: (self.vn_offenses, self.vn_passing),
             let_setup,
             variable_definition: self.vd_offenses,
             multiple_memoized_helpers,
+            repeated_description: groups.clone(),
+            repeated_example: groups,
         }
+    }
+
+    /// For every `example_group?` frame with >= 2 collected examples, the
+    /// example BLOCK node ranges in document order (groups emitted in document
+    /// order). No further Rust filtering: the wrapper runs stock's exact
+    /// structural grouping, so a group of 2 non-repeating examples is emitted
+    /// here and filtered there.
+    fn repeated_example_groups(&self) -> Vec<Vec<(usize, usize)>> {
+        let mut out = Vec::new();
+        for scope in &self.scopes {
+            if !scope.example_group || scope.examples.len() < 2 {
+                continue;
+            }
+            out.push(
+                scope
+                    .examples
+                    .iter()
+                    .map(|&e| self.example_items[e as usize])
+                    .collect(),
+            );
+        }
+        out
     }
 
     /// `MultipleMemoizedHelpers`: for every plain-block spec group, union the
@@ -794,6 +889,21 @@ pub fn check_rspec_variable_definition(source: &[u8], cfg: &RSpecConfig) -> Vec<
 /// Standalone entry point for `RSpec/MultipleMemoizedHelpers`.
 pub fn check_rspec_multiple_memoized_helpers(source: &[u8], cfg: &RSpecConfig) -> Vec<MmhGroup> {
     run(source, cfg).multiple_memoized_helpers
+}
+
+/// Standalone entry point for `RSpec/RepeatedDescription` (the wrapper's
+/// fallback path). Per qualifying example group, the example block ranges.
+pub fn check_rspec_repeated_description(
+    source: &[u8],
+    cfg: &RSpecConfig,
+) -> Vec<Vec<(usize, usize)>> {
+    run(source, cfg).repeated_description
+}
+
+/// Standalone entry point for `RSpec/RepeatedExample` (same group data as
+/// `check_rspec_repeated_description`).
+pub fn check_rspec_repeated_example(source: &[u8], cfg: &RSpecConfig) -> Vec<Vec<(usize, usize)>> {
+    run(source, cfg).repeated_example
 }
 
 fn run(source: &[u8], cfg: &RSpecConfig) -> RSpecResult {
@@ -1245,5 +1355,98 @@ mod tests {
         // Distributed lets in sibling contexts do not accumulate.
         let distributed = "describe 'x' do\n  context 'a' do\n    let(:a) { 1 }\n  end\n  context 'b' do\n    let(:b) { 1 }\n  end\nend\n";
         assert_eq!(mmh(distributed, 1, true), Vec::new());
+    }
+
+    // --- RepeatedDescription / RepeatedExample example collection ---
+
+    /// Per emitted group, the source slices of the collected example blocks.
+    /// Both cops read the same data, so one helper covers both.
+    fn re(src: &str) -> Vec<Vec<String>> {
+        let groups = check_rspec_repeated_description(src.as_bytes(), &cfg());
+        // The other slot must carry identical content.
+        assert_eq!(
+            groups,
+            check_rspec_repeated_example(src.as_bytes(), &cfg())
+        );
+        groups
+            .into_iter()
+            .map(|g| {
+                g.into_iter()
+                    .map(|(s, e)| String::from_utf8_lossy(&src.as_bytes()[s..e]).into_owned())
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn re_collects_the_examples_of_an_example_group() {
+        let src = "describe 'x' do\n  it('a') { foo }\n  it('b') { bar }\nend\n";
+        assert_eq!(re(src), vec![vec!["it('a') { foo }", "it('b') { bar }"]]);
+    }
+
+    #[test]
+    fn re_gates_on_example_groups_only() {
+        // A shared group is NOT an example group -> no emission even with two
+        // examples (probed B1). include_* blocks likewise (probed B8).
+        assert!(re("shared_examples 'x' do\n  it('a') { foo }\n  it('b') { bar }\nend\n").is_empty());
+        assert!(
+            re("include_examples 'x' do\n  it('a') { foo }\n  it('b') { bar }\nend\n").is_empty()
+        );
+    }
+
+    #[test]
+    fn re_needs_at_least_two_examples() {
+        assert!(re("describe 'x' do\n  it('a') { foo }\nend\n").is_empty());
+    }
+
+    #[test]
+    fn re_numblock_group_is_transparent_and_never_a_group() {
+        // The numblock context opens no frame: its examples belong to the
+        // outer describe, and the numblock itself is never emitted (probed).
+        let src = "describe 'x' do\n  it('a') { foo }\n  context('y') {\n    _1\n    it('b') { bar }\n  }\nend\n";
+        assert_eq!(re(src), vec![vec!["it('a') { foo }", "it('b') { bar }"]]);
+    }
+
+    #[test]
+    fn re_a_numblock_example_is_not_an_example() {
+        // `it('a') { _1 }` is a numblock, not a plain-block example (probed).
+        assert!(re("describe 'x' do\n  it('a') { _1 }\n  it('b') { _1 }\nend\n").is_empty());
+    }
+
+    #[test]
+    fn re_nested_example_halts_collection() {
+        // An example inside an example belongs to the inner example's frame,
+        // never the group (probed B4).
+        let src = "describe 'x' do\n  it('a') do\n    it('b') { foo }\n  end\nend\n";
+        assert!(re(src).is_empty());
+    }
+
+    #[test]
+    fn re_example_inside_a_let_body_belongs_to_the_group() {
+        // A `let` frame is not an examples barrier, so the example in its body
+        // pairs with the sibling (probed B2).
+        let src = "describe 'x' do\n  it('a') { foo }\n  let(:y) do\n    it('b') { bar }\n  end\nend\n";
+        assert_eq!(re(src), vec![vec!["it('a') { foo }", "it('b') { bar }"]]);
+    }
+
+    #[test]
+    fn re_nested_group_examples_belong_to_the_inner_group() {
+        // A context is a scope change: its example belongs to the context, not
+        // the describe. Each group then has one example -> no emission.
+        let src = "describe 'x' do\n  it('a') { foo }\n  context 'y' do\n    it('b') { bar }\n  end\nend\n";
+        assert!(re(src).is_empty());
+        // Two examples in the inner context -> the context is emitted.
+        let src2 = "describe 'x' do\n  it('a') { foo }\n  context 'y' do\n    it('b') { bar }\n    it('c') { baz }\n  end\nend\n";
+        assert_eq!(re(src2), vec![vec!["it('b') { bar }", "it('c') { baz }"]]);
+    }
+
+    #[test]
+    fn re_transparent_dsl_block_passes_examples_to_the_group() {
+        // `%i[...].each do ... end` is a plain block but not a scope change, so
+        // its examples belong to the describe (vendor: repeated in iterator).
+        let src = "describe 'x' do\n  %i[a b].each do |t|\n    it(\"d#{t}\") { foo }\n    it(\"d#{t}\") { bar }\n  end\nend\n";
+        let groups = re(src);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].len(), 2);
     }
 }

@@ -1400,6 +1400,42 @@ fn check_rspec_multiple_memoized_helpers(
     ))
 }
 
+/// Standalone entry point for `RSpec/RepeatedDescription` (per-cop fallback).
+/// Per example group (>= 2 examples), `[[block_start, block_end], ...]` in
+/// document order; the wrapper locates the parser nodes and runs stock's
+/// grouping.
+fn check_rspec_repeated_description(
+    ruby: &Ruby,
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Result<Vec<Vec<(usize, usize)>>, Error> {
+    let Some(cfg) = rspec_segment_config(ruby, nums, lists)? else {
+        return Ok(Vec::new());
+    };
+    Ok(shirobai_core::rules::rspec_dispatcher::check_rspec_repeated_description(
+        bytes(&source),
+        &cfg,
+    ))
+}
+
+/// Standalone entry point for `RSpec/RepeatedExample` (same group data as
+/// `check_rspec_repeated_description`).
+fn check_rspec_repeated_example(
+    ruby: &Ruby,
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Result<Vec<Vec<(usize, usize)>>, Error> {
+    let Some(cfg) = rspec_segment_config(ruby, nums, lists)? else {
+        return Ok(Vec::new());
+    };
+    Ok(shirobai_core::rules::rspec_dispatcher::check_rspec_repeated_example(
+        bytes(&source),
+        &cfg,
+    ))
+}
+
 thread_local! {
     /// Bundle configs registered by `register_bundle_config` (token = index,
     /// no eviction: a lint run registers one entry per distinct `Config`
@@ -1491,7 +1527,8 @@ fn register_bundle_config(
 /// registered its packed segment AND the per-file gate kept it awake):
 ///
 /// 0 rspec_variable_name / 1 rspec_let_setup /
-/// 2 rspec_variable_definition / 3 rspec_multiple_memoized_helpers
+/// 2 rspec_variable_definition / 3 rspec_multiple_memoized_helpers /
+/// 4 rspec_repeated_description / 5 rspec_repeated_example
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1643,13 +1680,15 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         perf.push(map_perf_start_with(r.perf_start_with))?;
         perf.push(map_perf_times_map(r.perf_times_map))?;
         // RSpec origin (result[2]).
-        let rspec = ruby.ary_new_capa(4);
+        let rspec = ruby.ary_new_capa(6);
         rspec.push(map_rspec_variable_name(r.rspec_variable_name))?;
         rspec.push(r.rspec_let_setup)?;
         rspec.push(map_rspec_variable_definition(r.rspec_variable_definition))?;
         rspec.push(map_rspec_multiple_memoized_helpers(
             r.rspec_multiple_memoized_helpers,
         ))?;
+        rspec.push(r.rspec_repeated_description)?;
+        rspec.push(r.rspec_repeated_example)?;
         // The nested result is N_ORIGINS + 1 arrays per file (the outer
         // one plus one per origin), nothing per cop.
         let out = ruby.ary_new_capa(3);
@@ -3736,6 +3775,14 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_rspec_multiple_memoized_helpers",
         function!(check_rspec_multiple_memoized_helpers, 3),
+    )?;
+    module.define_module_function(
+        "check_rspec_repeated_description",
+        function!(check_rspec_repeated_description, 3),
+    )?;
+    module.define_module_function(
+        "check_rspec_repeated_example",
+        function!(check_rspec_repeated_example, 3),
     )?;
     module.define_module_function(
         "check_stabby_lambda_parentheses",

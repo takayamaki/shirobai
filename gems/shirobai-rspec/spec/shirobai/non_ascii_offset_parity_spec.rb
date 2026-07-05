@@ -37,6 +37,16 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rspec" do
       RuboCop::Cop::RSpec::MultipleMemoizedHelpers,
       Shirobai::Cop::RSpec::MultipleMemoizedHelpers,
       "#{prefix}describe 'x' do\n#{(1..6).map { |i| "  let(:変数#{i}) { #{i} }\n" }.join}end\n"
+    ],
+    "RSpec/RepeatedDescription" => [
+      RuboCop::Cop::RSpec::RepeatedDescription,
+      Shirobai::Cop::RSpec::RepeatedDescription,
+      "#{prefix}describe 'x' do\n  it '説明' do\n    foo\n  end\n  it '説明' do\n    bar\n  end\nend\n"
+    ],
+    "RSpec/RepeatedExample" => [
+      RuboCop::Cop::RSpec::RepeatedExample,
+      Shirobai::Cop::RSpec::RepeatedExample,
+      "#{prefix}describe 'x' do\n  it 'あ' do\n    expect(値).to be(基準)\n  end\n  it 'い' do\n    expect(値).to be(基準)\n  end\nend\n"
     ]
   }
 

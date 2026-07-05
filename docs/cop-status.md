@@ -167,10 +167,12 @@ if they ever disagree, `Dispatch.offenses_for` returns nil and the
 wrapper falls back to its standalone entry point (speed bug, never an
 offense bug).
 
-### Implemented (4 cops)
+### Implemented (6 cops)
 
 - `RSpec/LetSetup`
 - `RSpec/MultipleMemoizedHelpers`
+- `RSpec/RepeatedDescription`
+- `RSpec/RepeatedExample`
 - `RSpec/VariableDefinition`
 - `RSpec/VariableName`
 
@@ -182,7 +184,9 @@ matcher asymmetries, `LetSetup`'s zero-argument-use search, sym/str
 non-shadowing, Unicode style properties, AllowedPatterns +
 detected-style bookkeeping, `VariableDefinition`'s style-filtered
 autocorrect, `MultipleMemoizedHelpers`' cross-frame helper union with
-structural dedup of interpolated names), lint-mode correctable parity,
+structural dedup of interpolated names, `RepeatedDescription` /
+`RepeatedExample`'s EG-only example collection with structural
+signature grouping on real parser nodes), lint-mode correctable parity,
 non-ASCII offset parity, and the rspec parity oracle
 (`benches/parity_diff_rspec.sh` with its synthetic-fixture self-test) at
 zero diff.
@@ -195,7 +199,25 @@ ancestor frames (adding a per-role `subjects` collection alongside
 `lets`), counts the bytewise-decidable identities in Rust and hands the
 rare `dsym`/`dstr` names to the wrapper, which relocates them through the
 shared `Shirobai::RSpec::NodeLocator` and dedups them with parser-gem
-structural equality. One probed parser divergence is handled centrally:
+structural equality.
+
+`RSpec/RepeatedDescription` and `RSpec/RepeatedExample` share ONE more
+`RSpecDispatcherRule` collection: for every `example_group?` frame (EG
+only — not shared groups, not `include_*` blocks) the walk collects its
+`examples` with the exact stock scope semantics (a plain-block example,
+attributed innermost-outward and halting at the first `scope_change` or
+`example` frame — a `let`/`subject` body is transparent, a numblock group
+opens no frame), and puts the example BLOCK node ranges of every group
+with >= 2 examples on the wire (both cops read identical data). Byte-level
+signature comparison is impossible: stock groups examples by parser-node
+STRUCTURAL equality (`it 'a'` == `it "a"`; a heredoc body != a same-text
+string body), so the wrappers relocate the nodes via the shared
+`NodeLocator`, wrap them in the stock `RuboCop::RSpec::Example`, and run
+stock's grouping (`[metadata, doc_string]` / `[doc_string, example]` for
+descriptions, `[metadata, implementation]` + `its` args for examples)
+VERBATIM — parity by construction for the equality-sensitive part.
+
+One probed parser divergence is handled centrally:
 an empty percent-string (`%()`) is a `str` node in prism 1.9 but a `dstr`
 in the parser gem, so `string_is_parser_dstr` treats it as `dstr`
 (matching every stock `{str dstr}` matcher).
