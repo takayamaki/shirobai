@@ -36,9 +36,12 @@ RSpec.describe Shirobai::Cop::Layout::DefEndAlignment do
   ]
 
   # A config with `EnforcedStyleAlignWith` set to `style` on top of defaults.
+  # `Config#to_h` returns the default configuration's INTERNAL hash, so it must
+  # be duped before the key is reassigned — mutating it in place leaks the style
+  # into every later spec that reads the (identity-memoized) default.
   def config_for(style)
     default = RuboCop::ConfigLoader.default_configuration
-    hash = default.to_h
+    hash = default.to_h.dup
     hash["Layout/DefEndAlignment"] =
       hash["Layout/DefEndAlignment"].merge("EnforcedStyleAlignWith" => style)
     RuboCop::Config.new(hash, default.loaded_path)
