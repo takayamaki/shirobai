@@ -310,6 +310,23 @@ fn map_array_alignment(
         .collect()
 }
 
+/// `[[start, end, message, [[op_kind, start, end, text], ...]], ...]`.
+#[allow(clippy::type_complexity)]
+fn map_arguments_forwarding(
+    v: Vec<shirobai_core::rules::arguments_forwarding::AfOffense>,
+) -> Vec<(usize, usize, u8, Vec<(u8, usize, usize, String)>)> {
+    v.into_iter()
+        .map(|o| {
+            let ops = o
+                .ops
+                .into_iter()
+                .map(|op| (op.kind, op.start, op.end, op.text))
+                .collect();
+            (o.start, o.end, o.message, ops)
+        })
+        .collect()
+}
+
 #[allow(clippy::type_complexity)]
 fn map_first_argument_indentation(
     v: Vec<shirobai_core::rules::first_argument_indentation::FirstArgIndentOffense>,
@@ -575,6 +592,16 @@ fn map_void(
                 o.remove_end,
             )
         })
+        .collect()
+}
+
+/// `Style/FileNull`: `[[start, end, message], ...]`. The Ruby wrapper offends
+/// on `[start, end)` and replaces the same range with `File::NULL`.
+fn map_file_null(
+    v: Vec<shirobai_core::rules::file_null::FileNullOffense>,
+) -> Vec<(usize, usize, String)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.message))
         .collect()
 }
 
@@ -1113,6 +1140,38 @@ fn map_colon_method_call(
     v.into_iter().map(|o| (o.dot_start, o.dot_end)).collect()
 }
 
+/// `Style/Semicolon` path (a): `[[offset, last_token], ...]` — the byte offset
+/// of each flagged `;` and whether it is the "last token of the line" pattern
+/// (the wrapper then reads the preceding token for endless-range / value-omission
+/// autocorrect).
+fn map_semicolon(
+    v: Vec<shirobai_core::rules::semicolon::PathAOffense>,
+) -> Vec<(usize, bool)> {
+    v.into_iter().map(|o| (o.offset, o.last_token)).collect()
+}
+
+/// `Style/RedundantFreeze`: `[[off_start, off_end, dot_start, dot_end,
+/// selector_start, selector_end], ...]`. `[off_start, off_end)` is the offense
+/// highlight (the send node); the wrapper removes `[dot_start, dot_end)` and
+/// `[selector_start, selector_end)` to reproduce
+/// `corrector.remove(node.loc.dot)` + `corrector.remove(node.loc.selector)`.
+fn map_redundant_freeze(
+    v: Vec<shirobai_core::rules::redundant_freeze::RedundantFreezeOffense>,
+) -> Vec<(usize, usize, usize, usize, usize, usize)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.off_start,
+                o.off_end,
+                o.dot_start,
+                o.dot_end,
+                o.selector_start,
+                o.selector_end,
+            )
+        })
+        .collect()
+}
+
 /// `Layout/BlockAlignment`: `[[end_start, end_end, message, align_column], ...]`
 /// — `[end_start, end_end)` is the closing-token range (`end` / `}`);
 /// `message`/`align_column` carry the offense detail (only misaligned blocks
@@ -1515,7 +1574,9 @@ fn register_bundle_config(
 /// 82 space_inside_parens / 83 space_inside_reference_brackets /
 /// 84 space_before_first_arg /
 /// 85 duplicate_magic_comment / 86 duplicate_methods /
-/// 87 array_alignment
+/// 87 array_alignment / 88 file_null / 89 semicolon /
+/// 90 redundant_freeze / 91 frozen_string_literal_comment /
+/// 92 arguments_forwarding
 ///
 /// Performance slots (origin 1; every slot empty unless the plugin gem
 /// registered its packed segment):
@@ -1540,7 +1601,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
         // Core origin (result[0]).
-        let ary = ruby.ary_new_capa(88);
+        let ary = ruby.ary_new_capa(93);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -1672,6 +1733,11 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(r.duplicate_magic_comment)?;
         ary.push(map_duplicate_methods(r.duplicate_methods))?;
         ary.push(map_array_alignment(r.array_alignment))?;
+        ary.push(map_file_null(r.file_null))?;
+        ary.push(map_semicolon(r.semicolon))?;
+        ary.push(map_redundant_freeze(r.redundant_freeze))?;
+        ary.push(r.frozen_string_literal_comment)?;
+        ary.push(map_arguments_forwarding(r.arguments_forwarding))?;
         // Performance origin (result[1]).
         let perf = ruby.ary_new_capa(5);
         perf.push(map_perf_detect(r.perf_detect))?;
@@ -2209,6 +2275,37 @@ fn check_array_alignment(
     ))
 }
 
+/// Ruby entry point for `Style/ArgumentsForwarding`. Takes the source, the
+/// target ruby (`* 10` rounded), the two boolean flags, the explicit-block
+/// flag, and the three redundant-name lists.
+/// Returns `[[start, end, message, [[op_kind, start, end, text], ...]], ...]`.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn check_arguments_forwarding(
+    source: RString,
+    target_ruby: i64,
+    allow_only_rest: bool,
+    use_anonymous: bool,
+    explicit_block: bool,
+    redundant_rest: Vec<String>,
+    redundant_kwrest: Vec<String>,
+    redundant_block: Vec<String>,
+) -> Vec<(usize, usize, u8, Vec<(u8, usize, usize, String)>)> {
+    map_arguments_forwarding(
+        shirobai_core::rules::arguments_forwarding::check_arguments_forwarding(
+            bytes(&source),
+            &shirobai_core::rules::arguments_forwarding::Config {
+                target_ruby,
+                allow_only_rest_arguments: allow_only_rest,
+                use_anonymous_forwarding: use_anonymous,
+                explicit_block_name: explicit_block,
+                redundant_rest,
+                redundant_kwrest,
+                redundant_block,
+            },
+        ),
+    )
+}
+
 /// Ruby entry point for `Layout/FirstArgumentIndentation`. Takes the source,
 /// the enforced style (0=special_for_inner_method_call_in_parentheses,
 /// 1=consistent, 2=consistent_relative_to_receiver,
@@ -2523,6 +2620,12 @@ fn check_hash_each_methods(
     )
 }
 
+/// Ruby entry point for `Style/FileNull`. Config-less.
+/// Returns `[[start, end, message], ...]`.
+fn check_file_null(source: RString) -> Vec<(usize, usize, String)> {
+    map_file_null(shirobai_core::rules::file_null::check_file_null(bytes(&source)))
+}
+
 /// Ruby entry point for `Style/HashTransformKeys`. Config-less.
 /// Returns one entry per offense: `[[start, end, message, edits], ...]`
 /// where `edits` is `[[edit_start, edit_end, replacement], ...]`.
@@ -2794,6 +2897,20 @@ fn map_duplicate_methods(
 /// (encoding bucket first, then frozen-string-literal).
 fn check_duplicate_magic_comment(source: RString) -> Vec<usize> {
     shirobai_core::rules::duplicate_magic_comment::check_duplicate_magic_comment(bytes(&source))
+}
+
+/// Ruby entry point for `Style/FrozenStringLiteralComment` (standalone
+/// fallback). `style`: 0 always, 1 never, 2 always_true. Returns at most one
+/// packed offense `(kind, start, fin, line, insert_line, is_emacs)`; byte
+/// offsets are converted by the wrapper.
+fn check_frozen_string_literal_comment(
+    source: RString,
+    style: u8,
+) -> Vec<(i64, i64, i64, i64, i64, i64)> {
+    shirobai_core::rules::frozen_string_literal_comment::check_frozen_string_literal_comment(
+        bytes(&source),
+        style,
+    )
 }
 
 /// Ruby entry point for `Lint/DuplicateMethods` (standalone fallback).
@@ -3271,6 +3388,30 @@ fn check_colon_method_call(source: RString) -> Vec<(usize, usize)> {
     )
 }
 
+/// Ruby entry point for `Style/Semicolon` detection path (a). Config-less.
+/// Returns `[[offset, last_token], ...]`.
+fn check_semicolon(source: RString) -> Vec<(usize, bool)> {
+    map_semicolon(shirobai_core::rules::semicolon::check_semicolon(bytes(&source)))
+}
+
+/// Ruby entry point for `Style/RedundantFreeze`. `target_ruby_30_plus` is
+/// `AllCops/TargetRubyVersion >= 3.0`; `sfbd` is whether
+/// `AllCops/StringLiteralsFrozenByDefault` is literally `true`. Returns the
+/// `map_redundant_freeze` tuple shape.
+fn check_redundant_freeze(
+    source: RString,
+    target_ruby_30_plus: bool,
+    sfbd: bool,
+) -> Vec<(usize, usize, usize, usize, usize, usize)> {
+    map_redundant_freeze(
+        shirobai_core::rules::redundant_freeze::check_redundant_freeze(
+            bytes(&source),
+            target_ruby_30_plus,
+            sfbd,
+        ),
+    )
+}
+
 /// Ruby entry point for `Performance/Detect` (shirobai-performance).
 /// `preferred` is `Style/CollectionMethods` `PreferredMethods['detect']`
 /// resolved on the Ruby side (`detect` when unset). Returns the
@@ -3584,6 +3725,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         "check_array_alignment",
         function!(check_array_alignment, 3),
     )?;
+    module.define_module_function(
+        "check_arguments_forwarding",
+        function!(check_arguments_forwarding, 8),
+    )?;
     module.define_module_function("check_redundant_self", function!(check_redundant_self, 2))?;
     module.define_module_function(
         "check_predicate_prefix",
@@ -3624,6 +3769,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_duplicate_magic_comment",
         function!(check_duplicate_magic_comment, 1),
+    )?;
+    module.define_module_function(
+        "check_frozen_string_literal_comment",
+        function!(check_frozen_string_literal_comment, 2),
     )?;
     module.define_module_function(
         "check_duplicate_methods",
@@ -3743,8 +3892,16 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         function!(check_assignment_indentation, 2),
     )?;
     module.define_module_function(
+        "check_semicolon",
+        function!(check_semicolon, 1),
+    )?;
+    module.define_module_function(
         "check_colon_method_call",
         function!(check_colon_method_call, 1),
+    )?;
+    module.define_module_function(
+        "check_redundant_freeze",
+        function!(check_redundant_freeze, 3),
     )?;
     module.define_module_function("check_perf_detect", function!(check_perf_detect, 2))?;
     module.define_module_function(
@@ -3831,6 +3988,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_hash_each_methods",
         function!(check_hash_each_methods, 2),
+    )?;
+    module.define_module_function(
+        "check_file_null",
+        function!(check_file_null, 1),
     )?;
     module.define_module_function("check_hash_syntax", function!(check_hash_syntax, 2))?;
     module.define_module_function(

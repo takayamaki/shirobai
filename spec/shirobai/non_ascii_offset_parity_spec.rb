@@ -415,6 +415,17 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     "Lint/DuplicateMethods" =>
       "class A\n  def foo; end\n  def foo; end\nend\n" \
       "def B.zzz\n  \"あいう\"\nend\ndef B.zzz\n  \"あいう\"\nend\n",
+    # The `;` offense range sits after a multibyte string on the same line, so
+    # the byte offset Rust reports must be mapped to a char offset (path (a)
+    # last-token remove corrector).
+    "Style/Semicolon" =>
+      "puts \"日本語\";\n",
+    # The offense highlight spans a parenthesized comparison whose operands are
+    # multibyte, and the `.freeze` dot + selector removal ranges sit after the
+    # multibyte receiver, so every offset field is exercised past a multibyte
+    # character.
+    "Style/RedundantFreeze" =>
+      "(あ > い).freeze\n",
   }
 
   cases.each do |cop_name, body|
@@ -442,6 +453,29 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     end
   end
 
+  # `Style/FileNull` is `Enabled: pending` (and `SafeAutoCorrect: false`), so
+  # the Team-based runs above would drop it on BOTH sides under the default
+  # config (vacuously green); force-enable it. The offending string node
+  # range IS the `File::NULL` replace range, so converting that one byte
+  # offset covers both the offense caret and the autocorrect after the
+  # multibyte comment.
+  describe "Style/FileNull (pending cop, force-enabled)" do
+    it "matches stock offenses and autocorrect output after a multibyte comment" do
+      enabled_config = RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new(
+          { "Style/FileNull" => { "Enabled" => true } }, "(test)"
+        ),
+        "(test)"
+      )
+      offenses = expect_parity(
+        "Style/FileNull",
+        "#{prefix}x = '/dev/null'\ny = 'nul'\n",
+        enabled_config
+      )
+      expect(offenses).not_to be_empty, "fixture produced no stock offense; fix the source"
+    end
+  end
+
   # `Lint/DuplicateMagicComment` is `Enabled: pending`, so the Team-based
   # runs above would drop it on BOTH sides under the default config
   # (vacuously green); force-enable it. The wrapper passes line numbers
@@ -458,6 +492,67 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
       offenses = expect_parity(
         "Lint/DuplicateMagicComment",
         "#{prefix}# encoding: utf-8\n# encoding: utf-8\nx = \"あ\"\n",
+        enabled_config
+      )
+      expect(offenses).not_to be_empty, "fixture produced no stock offense; fix the source"
+    end
+  end
+
+  # `Style/FrozenStringLiteralComment` default style is `always`, whose offense
+  # is a zero-length range at byte 0 (no conversion needed). The `never` and
+  # `always_true` styles instead anchor the offense at the frozen-string-literal
+  # COMMENT, whose byte range sits after the multibyte prefix comment, so the
+  # byte→char conversion runs on the offense highlight AND the removal /
+  # replacement corrector range.
+  describe "Style/FrozenStringLiteralComment (never, force-configured)" do
+    it "matches stock offenses and autocorrect output after a multibyte comment" do
+      never_config = RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new(
+          { "Style/FrozenStringLiteralComment" => { "EnforcedStyle" => "never" } }, "(test)"
+        ),
+        "(test)"
+      )
+      offenses = expect_parity(
+        "Style/FrozenStringLiteralComment",
+        "#{prefix}# frozen_string_literal: true\nx = \"あ\"\n",
+        never_config
+      )
+      expect(offenses).not_to be_empty, "fixture produced no stock offense; fix the source"
+    end
+  end
+
+  describe "Style/FrozenStringLiteralComment (always_true, force-configured)" do
+    it "matches stock offenses and autocorrect output after a multibyte comment" do
+      always_true_config = RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new(
+          { "Style/FrozenStringLiteralComment" => { "EnforcedStyle" => "always_true" } }, "(test)"
+        ),
+        "(test)"
+      )
+      offenses = expect_parity(
+        "Style/FrozenStringLiteralComment",
+        "#{prefix}# frozen_string_literal: false\nx = \"あ\"\n",
+        always_true_config
+      )
+      expect(offenses).not_to be_empty, "fixture produced no stock offense; fix the source"
+    end
+  end
+
+  # `Style/ArgumentsForwarding` is `Enabled: pending`, so force-enable it. The
+  # forward-all `...` collapse fires at the default target 2.7; the def and
+  # call arg ranges plus the `replace(..., '...')` corrector ranges all sit
+  # after the multibyte prefix and must be byte-to-char converted.
+  describe "Style/ArgumentsForwarding (pending cop, force-enabled)" do
+    it "matches stock offenses and autocorrect output after a multibyte comment" do
+      enabled_config = RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new(
+          { "Style/ArgumentsForwarding" => { "Enabled" => true } }, "(test)"
+        ),
+        "(test)"
+      )
+      offenses = expect_parity(
+        "Style/ArgumentsForwarding",
+        "#{prefix}def foo(*args, **kwargs, &block)\n  bar(*args, **kwargs, &block)\nend\n",
         enabled_config
       )
       expect(offenses).not_to be_empty, "fixture produced no stock offense; fix the source"
