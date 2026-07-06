@@ -301,6 +301,69 @@ factory_bot / forem / discourse / mastodon (corpus positives:
 `MetadataStyle` and `PendingWithoutReason` fire; `SortMetadata` once; the
 other three have no corpus positives and rest on the synthetic specs).
 
+## Plugin cops: shirobai-rspec (R2: empty-line family)
+
+The first rspec cops with autocorrect. All five wrap rubocop-rspec's
+shared `EmptyLineSeparation` mixin: they resolve a "concept" node (an
+example / example group / final let / hook / subject) and flag it when it
+has a following sibling in a `:begin` sequence and the line after its
+`final_end_location` (heredoc-aware) is not blank; autocorrect inserts one
+`"\n"`.
+
+### Implemented (5 cops)
+
+- `RSpec/EmptyLineAfterExample`
+- `RSpec/EmptyLineAfterExampleGroup`
+- `RSpec/EmptyLineAfterFinalLet`
+- `RSpec/EmptyLineAfterHook`
+- `RSpec/EmptyLineAfterSubject`
+
+A SECOND shared rspec rule (`rspec_empty_line.rs`) runs alongside the R1
+`RSpecDispatcherRule` on the same walk and produces all five cops' results
+at once. It owns the parts that need the AST — concept classification
+(reusing the R1 `RSpecConfig` role table), `last_child?` (the parser
+`:begin` recovery), the one-liner allowances (`AllowConsecutiveOneLiners`
+for Example / Hook), and the heredoc-aware `final_end_location.line` — and
+emits, per cop, `[final_end_line, method_name]` for each surviving
+candidate. The Ruby side (a shared `EmptyLineSeparationSupport` module)
+replays the REST of the stock mixin — the trailing-comment walk, the
+enabled-`# rubocop:enable` directive tracking, the blank-line
+suppression, the offense location and the `"\n"` autocorrect — over the
+same `ProcessedSource`, so those parts are byte-for-byte stock by
+construction.
+
+Probed quirks pinned as differential edge specs (offenses AND `-A`
+byte-equal): a plain `begin a; b end` is `:kwbegin` (not `begin_type?`, no
+offense) while `begin ... rescue`/`ensure` bodies and rescue/ensure clause
+bodies ARE `:begin`; a non-directive trailing comment keeps the offense on
+the node end line (blank before the comment) while an enabled directive
+moves it onto the directive line (blank after); a comment (or a
+trailing-comment code line) followed by a blank line suppresses the
+offense; a heredoc spilling below a one-line brace concept fixes the
+offense on the heredoc terminator line; `on_block`-only cops (all but Hook)
+ignore numbered/`it`-param blocks while Hook fires on every block form; the
+Subject `inside_example_group?` gate needs the outermost top-level
+statement to be a spec group; and the final-let is the LAST `let?` (block
+form or `let(:x, &blk)` send form) among the group body's direct children.
+
+The `:begin` recovery is the subtle part: prism folds `begin`/`rescue`/
+`ensure` and single-vs-multi bodies differently from parser, and the
+dispatcher visits several statement sequences (the program root, a
+BeginNode's main/ensure/else bodies, a RescueNode's body) FRAMELESS via
+`visit_statements_node` directly, so the walk's current frame for a concept
+in them is the enclosing Program / Begin / Rescue node, resolved shape by
+shape.
+
+Whether a second-layer trait would remove duplication between the five
+cops' logic: the arena/post-walk pattern stayed sufficient WITHIN this
+cluster (one rule, five result vectors, no per-cop copy). The only real
+duplication is CROSS-cluster: this rule re-derives the `top_spec_depth`
+top-level-spec-group gate and the block-kind / `rspec?` receiver helpers
+that `RSpecDispatcherRule` already computes. A shared "rspec walk context"
+trait exposing role classification + `top_spec_depth` + block-kind to
+multiple rspec rules would remove that ~30-line overlap; the arena pattern
+itself did not need abstracting.
+
 ## Attempted but reverted
 
 These cops were implemented to full drop-in compatibility but reverted because

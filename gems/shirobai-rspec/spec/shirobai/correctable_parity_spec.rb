@@ -91,6 +91,36 @@ RSpec.describe "lint-mode correctable parity with stock rubocop-rspec" do
       Shirobai::Cop::RSpec::SortMetadata,
       "describe 'x', :b, :a do\n  it 'y' do\n  end\nend\n",
       true
+    ],
+    "RSpec/EmptyLineAfterExample" => [
+      RuboCop::Cop::RSpec::EmptyLineAfterExample,
+      Shirobai::Cop::RSpec::EmptyLineAfterExample,
+      "describe 'x' do\n  it 'a' do\n    foo\n  end\n  it 'b' do\n    bar\n  end\nend\n",
+      true
+    ],
+    "RSpec/EmptyLineAfterExampleGroup" => [
+      RuboCop::Cop::RSpec::EmptyLineAfterExampleGroup,
+      Shirobai::Cop::RSpec::EmptyLineAfterExampleGroup,
+      "describe 'x' do\n  context 'a' do\n    foo\n  end\n  context 'b' do\n    bar\n  end\nend\n",
+      true
+    ],
+    "RSpec/EmptyLineAfterFinalLet" => [
+      RuboCop::Cop::RSpec::EmptyLineAfterFinalLet,
+      Shirobai::Cop::RSpec::EmptyLineAfterFinalLet,
+      "describe 'x' do\n  let(:a) { 1 }\n  let(:b) { 2 }\n  it 'x' do\n    y\n  end\nend\n",
+      true
+    ],
+    "RSpec/EmptyLineAfterHook" => [
+      RuboCop::Cop::RSpec::EmptyLineAfterHook,
+      Shirobai::Cop::RSpec::EmptyLineAfterHook,
+      "describe 'x' do\n  before do\n    a\n  end\n  it 'x' do\n    y\n  end\nend\n",
+      true
+    ],
+    "RSpec/EmptyLineAfterSubject" => [
+      RuboCop::Cop::RSpec::EmptyLineAfterSubject,
+      Shirobai::Cop::RSpec::EmptyLineAfterSubject,
+      "describe 'x' do\n  subject(:obj) { described_class }\n  let(:foo) { bar }\nend\n",
+      true
     ]
   }
 

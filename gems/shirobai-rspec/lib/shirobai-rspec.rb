@@ -27,6 +27,7 @@ require_relative "shirobai/rspec/version"
 require_relative "shirobai/rspec/node_locator"
 require_relative "shirobai/cop/rspec/metadata_support"
 require_relative "shirobai/cop/rspec/send_candidate_support"
+require_relative "shirobai/cop/rspec/empty_line_separation_support"
 require_relative "shirobai/cop/rspec/variable_name"
 require_relative "shirobai/cop/rspec/let_setup"
 require_relative "shirobai/cop/rspec/variable_definition"
@@ -40,6 +41,11 @@ require_relative "shirobai/cop/rspec/metadata_style"
 require_relative "shirobai/cop/rspec/duplicated_metadata"
 require_relative "shirobai/cop/rspec/empty_metadata"
 require_relative "shirobai/cop/rspec/sort_metadata"
+require_relative "shirobai/cop/rspec/empty_line_after_example"
+require_relative "shirobai/cop/rspec/empty_line_after_example_group"
+require_relative "shirobai/cop/rspec/empty_line_after_final_let"
+require_relative "shirobai/cop/rspec/empty_line_after_hook"
+require_relative "shirobai/cop/rspec/empty_line_after_subject"
 
 module Shirobai
   # Glue for the shirobai-rspec plugin gem: the packed-config segment
@@ -61,7 +67,12 @@ module Shirobai
       Shirobai::Cop::RSpec::MetadataStyle,
       Shirobai::Cop::RSpec::DuplicatedMetadata,
       Shirobai::Cop::RSpec::EmptyMetadata,
-      Shirobai::Cop::RSpec::SortMetadata
+      Shirobai::Cop::RSpec::SortMetadata,
+      Shirobai::Cop::RSpec::EmptyLineAfterExample,
+      Shirobai::Cop::RSpec::EmptyLineAfterExampleGroup,
+      Shirobai::Cop::RSpec::EmptyLineAfterFinalLet,
+      Shirobai::Cop::RSpec::EmptyLineAfterHook,
+      Shirobai::Cop::RSpec::EmptyLineAfterSubject
     ].freeze
 
     # `config['RSpec']['Language']` sub-role paths in the fixed wire order of
@@ -127,7 +138,9 @@ module Shirobai
         vd = Shirobai::Cop::RSpec::VariableDefinition.bundle_args(config)
         mmh = Shirobai::Cop::RSpec::MultipleMemoizedHelpers.bundle_args(config)
         ns = Shirobai::Cop::RSpec::NamedSubject.bundle_args(config)
-        [[1, vn[0], vd[0], mmh[0], mmh[1], ns[0], ns[1]], lists]
+        ex = Shirobai::Cop::RSpec::EmptyLineAfterExample.bundle_args(config)
+        hook = Shirobai::Cop::RSpec::EmptyLineAfterHook.bundle_args(config)
+        [[1, vn[0], vd[0], mmh[0], mmh[1], ns[0], ns[1], ex[0], hook[0]], lists]
       end
 
       # One wrapper instance per class per config, only for gate use.

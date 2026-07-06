@@ -62,6 +62,16 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rspec" do
       RuboCop::Cop::RSpec::Focus,
       Shirobai::Cop::RSpec::Focus,
       "#{prefix}describe 'テスト', :focus do\n  it 'あ' do\n  end\nend\n"
+    ],
+    "RSpec/EmptyLineAfterExample" => [
+      RuboCop::Cop::RSpec::EmptyLineAfterExample,
+      Shirobai::Cop::RSpec::EmptyLineAfterExample,
+      "#{prefix}describe 'x' do\n  it 'あ' do\n    値\n  end\n  it 'い' do\n    基準\n  end\nend\n"
+    ],
+    "RSpec/EmptyLineAfterSubject" => [
+      RuboCop::Cop::RSpec::EmptyLineAfterSubject,
+      Shirobai::Cop::RSpec::EmptyLineAfterSubject,
+      "#{prefix}describe 'x' do\n  subject(:主体) { 値 }\n  let(:補助) { 他 }\nend\n"
     ]
   }
 
@@ -127,5 +137,20 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rspec" do
       corrected = expect_autocorrect_parity(stock, shirobai, source, config)
       expect(corrected).to include(expected)
     end
+  end
+
+  it "autocorrects RSpec/EmptyLineAfterFinalLet with a multibyte offending line" do
+    config = RuboCop::ConfigLoader.default_configuration
+    # The offending line itself carries multibyte content, so the offense range
+    # (trimmed line content) and the `"\n"` insertion point must land on the
+    # correct CHARACTER offset, not the byte offset.
+    source = "#{prefix}describe 'x' do\n  let(:変数) { 値 }\n  let(:別名) { 他 }\n  it 'あ' do\n    x\n  end\nend\n"
+    corrected = expect_autocorrect_parity(
+      RuboCop::Cop::RSpec::EmptyLineAfterFinalLet,
+      Shirobai::Cop::RSpec::EmptyLineAfterFinalLet,
+      source,
+      config
+    )
+    expect(corrected).to include("let(:別名) { 他 }\n\n  it")
   end
 end

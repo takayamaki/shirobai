@@ -1564,6 +1564,89 @@ fn check_rspec_pending_without_reason(
     ))
 }
 
+/// `[[final_end_line, method_name], ...]` for one empty-line-family cop.
+fn map_rspec_empty_line(
+    v: Vec<shirobai_core::rules::rspec_empty_line::EmptyLineOffense>,
+) -> Vec<(usize, String)> {
+    v.into_iter()
+        .map(|o| (o.final_end_line, o.method_name))
+        .collect()
+}
+
+/// Standalone entry points for the empty-line family (the wrappers' fallback
+/// path). Each runs the single shared rule and keeps one cop's slice.
+fn check_rspec_empty_line_after_example(
+    ruby: &Ruby,
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Result<Vec<(usize, String)>, Error> {
+    let Some(cfg) = rspec_segment_config(ruby, nums, lists)? else {
+        return Ok(Vec::new());
+    };
+    Ok(map_rspec_empty_line(
+        shirobai_core::rules::rspec_empty_line::check_rspec_empty_line(bytes(&source), &cfg).example,
+    ))
+}
+
+fn check_rspec_empty_line_after_example_group(
+    ruby: &Ruby,
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Result<Vec<(usize, String)>, Error> {
+    let Some(cfg) = rspec_segment_config(ruby, nums, lists)? else {
+        return Ok(Vec::new());
+    };
+    Ok(map_rspec_empty_line(
+        shirobai_core::rules::rspec_empty_line::check_rspec_empty_line(bytes(&source), &cfg)
+            .example_group,
+    ))
+}
+
+fn check_rspec_empty_line_after_final_let(
+    ruby: &Ruby,
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Result<Vec<(usize, String)>, Error> {
+    let Some(cfg) = rspec_segment_config(ruby, nums, lists)? else {
+        return Ok(Vec::new());
+    };
+    Ok(map_rspec_empty_line(
+        shirobai_core::rules::rspec_empty_line::check_rspec_empty_line(bytes(&source), &cfg)
+            .final_let,
+    ))
+}
+
+fn check_rspec_empty_line_after_hook(
+    ruby: &Ruby,
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Result<Vec<(usize, String)>, Error> {
+    let Some(cfg) = rspec_segment_config(ruby, nums, lists)? else {
+        return Ok(Vec::new());
+    };
+    Ok(map_rspec_empty_line(
+        shirobai_core::rules::rspec_empty_line::check_rspec_empty_line(bytes(&source), &cfg).hook,
+    ))
+}
+
+fn check_rspec_empty_line_after_subject(
+    ruby: &Ruby,
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Result<Vec<(usize, String)>, Error> {
+    let Some(cfg) = rspec_segment_config(ruby, nums, lists)? else {
+        return Ok(Vec::new());
+    };
+    Ok(map_rspec_empty_line(
+        shirobai_core::rules::rspec_empty_line::check_rspec_empty_line(bytes(&source), &cfg).subject,
+    ))
+}
+
 thread_local! {
     /// Bundle configs registered by `register_bundle_config` (token = index,
     /// no eviction: a lint run registers one entry per distinct `Config`
@@ -1663,7 +1746,10 @@ fn register_bundle_config(
 /// 7 rspec_focus / 8 rspec_pending_without_reason /
 /// 9 rspec_metadata_style / 10 rspec_duplicated_metadata /
 /// 11 rspec_empty_metadata / 12 rspec_sort_metadata
-/// (slots 9-12 carry the same shared metadata-anchor list)
+/// (slots 9-12 carry the same shared metadata-anchor list) /
+/// 13 rspec_empty_line_after_example / 14 rspec_empty_line_after_example_group /
+/// 15 rspec_empty_line_after_final_let / 16 rspec_empty_line_after_hook /
+/// 17 rspec_empty_line_after_subject
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1820,7 +1906,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         perf.push(map_perf_start_with(r.perf_start_with))?;
         perf.push(map_perf_times_map(r.perf_times_map))?;
         // RSpec origin (result[2]).
-        let rspec = ruby.ary_new_capa(13);
+        let rspec = ruby.ary_new_capa(18);
         rspec.push(map_rspec_variable_name(r.rspec_variable_name))?;
         rspec.push(r.rspec_let_setup)?;
         rspec.push(map_rspec_variable_definition(r.rspec_variable_definition))?;
@@ -1838,6 +1924,12 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         rspec.push(r.rspec_metadata_anchors.clone())?;
         rspec.push(r.rspec_metadata_anchors.clone())?;
         rspec.push(r.rspec_metadata_anchors)?;
+        // R2 empty-line family (slots 13-17).
+        rspec.push(map_rspec_empty_line(r.rspec_empty_line_after_example))?;
+        rspec.push(map_rspec_empty_line(r.rspec_empty_line_after_example_group))?;
+        rspec.push(map_rspec_empty_line(r.rspec_empty_line_after_final_let))?;
+        rspec.push(map_rspec_empty_line(r.rspec_empty_line_after_hook))?;
+        rspec.push(map_rspec_empty_line(r.rspec_empty_line_after_subject))?;
         // The nested result is N_ORIGINS + 1 arrays per file (the outer
         // one plus one per origin), nothing per cop.
         let out = ruby.ary_new_capa(3);
@@ -4036,6 +4128,26 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_rspec_pending_without_reason",
         function!(check_rspec_pending_without_reason, 3),
+    )?;
+    module.define_module_function(
+        "check_rspec_empty_line_after_example",
+        function!(check_rspec_empty_line_after_example, 3),
+    )?;
+    module.define_module_function(
+        "check_rspec_empty_line_after_example_group",
+        function!(check_rspec_empty_line_after_example_group, 3),
+    )?;
+    module.define_module_function(
+        "check_rspec_empty_line_after_final_let",
+        function!(check_rspec_empty_line_after_final_let, 3),
+    )?;
+    module.define_module_function(
+        "check_rspec_empty_line_after_hook",
+        function!(check_rspec_empty_line_after_hook, 3),
+    )?;
+    module.define_module_function(
+        "check_rspec_empty_line_after_subject",
+        function!(check_rspec_empty_line_after_subject, 3),
     )?;
     module.define_module_function(
         "check_stabby_lambda_parentheses",

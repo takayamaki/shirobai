@@ -57,8 +57,9 @@ pub const HOOK_SCOPES: [&[u8]; 5] = [b"each", b"example", b"context", b"all", b"
 
 /// Length of the rspec segment's `nums`:
 /// `[rspec_enabled, variable_name_style, variable_definition_style, mmh_max,
-/// mmh_allow_subject, named_subject_style, named_subject_ignore_shared]`.
-pub const SEGMENT_NUMS_LEN: usize = 7;
+/// mmh_allow_subject, named_subject_style, named_subject_ignore_shared,
+/// example_allow_consecutive_one_liners, hook_allow_consecutive_one_liners]`.
+pub const SEGMENT_NUMS_LEN: usize = 9;
 
 /// Packed configuration for the shirobai-rspec plugin: the role table plus
 /// per-cop settings.
@@ -82,6 +83,12 @@ pub struct RSpecConfig {
     /// `RSpec/NamedSubject` `IgnoreSharedExamples` (true = implicit subjects
     /// inside shared example groups are not reported).
     pub named_subject_ignore_shared: bool,
+    /// `RSpec/EmptyLineAfterExample` `AllowConsecutiveOneLiners` (true =
+    /// adjacent single-line examples are not flagged).
+    pub example_allow_consecutive: bool,
+    /// `RSpec/EmptyLineAfterHook` `AllowConsecutiveOneLiners` (true = adjacent
+    /// single-line hooks are not flagged).
+    pub hook_allow_consecutive: bool,
 }
 
 impl RSpecConfig {
@@ -105,6 +112,8 @@ impl RSpecConfig {
         cfg.mmh_allow_subject = nums[4] != 0;
         cfg.named_subject_style = nums[5] as u8;
         cfg.named_subject_ignore_shared = nums[6] != 0;
+        cfg.example_allow_consecutive = nums[7] != 0;
+        cfg.hook_allow_consecutive = nums[8] != 0;
         Ok(Some(cfg))
     }
 
@@ -134,6 +143,8 @@ impl RSpecConfig {
             mmh_allow_subject: true,
             named_subject_style: 0,
             named_subject_ignore_shared: true,
+            example_allow_consecutive: true,
+            hook_allow_consecutive: true,
         })
     }
 

@@ -148,7 +148,14 @@ module Shirobai
       rspec_metadata_style: [2, 9].freeze,
       rspec_duplicated_metadata: [2, 10].freeze,
       rspec_empty_metadata: [2, 11].freeze,
-      rspec_sort_metadata: [2, 12].freeze
+      rspec_sort_metadata: [2, 12].freeze,
+      # R2 empty-line family (rspec origin slots 13-17), all filled by the
+      # single RSpecEmptyLineRule.
+      rspec_empty_line_after_example: [2, 13].freeze,
+      rspec_empty_line_after_example_group: [2, 14].freeze,
+      rspec_empty_line_after_final_let: [2, 15].freeze,
+      rspec_empty_line_after_hook: [2, 16].freeze,
+      rspec_empty_line_after_subject: [2, 17].freeze
     }.freeze
 
     # Dormant packed-config segment per plugin origin: the enable flag (first
@@ -161,9 +168,11 @@ module Shirobai
       performance: [[0, 0, 0].freeze, [[].freeze].freeze].freeze,
       # rspec: enable flag + per-cop nums (VariableName style,
       # VariableDefinition style, MMH Max, MMH AllowSubject, NamedSubject
-      # style, NamedSubject IgnoreSharedExamples), then the sixteen
+      # style, NamedSubject IgnoreSharedExamples, EmptyLineAfterExample
+      # AllowConsecutiveOneLiners, EmptyLineAfterHook
+      # AllowConsecutiveOneLiners), then the sixteen
       # RSpec/Language role lists.
-      rspec: [[0, 0, 0, 0, 0, 0, 0].freeze, ([[].freeze] * 16).freeze].freeze
+      rspec: [[0, 0, 0, 0, 0, 0, 0, 0, 0].freeze, ([[].freeze] * 16).freeze].freeze
     }.freeze
 
     class << self

@@ -37,7 +37,8 @@ use super::{
     perf_detect, perf_end_with, perf_start_with, perf_string_include, perf_times_map,
     predicate_prefix, punctuation_spacing, redundant_freeze, redundant_self,
     redundant_self_assignment,
-    require_parentheses, rspec_dispatcher, rspec_language, safe_navigation_chain, self_assignment,
+    require_parentheses, rspec_dispatcher, rspec_empty_line, rspec_language, safe_navigation_chain,
+    self_assignment,
     semicolon,
     space_around_keyword, space_around_method_call_operator, space_before_block_braces,
     space_before_first_arg,
@@ -238,6 +239,8 @@ pub fn check_multiline_bundle(
 /// |  4  | rspec_mmh_allow_subject (`RSpec/MultipleMemoizedHelpers` `AllowSubject`: 0 / 1) |
 /// |  5  | rspec_named_subject_style (`RSpec/NamedSubject` `EnforcedStyle`: 0 always / 1 named_only) |
 /// |  6  | rspec_named_subject_ignore_shared (`RSpec/NamedSubject` `IgnoreSharedExamples`: 0 / 1) |
+/// |  7  | rspec_example_allow_consecutive (`RSpec/EmptyLineAfterExample` `AllowConsecutiveOneLiners`: 0 / 1) |
+/// |  8  | rspec_hook_allow_consecutive (`RSpec/EmptyLineAfterHook` `AllowConsecutiveOneLiners`: 0 / 1) |
 ///
 /// RSpec segment `lists[2]`: the sixteen `RSpec/Language` role lists in
 /// [`rspec_language`] wire order —
@@ -257,7 +260,7 @@ pub fn check_multiline_bundle(
 /// The values come from the resolved `config['RSpec']['Language']` hash
 /// (RuboCop's config layer has already applied `inherit_mode: merge`); the
 /// packer flattens, it never merges. The dormant rspec segment is
-/// `[0, 0, 0, 0, 0, 0, 0]` plus sixteen empty lists.
+/// `[0, 0, 0, 0, 0, 0, 0, 0, 0]` plus sixteen empty lists.
 ///
 /// `Layout/IndentationWidth`'s `allowed_lines` and `prior_ranges` are fixed to
 /// empty in the bundle: the non-empty cases (configured `AllowedPatterns`,
@@ -936,6 +939,14 @@ pub struct BundleResult {
     /// `SortMetadata`). Each cop reads the same list from its own slot; the ext
     /// clones it into each slot.
     pub rspec_metadata_anchors: Vec<(usize, usize)>,
+    /// The RSpec empty-line family (`RSpec/EmptyLineAfter{Example,
+    /// ExampleGroup,FinalLet,Hook,Subject}`), all from the single
+    /// `RSpecEmptyLineRule`; empty when `BundleConfig::rspec` is `None`.
+    pub rspec_empty_line_after_example: Vec<rspec_empty_line::EmptyLineOffense>,
+    pub rspec_empty_line_after_example_group: Vec<rspec_empty_line::EmptyLineOffense>,
+    pub rspec_empty_line_after_final_let: Vec<rspec_empty_line::EmptyLineOffense>,
+    pub rspec_empty_line_after_hook: Vec<rspec_empty_line::EmptyLineOffense>,
+    pub rspec_empty_line_after_subject: Vec<rspec_empty_line::EmptyLineOffense>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -1163,6 +1174,10 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // segments (core-only installs, or non-spec files under the per-file
     // gate) pay nothing here.
     let mut rspec_rule = cfg.rspec.as_ref().map(rspec_dispatcher::build_rule);
+    let mut rspec_el_rule = cfg
+        .rspec
+        .as_ref()
+        .map(|c| rspec_empty_line::build_rule(source, c));
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -1266,8 +1281,12 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     if let Some(rule) = rspec_rule.as_mut() {
         rules.push(rule);
     }
+    if let Some(rule) = rspec_el_rule.as_mut() {
+        rules.push(rule);
+    }
     super::dispatch::run(source, &mut rules);
     let rspec_result = rspec_rule.map(|r| r.finish()).unwrap_or_default();
+    let rspec_el_result = rspec_el_rule.map(|r| r.finish()).unwrap_or_default();
 
     let multiline_operation = op_rule.offenses;
     let multiline_method_call = mc_rule.offenses;
@@ -1502,6 +1521,11 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         rspec_focus: rspec_result.focus,
         rspec_pending_without_reason: rspec_result.pending_without_reason,
         rspec_metadata_anchors: rspec_result.metadata_anchors,
+        rspec_empty_line_after_example: rspec_el_result.example,
+        rspec_empty_line_after_example_group: rspec_el_result.example_group,
+        rspec_empty_line_after_final_let: rspec_el_result.final_let,
+        rspec_empty_line_after_hook: rspec_el_result.hook,
+        rspec_empty_line_after_subject: rspec_el_result.subject,
     }
 }
 
@@ -1655,9 +1679,10 @@ mod tests {
         let perf_lists = vec![vec!["find".to_string()]];
         // RSpec segment (origin 2): enabled, with the rubocop-rspec 3.10.2
         // default Language lists, snake_case VariableName style, symbols
-        // VariableDefinition style, MMH Max 5 / AllowSubject true, and
-        // NamedSubject always style / IgnoreSharedExamples true.
-        let rspec_nums = vec![1, 0, 0, 5, 1, 0, 1];
+        // VariableDefinition style, MMH Max 5 / AllowSubject true,
+        // NamedSubject always style / IgnoreSharedExamples true, and both
+        // empty-line AllowConsecutiveOneLiners true.
+        let rspec_nums = vec![1, 0, 0, 5, 1, 0, 1, 1, 1];
         let rspec_lists = rspec_language::tests::default_role_lists();
         (
             vec![nums, perf_nums, rspec_nums],
@@ -1848,6 +1873,19 @@ mod tests {
         // `let!(:unused) { create(:widget) }` is a hook-free helper; the
         // describe/context blocks with a description arg are metadata anchors.
         assert!(!bundle.rspec_metadata_anchors.is_empty());
+        // The empty-line family on the shared walk equals its standalone rule.
+        let standalone_el = rspec_empty_line::check_rspec_empty_line(src.as_bytes(), rspec_cfg);
+        assert_eq!(bundle.rspec_empty_line_after_example, standalone_el.example);
+        assert_eq!(
+            bundle.rspec_empty_line_after_example_group,
+            standalone_el.example_group
+        );
+        assert_eq!(bundle.rspec_empty_line_after_final_let, standalone_el.final_let);
+        assert_eq!(bundle.rspec_empty_line_after_hook, standalone_el.hook);
+        assert_eq!(bundle.rspec_empty_line_after_subject, standalone_el.subject);
+        // The fixture's subject precedes a context with no blank line inside a
+        // group => one EmptyLineAfterSubject candidate.
+        assert_eq!(bundle.rspec_empty_line_after_subject.len(), 1);
     }
 
     /// `RSpec/NamedSubject` on the shared walk matches the standalone entry
