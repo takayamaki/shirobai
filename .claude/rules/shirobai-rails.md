@@ -1,0 +1,1 @@
+../../gems/shirobai-rails/README.md

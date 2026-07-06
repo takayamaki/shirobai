@@ -35,7 +35,8 @@ use super::{
     parentheses_as_grouped_expression,
     percent_literal_delimiters,
     perf_detect, perf_end_with, perf_start_with, perf_string_include, perf_times_map,
-    predicate_prefix, punctuation_spacing, redundant_freeze, redundant_self,
+    predicate_prefix, punctuation_spacing, rails_app, rails_config, redundant_freeze,
+    redundant_self,
     redundant_self_assignment,
     require_parentheses, rspec_dispatcher, rspec_empty_line, rspec_language, safe_navigation_chain,
     self_assignment,
@@ -262,6 +263,17 @@ pub fn check_multiline_bundle(
 /// packer flattens, it never merges. The dormant rspec segment is
 /// `[0, 0, 0, 0, 0, 0, 0, 0, 0]` plus sixteen empty lists.
 ///
+/// Rails segment `nums[3]` (the shirobai-rails plugin origin):
+///
+/// | idx | field |
+/// |-----|-------|
+/// |  0  | rails_enabled — the plugin gem's wake-up flag. `0` (core-only install) keeps every Rails rule out of the walk and its slots empty. Unlike rspec this flag is NOT per-file: the Application* cops run on every Ruby file, so the origin is always awake once the plugin gem is loaded |
+///
+/// Rails segment `lists[3]`: none. The four Application* cops
+/// (`Rails/ApplicationRecord` / `...Controller` / `...Mailer` / `...Job`) are
+/// fixed class-inheritance checks with no behavioral config, so the dormant
+/// rails segment is `[0]` plus zero lists.
+///
 /// `Layout/IndentationWidth`'s `allowed_lines` and `prior_ranges` are fixed to
 /// empty in the bundle: the non-empty cases (configured `AllowedPatterns`,
 /// autocorrect re-passes) take the per-cop fallback path on the Ruby side.
@@ -382,6 +394,11 @@ pub struct BundleConfig {
     /// for non-spec files). `None` keeps the RSpec rules out of the shared
     /// walk entirely.
     pub rspec: Option<rspec_language::RSpecConfig>,
+    /// `Some` only when the shirobai-rails plugin gem is loaded
+    /// (`rails_enabled` num is 1). The rails origin has no per-file gate, so
+    /// once loaded this is `Some` for every file. `None` keeps the Rails
+    /// rules out of the shared walk entirely.
+    pub rails: Option<rails_config::RailsConfig>,
 }
 
 /// Packed configuration for the shirobai-performance plugin cops.
@@ -403,13 +420,14 @@ pub struct PerformanceConfig {
 
 /// Fixed origin order of the packed config and of the `check_all` result
 /// slots: outer index 0 is the core batch, 1 the shirobai-performance
-/// plugin, 2 the shirobai-rspec plugin. Mirrors `Shirobai::Dispatch::ORIGINS`
-/// on the Ruby side; adding a plugin origin means one entry there and one
-/// constant (plus lengths) here.
+/// plugin, 2 the shirobai-rspec plugin, 3 the shirobai-rails plugin. Mirrors
+/// `Shirobai::Dispatch::ORIGINS` on the Ruby side; adding a plugin origin
+/// means one entry there and one constant (plus lengths) here.
 pub const ORIGIN_CORE: usize = 0;
 pub const ORIGIN_PERFORMANCE: usize = 1;
 pub const ORIGIN_RSPEC: usize = 2;
-pub const N_ORIGINS: usize = 3;
+pub const ORIGIN_RAILS: usize = 3;
+pub const N_ORIGINS: usize = 4;
 
 const CORE_NUMS_LEN: usize = 121;
 const CORE_LISTS_LEN: usize = 28;
@@ -453,10 +471,12 @@ impl BundleConfig {
             ));
         }
         let rspec_nums = &packed_nums[ORIGIN_RSPEC];
+        let rails_nums = &packed_nums[ORIGIN_RAILS];
         let mut segments = packed_lists.into_iter();
         let core_lists = segments.next().expect("length checked above");
         let perf_lists = segments.next().expect("length checked above");
         let rspec_lists = segments.next().expect("length checked above");
+        let rails_lists = segments.next().expect("length checked above");
         if core_lists.len() != CORE_LISTS_LEN {
             return Err(format!(
                 "core segment expects {CORE_LISTS_LEN} lists, got {}",
@@ -744,6 +764,9 @@ impl BundleConfig {
             // The shirobai-rspec origin, read from its own segment (the
             // per-cop nums and list lengths are checked there).
             rspec: rspec_language::RSpecConfig::from_segment(rspec_nums, &rspec_lists)?,
+            // The shirobai-rails origin, read from its own segment (nums and
+            // list lengths are checked there).
+            rails: rails_config::RailsConfig::from_segment(rails_nums, &rails_lists)?,
         })
     }
 }
@@ -947,6 +970,13 @@ pub struct BundleResult {
     pub rspec_empty_line_after_final_let: Vec<rspec_empty_line::EmptyLineOffense>,
     pub rspec_empty_line_after_hook: Vec<rspec_empty_line::EmptyLineOffense>,
     pub rspec_empty_line_after_subject: Vec<rspec_empty_line::EmptyLineOffense>,
+    /// shirobai-rails plugin slots (origin 3). All computed by the single
+    /// `RailsAppVisitor`; empty when `BundleConfig::rails` is `None`. Each is
+    /// the `(start, end)` offense-highlight-and-autocorrect-replace range.
+    pub rails_application_record: Vec<(usize, usize)>,
+    pub rails_application_controller: Vec<(usize, usize)>,
+    pub rails_application_mailer: Vec<(usize, usize)>,
+    pub rails_application_job: Vec<(usize, usize)>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -1178,6 +1208,11 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         .rspec
         .as_ref()
         .map(|c| rspec_empty_line::build_rule(source, c));
+    // shirobai-rails: ONE rule feeds all four Application* cops (see
+    // rails_app.rs). Built only when the segment is awake (the plugin gem is
+    // loaded); a core-only install pays nothing here. No per-file gate — the
+    // rails origin is always awake once loaded.
+    let mut rails_rule = cfg.rails.as_ref().map(|_| rails_app::build_rule());
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -1284,9 +1319,13 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     if let Some(rule) = rspec_el_rule.as_mut() {
         rules.push(rule);
     }
+    if let Some(rule) = rails_rule.as_mut() {
+        rules.push(rule);
+    }
     super::dispatch::run(source, &mut rules);
     let rspec_result = rspec_rule.map(|r| r.finish()).unwrap_or_default();
     let rspec_el_result = rspec_el_rule.map(|r| r.finish()).unwrap_or_default();
+    let rails_result = rails_rule.map(|r| r.finish()).unwrap_or_default();
 
     let multiline_operation = op_rule.offenses;
     let multiline_method_call = mc_rule.offenses;
@@ -1526,6 +1565,10 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         rspec_empty_line_after_final_let: rspec_el_result.final_let,
         rspec_empty_line_after_hook: rspec_el_result.hook,
         rspec_empty_line_after_subject: rspec_el_result.subject,
+        rails_application_record: rails_result.application_record,
+        rails_application_controller: rails_result.application_controller,
+        rails_application_mailer: rails_result.application_mailer,
+        rails_application_job: rails_result.application_job,
     }
 }
 
@@ -1684,9 +1727,13 @@ mod tests {
         // empty-line AllowConsecutiveOneLiners true.
         let rspec_nums = vec![1, 0, 0, 5, 1, 0, 1, 1, 1];
         let rspec_lists = rspec_language::tests::default_role_lists();
+        // Rails segment (origin 3): enabled, no lists (the four Application*
+        // cops carry no behavioral config).
+        let rails_nums = vec![1];
+        let rails_lists: Vec<Vec<String>> = vec![];
         (
-            vec![nums, perf_nums, rspec_nums],
-            vec![lists, perf_lists, rspec_lists],
+            vec![nums, perf_nums, rspec_nums, rails_nums],
+            vec![lists, perf_lists, rspec_lists, rails_lists],
         )
     }
 
@@ -1775,6 +1822,48 @@ mod tests {
         assert_eq!(perf.detect_preferred_method, "find");
         assert!(perf.end_with_safe_multiline);
         assert!(perf.start_with_safe_multiline);
+    }
+
+    #[test]
+    fn from_packed_reads_rails_segment() {
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        assert!(cfg.rails.is_some(), "enabled in default_packed");
+    }
+
+    #[test]
+    fn dormant_rails_segment_disables_the_origin() {
+        let (mut nums, mut lists) = default_packed();
+        // Flip the rails wake-up flag off (core-only install).
+        nums[ORIGIN_RAILS] = vec![0];
+        lists[ORIGIN_RAILS] = vec![];
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        assert!(cfg.rails.is_none());
+        // No rails offenses computed when the origin is dormant.
+        let src = "class Foo < ActiveRecord::Base\nend\n";
+        let r = check_all_bundle(src.as_bytes(), &cfg);
+        assert!(r.rails_application_record.is_empty());
+    }
+
+    #[test]
+    fn rails_bundle_matches_standalone() {
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let src = "class Foo < ActiveRecord::Base\nend\n\
+                   Baz = Class.new(ActionController::Base)\n\
+                   class M < ActionMailer::Base\nend\n\
+                   class J < ActiveJob::Base\nend\n";
+        let bundled = check_all_bundle(src.as_bytes(), &cfg);
+        let alone = rails_app::check_rails_app(src.as_bytes());
+        assert_eq!(bundled.rails_application_record, alone.application_record);
+        assert_eq!(
+            bundled.rails_application_controller,
+            alone.application_controller
+        );
+        assert_eq!(bundled.rails_application_mailer, alone.application_mailer);
+        assert_eq!(bundled.rails_application_job, alone.application_job);
+        assert_eq!(bundled.rails_application_record.len(), 1);
+        assert_eq!(bundled.rails_application_controller.len(), 1);
     }
 
     #[test]

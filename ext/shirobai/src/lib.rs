@@ -1750,6 +1750,12 @@ fn register_bundle_config(
 /// 13 rspec_empty_line_after_example / 14 rspec_empty_line_after_example_group /
 /// 15 rspec_empty_line_after_final_let / 16 rspec_empty_line_after_hook /
 /// 17 rspec_empty_line_after_subject
+///
+/// Rails slots (origin 3; every slot empty unless the plugin gem registered
+/// its packed segment — the rails origin has no per-file gate):
+///
+/// 0 rails_application_record / 1 rails_application_controller /
+/// 2 rails_application_mailer / 3 rails_application_job
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1930,12 +1936,20 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         rspec.push(map_rspec_empty_line(r.rspec_empty_line_after_final_let))?;
         rspec.push(map_rspec_empty_line(r.rspec_empty_line_after_hook))?;
         rspec.push(map_rspec_empty_line(r.rspec_empty_line_after_subject))?;
+        // Rails origin (result[3]). All four slots are `[[start, end], ...]`
+        // byte ranges (offense highlight and autocorrect replace target).
+        let rails = ruby.ary_new_capa(4);
+        rails.push(r.rails_application_record)?;
+        rails.push(r.rails_application_controller)?;
+        rails.push(r.rails_application_mailer)?;
+        rails.push(r.rails_application_job)?;
         // The nested result is N_ORIGINS + 1 arrays per file (the outer
         // one plus one per origin), nothing per cop.
-        let out = ruby.ary_new_capa(3);
+        let out = ruby.ary_new_capa(4);
         out.push(ary)?;
         out.push(perf)?;
         out.push(rspec)?;
+        out.push(rails)?;
         Ok(out)
     })
 }
@@ -3647,6 +3661,28 @@ fn check_perf_times_map(
     ))
 }
 
+/// Ruby entry points for the four Application* cops (shirobai-rails), the
+/// per-cop fallback path for non-bundle-eligible files. Config-less; each
+/// returns `[[start, end], ...]` — the offense highlight and autocorrect
+/// replace range (the message and superclass replacement are wrapper
+/// constants). The rail origin has no per-file gate, so these mirror the
+/// bundle's slots exactly.
+fn check_rails_application_record(source: RString) -> Vec<(usize, usize)> {
+    shirobai_core::rules::rails_app::check_rails_app(bytes(&source)).application_record
+}
+
+fn check_rails_application_controller(source: RString) -> Vec<(usize, usize)> {
+    shirobai_core::rules::rails_app::check_rails_app(bytes(&source)).application_controller
+}
+
+fn check_rails_application_mailer(source: RString) -> Vec<(usize, usize)> {
+    shirobai_core::rules::rails_app::check_rails_app(bytes(&source)).application_mailer
+}
+
+fn check_rails_application_job(source: RString) -> Vec<(usize, usize)> {
+    shirobai_core::rules::rails_app::check_rails_app(bytes(&source)).application_job
+}
+
 /// Ruby entry point for `Lint/UnreachableCode`. Config-less. Returns
 /// `[[start, end], ...]` — the byte range of each unreachable expression.
 fn check_unreachable_code(source: RString) -> Vec<(usize, usize)> {
@@ -4091,6 +4127,22 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_perf_times_map",
         function!(check_perf_times_map, 1),
+    )?;
+    module.define_module_function(
+        "check_rails_application_record",
+        function!(check_rails_application_record, 1),
+    )?;
+    module.define_module_function(
+        "check_rails_application_controller",
+        function!(check_rails_application_controller, 1),
+    )?;
+    module.define_module_function(
+        "check_rails_application_mailer",
+        function!(check_rails_application_mailer, 1),
+    )?;
+    module.define_module_function(
+        "check_rails_application_job",
+        function!(check_rails_application_job, 1),
     )?;
     module.define_module_function(
         "check_rspec_variable_name",

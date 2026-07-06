@@ -364,6 +364,75 @@ trait exposing role classification + `top_spec_depth` + block-kind to
 multiple rspec rules would remove that ~30-line overlap; the arena pattern
 itself did not need abstracting.
 
+## Plugin cops: shirobai-rails (Phase 0 + Application* cluster)
+
+`gems/shirobai-rails` replaces rubocop-rails (pinned `= 2.35.5`) cops with
+Rust rules in the shared shirobai-core extension (no second native build).
+This batch stands up the plumbing for a NEW plugin origin (origin 3) plus a
+proof cluster of four trivial cops.
+
+The rails origin differs from the rspec origin in one structural way: it has
+**no per-file gate**. rubocop-rails cops run on every Ruby file (no
+department Include like RSpec's `**/*_spec.rb`), so the origin is always
+awake once the gem is loaded. The design constraint that follows: candidate
+classification on the Rust side must stay cheap (table-driven const-name
+checks riding the existing shared walk, no extra AST pass), because there is
+no gate to hide the cost behind. `RailsAppVisitor` subscribes only
+`ENTER_CLASS_MOD | ENTER_CALL | ENTER_WRITE` and needs no ancestor stack:
+the `Class.new(Base)` exemption is pre-marked from the `SUPERCLASS =`
+constant-write side, so no `LEAVE` bookkeeping is paid.
+
+### Implemented (4 cops)
+
+- `Rails/ApplicationRecord`
+- `Rails/ApplicationController`
+- `Rails/ApplicationMailer`
+- `Rails/ApplicationJob`
+
+All four share stock's `EnforceSuperclass` machinery: `class X <
+RECV::Base` (unless `X`'s terminal name is the enforced superclass) and
+`Class.new(RECV::Base)` (unless it is the direct value of a `SUPERCLASS =`
+constant write, covering the `do..end` / `{}` block forms). Offense and
+autocorrect range = the base const node (leading `::` included), replaced
+with the bare superclass name.
+
+`TargetRailsVersion`: Record / Mailer / Job carry stock's
+`requires_gem('railties', '>= 5.0')` gate, replicated on the wrappers via
+`extend RuboCop::Cop::TargetRailsVersion` + `minimum_target_rails_version
+5.0` (the wrappers do not subclass the stock cop, so the gem-requirement
+metadata does not come for free). Controller has no gate. The
+`Rails/ApplicationRecord` `Exclude: db/**/*.rb` is resolved by RuboCop
+through each wrapper's badge, exactly as for the stock cop.
+
+Verified with the same bar as core cops: vendor specs from the
+`vendor/rubocop-rails` submodule (`= 2.35.5`, plus its `:rails*` version
+shared contexts), differential edge-case specs for every probed quirk
+(cbase base, scope-insensitive name exemption, the Class.new exemption /
+block / cbase-casgn / namespaced-casgn / cross-cop cases, arity gating,
+CRLF fallback), lint-mode correctable parity, non-ASCII offset parity, and
+the plugin parity oracle (`benches/parity_diff_rails.sh`) at zero diff on
+Mastodon / Redmine / Discourse (rails-dense) and fluentd (no-rails
+non-interference).
+
+The rails oracle deviates from the rspec oracle in one place:
+`DisabledByDefault: true` (rspec uses `false`). Rails cops share files with
+core cops, so enabling every department would fold core-cop parity — owned
+by `benches/parity_diff.sh` — into this oracle as noise. Scoping to the
+Rails department keeps the signal clean; the ~134 non-replaced rubocop-rails
+cops still run as stock on both sides, so only the four replaced cops are
+under test.
+
+### Wire layout (for the sibling tracks building on this branch)
+
+Rails is origin 3 (`ORIGIN_RAILS` / `N_ORIGINS = 4`). Segment: `nums =
+[rails_enabled]` (wake-up flag only), `lists = []` (the Application* cluster
+has no behavioral config). Dormant segment `[[0], []]`. Slots:
+`rails_application_record [3,0]`, `..._controller [3,1]`, `..._mailer
+[3,2]`, `..._job [3,3]`; each slot is `[[start, end], ...]` — the offense
+highlight and autocorrect replace range (message + superclass are wrapper
+constants). Future clusters extend the segment by appending nums / lists in
+`rails_config.rs`, never reordering.
+
 ## Attempted but reverted
 
 These cops were implemented to full drop-in compatibility but reverted because

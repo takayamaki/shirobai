@@ -1,0 +1,10 @@
+# frozen_string_literal: true
+
+# Shirobai side of benches/parity_diff_rails.sh: the same stock pair plus
+# the shirobai core and the shirobai-rails plugin shell from this tree.
+source "https://rubygems.org"
+
+gem "rubocop", "= 1.88.0"
+gem "rubocop-rails", "= 2.35.5"
+gem "shirobai", path: "."
+gem "shirobai-rails", path: "gems/shirobai-rails"

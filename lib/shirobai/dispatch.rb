@@ -15,12 +15,12 @@ module Shirobai
   module Dispatch
     # Origin order of the `Shirobai.check_all` result Array and of the packed
     # config segments: outer index 0 is the core batch, 1 the
-    # shirobai-performance plugin, 2 the shirobai-rspec plugin, and so on.
-    # Mirrors the origin constants in
+    # shirobai-performance plugin, 2 the shirobai-rspec plugin, 3 the
+    # shirobai-rails plugin, and so on. Mirrors the origin constants in
     # `crates/shirobai-core/src/rules/bundle.rs` (`ORIGIN_*` / `N_ORIGINS`);
     # adding a plugin means one entry here and one constant there — that pair
     # of one-line edits is the only place plugin batches can conflict.
-    ORIGINS = %i[core performance rspec].freeze
+    ORIGINS = %i[core performance rspec rails].freeze
 
     # `[origin, rule]` slot pairs into the `Shirobai.check_all` result
     # (`result[origin][rule]`). The rule order within each origin mirrors the
@@ -155,7 +155,15 @@ module Shirobai
       rspec_empty_line_after_example_group: [2, 14].freeze,
       rspec_empty_line_after_final_let: [2, 15].freeze,
       rspec_empty_line_after_hook: [2, 16].freeze,
-      rspec_empty_line_after_subject: [2, 17].freeze
+      rspec_empty_line_after_subject: [2, 17].freeze,
+      # shirobai-rails plugin slots (origin 3), all filled by the single
+      # RailsAppVisitor. The rails origin is NOT per-file gated: the
+      # Application* cops run on every Ruby file, so it is always awake once
+      # the plugin gem is loaded.
+      rails_application_record: [3, 0].freeze,
+      rails_application_controller: [3, 1].freeze,
+      rails_application_mailer: [3, 2].freeze,
+      rails_application_job: [3, 3].freeze
     }.freeze
 
     # Dormant packed-config segment per plugin origin: the enable flag (first
@@ -172,7 +180,10 @@ module Shirobai
       # AllowConsecutiveOneLiners, EmptyLineAfterHook
       # AllowConsecutiveOneLiners), then the sixteen
       # RSpec/Language role lists.
-      rspec: [[0, 0, 0, 0, 0, 0, 0, 0, 0].freeze, ([[].freeze] * 16).freeze].freeze
+      rspec: [[0, 0, 0, 0, 0, 0, 0, 0, 0].freeze, ([[].freeze] * 16).freeze].freeze,
+      # rails: wake-up flag only (the four Application* cops carry no
+      # behavioral config), and no lists.
+      rails: [[0].freeze, [].freeze].freeze
     }.freeze
 
     class << self

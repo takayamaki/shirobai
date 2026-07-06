@@ -30,6 +30,17 @@ Benchmarks and the parity oracle.
   implemented cops on the stock side first.
   Main corpora: discourse / forem / factory_bot (densest RSpec offense
   surface), mastodon as the clean non-interference check.
+- `parity_diff_rails.sh` — The oracle for the shirobai-rails plugin gem
+  (Gemfile.stock.rails vs Gemfile.with_shirobai.rails). Like the rspec
+  oracle it writes a uniform config into the corpus root (`inherit_from`
+  of the pinned rubocop-rails default.yml) and runs both CLIs from inside
+  the corpus, but with `DisabledByDefault: true`: rails cops share files
+  with core cops, so scoping to the Rails department keeps this oracle
+  from re-litigating core parity (owned by `parity_diff.sh`). The
+  Application* cops are gated on railties `>= 5.0` resolved from the
+  target lockfile, so the synthetic self-test dir gets a minimal
+  Gemfile.lock written. Main corpora: mastodon / redmine / discourse
+  (rails-dense), fluentd as the no-rails non-interference check.
 - `e2e_bench.rb` — In-process speed measurement harness.
   Accepts a corpus path and loads its `.rubocop.yml`
   (skips require/inherit_gem so plugin gems are not needed).
