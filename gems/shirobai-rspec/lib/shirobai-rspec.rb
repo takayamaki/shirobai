@@ -31,6 +31,7 @@ require_relative "shirobai/cop/rspec/variable_definition"
 require_relative "shirobai/cop/rspec/multiple_memoized_helpers"
 require_relative "shirobai/cop/rspec/repeated_description"
 require_relative "shirobai/cop/rspec/repeated_example"
+require_relative "shirobai/cop/rspec/named_subject"
 
 module Shirobai
   # Glue for the shirobai-rspec plugin gem: the packed-config segment
@@ -45,7 +46,8 @@ module Shirobai
       Shirobai::Cop::RSpec::VariableDefinition,
       Shirobai::Cop::RSpec::MultipleMemoizedHelpers,
       Shirobai::Cop::RSpec::RepeatedDescription,
-      Shirobai::Cop::RSpec::RepeatedExample
+      Shirobai::Cop::RSpec::RepeatedExample,
+      Shirobai::Cop::RSpec::NamedSubject
     ].freeze
 
     # `config['RSpec']['Language']` sub-role paths in the fixed wire order of
@@ -110,7 +112,8 @@ module Shirobai
         vn = Shirobai::Cop::RSpec::VariableName.bundle_args(config)
         vd = Shirobai::Cop::RSpec::VariableDefinition.bundle_args(config)
         mmh = Shirobai::Cop::RSpec::MultipleMemoizedHelpers.bundle_args(config)
-        [[1, vn[0], vd[0], mmh[0], mmh[1]], lists]
+        ns = Shirobai::Cop::RSpec::NamedSubject.bundle_args(config)
+        [[1, vn[0], vd[0], mmh[0], mmh[1], ns[0], ns[1]], lists]
       end
 
       # One wrapper instance per class per config, only for gate use.

@@ -236,6 +236,8 @@ pub fn check_multiline_bundle(
 /// |  2  | rspec_variable_definition_style (`RSpec/VariableDefinition` `EnforcedStyle`: 0 symbols / 1 strings) |
 /// |  3  | rspec_mmh_max (`RSpec/MultipleMemoizedHelpers` `Max`) |
 /// |  4  | rspec_mmh_allow_subject (`RSpec/MultipleMemoizedHelpers` `AllowSubject`: 0 / 1) |
+/// |  5  | rspec_named_subject_style (`RSpec/NamedSubject` `EnforcedStyle`: 0 always / 1 named_only) |
+/// |  6  | rspec_named_subject_ignore_shared (`RSpec/NamedSubject` `IgnoreSharedExamples`: 0 / 1) |
 ///
 /// RSpec segment `lists[2]`: the sixteen `RSpec/Language` role lists in
 /// [`rspec_language`] wire order —
@@ -255,7 +257,7 @@ pub fn check_multiline_bundle(
 /// The values come from the resolved `config['RSpec']['Language']` hash
 /// (RuboCop's config layer has already applied `inherit_mode: merge`); the
 /// packer flattens, it never merges. The dormant rspec segment is
-/// `[0, 0, 0, 0, 0]` plus sixteen empty lists.
+/// `[0, 0, 0, 0, 0, 0, 0]` plus sixteen empty lists.
 ///
 /// `Layout/IndentationWidth`'s `allowed_lines` and `prior_ranges` are fixed to
 /// empty in the bundle: the non-empty cases (configured `AllowedPatterns`,
@@ -923,6 +925,8 @@ pub struct BundleResult {
     /// slots (each cop owns its slot).
     pub rspec_repeated_description: Vec<Vec<(usize, usize)>>,
     pub rspec_repeated_example: Vec<Vec<(usize, usize)>>,
+    /// `RSpec/NamedSubject`: the `subject` selector ranges to report.
+    pub rspec_named_subject: Vec<(usize, usize)>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -1485,6 +1489,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         rspec_multiple_memoized_helpers: rspec_result.multiple_memoized_helpers,
         rspec_repeated_description: rspec_result.repeated_description,
         rspec_repeated_example: rspec_result.repeated_example,
+        rspec_named_subject: rspec_result.named_subject,
     }
 }
 
@@ -1638,8 +1643,9 @@ mod tests {
         let perf_lists = vec![vec!["find".to_string()]];
         // RSpec segment (origin 2): enabled, with the rubocop-rspec 3.10.2
         // default Language lists, snake_case VariableName style, symbols
-        // VariableDefinition style, and MMH Max 5 / AllowSubject true.
-        let rspec_nums = vec![1, 0, 0, 5, 1];
+        // VariableDefinition style, MMH Max 5 / AllowSubject true, and
+        // NamedSubject always style / IgnoreSharedExamples true.
+        let rspec_nums = vec![1, 0, 0, 5, 1, 0, 1];
         let rspec_lists = rspec_language::tests::default_role_lists();
         (
             vec![nums, perf_nums, rspec_nums],
@@ -1811,6 +1817,25 @@ mod tests {
         assert_eq!(bundle.rspec_repeated_description, standalone_rd);
         assert_eq!(bundle.rspec_repeated_example, standalone_re);
         assert_eq!(bundle.rspec_repeated_description, bundle.rspec_repeated_example);
+        let standalone_ns =
+            rspec_dispatcher::check_rspec_named_subject(src.as_bytes(), rspec_cfg);
+        assert_eq!(bundle.rspec_named_subject, standalone_ns);
+    }
+
+    /// `RSpec/NamedSubject` on the shared walk matches the standalone entry
+    /// point on a source with a real bare-`subject` reference in an example.
+    #[test]
+    fn shared_walk_matches_standalone_rspec_named_subject() {
+        let src = "describe 'x' do\n  subject { described_class.new }\n  it('a') { expect(subject.foo).to be }\nend\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let rspec_cfg = cfg.rspec.as_ref().unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        assert_eq!(
+            bundle.rspec_named_subject,
+            rspec_dispatcher::check_rspec_named_subject(src.as_bytes(), rspec_cfg)
+        );
+        assert_eq!(bundle.rspec_named_subject.len(), 1);
     }
 
     /// The Repeated* group collection on the shared walk matches the

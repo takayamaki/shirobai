@@ -202,6 +202,9 @@ pub struct RSpecResult {
     /// (each cop owns its slot; the collection is computed once). The wrapper
     /// runs stock's `[metadata, implementation]` (+ `its` args) grouping.
     pub repeated_example: Vec<Vec<(usize, usize)>>,
+    /// `RSpec/NamedSubject`: the selector ranges of bare `subject` references
+    /// that need an explicit name (already style/shared-filtered).
+    pub named_subject: Vec<(usize, usize)>,
 }
 
 /// parser block-kind recovery from a prism call (see module doc).
@@ -325,6 +328,20 @@ struct Scope {
     example_group: bool,
     /// `example?` — halts every role collection.
     example: bool,
+    /// `example_or_hook_block?` — a plain-block call with nil receiver and a
+    /// name in `Examples.all ∪ Hooks.all`: the `RSpec/NamedSubject` block gate
+    /// (stock's `on_block` fires only for plain blocks, so numblock/itblock
+    /// examples never qualify).
+    example_or_hook: bool,
+    /// `shared_example?` — a plain-block call with an rspec receiver and a name
+    /// in `SharedGroups.examples` ONLY (`shared_context` is `SharedGroups`
+    /// context and does NOT count): the `IgnoreSharedExamples` suppressor.
+    shared_examples: bool,
+    /// `find_subject(block)` for `RSpec/NamedSubject`'s `named_only` style: the
+    /// named-ness of the FIRST direct-child statement of this block's body that
+    /// is a `subject?` definition (`Some(true)` named `subject(:x)`, `Some(false)`
+    /// unnamed `subject`), or `None` when the body has no such direct child.
+    subject_def_named: Option<bool>,
     /// The frame is itself a `let?` node — halts the lets collection only.
     let_barrier: bool,
     /// The frame is itself a `subject?` node — halts the subjects collection
@@ -369,6 +386,9 @@ pub struct RSpecDispatcherRule<'c> {
     vn_offenses: Vec<VarNameOffense>,
     vn_passing: Vec<(String, u8)>,
     vd_offenses: Vec<VarDefOffense>,
+    /// `RSpec/NamedSubject` offenses: the `subject` selector ranges, decided at
+    /// reference time against the open frame stack.
+    ns_offenses: Vec<(usize, usize)>,
 }
 
 pub fn build_rule<'c>(cfg: &'c RSpecConfig) -> RSpecDispatcherRule<'c> {
@@ -385,6 +405,7 @@ pub fn build_rule<'c>(cfg: &'c RSpecConfig) -> RSpecDispatcherRule<'c> {
         vn_offenses: Vec::new(),
         vn_passing: Vec::new(),
         vd_offenses: Vec::new(),
+        ns_offenses: Vec::new(),
     }
 }
 
@@ -411,6 +432,15 @@ impl RSpecDispatcherRule<'_> {
                 .entry(name.to_vec())
                 .or_default()
                 .push(call.location().start_offset());
+
+            // `RSpec/NamedSubject` reference (`subject_usage`, hard-coded
+            // `$(send nil? :subject)` — the literal name `subject`, never an
+            // alias nor `subject!`). Evaluated against the CURRENT open frames
+            // (R's plain-block ancestors), before R's own frame is pushed.
+            if name == b"subject" && self.named_subject_offense() {
+                let loc = call.message_loc().unwrap_or_else(|| call.location());
+                self.ns_offenses.push((loc.start_offset(), loc.end_offset()));
+            }
         }
 
         if role_mask == 0 {
@@ -469,6 +499,10 @@ impl RSpecDispatcherRule<'_> {
                 rspec_recv && role_mask & (roles::EG_ALL | roles::SG_ALL) != 0;
             let example_group = rspec_recv && role_mask & roles::EG_ALL != 0;
             let include_block = recv_none && role_mask & roles::INC_ALL != 0;
+            let example_or_hook =
+                recv_none && role_mask & (roles::EX_ALL | roles::HOOKS) != 0;
+            let shared_examples = rspec_recv && role_mask & roles::SG_EXAMPLES != 0;
+            let subject_def_named = self.find_direct_subject_def(call);
             let loc = call.location();
             self.scopes.push(Scope {
                 parent: self.scope_stack.last().copied(),
@@ -477,6 +511,9 @@ impl RSpecDispatcherRule<'_> {
                 spec_group: spec_group_send,
                 example_group,
                 example: is_example,
+                example_or_hook,
+                shared_examples,
+                subject_def_named,
                 let_barrier: is_let,
                 subject_barrier: is_subject,
                 lets: Vec::new(),
@@ -487,6 +524,79 @@ impl RSpecDispatcherRule<'_> {
             entry.opened_scope = true;
         }
         entry
+    }
+
+    /// `RSpec/NamedSubject`: verdict for a bare `subject` reference against the
+    /// currently open plain-block frames (R's `each_ancestor(:block)`).
+    ///
+    /// Ancestor gate (stock `on_block` + `ignored_shared_example?`): R needs a
+    /// plain-block example/hook ancestor that is not enclosed by a shared
+    /// example group when `IgnoreSharedExamples` is on. Because a shared group
+    /// only suppresses example/hook frames INNER to it, the OUTERMOST frame
+    /// that is either an example/hook or a shared group decides: example/hook
+    /// -> report, shared -> suppress. With `IgnoreSharedExamples` off, any
+    /// example/hook ancestor reports.
+    ///
+    /// Style gate (`ConfigurableEnforcedStyle`): `always` always reports;
+    /// `named_only` reports only when `nearest_subject` (the innermost
+    /// plain-block ancestor whose body directly defines a `subject?`) is a
+    /// NAMED definition.
+    fn named_subject_offense(&self) -> bool {
+        let ancestor_ok = if self.cfg.named_subject_ignore_shared {
+            let mut ok = false;
+            for &s in &self.scope_stack {
+                let sc = &self.scopes[s];
+                if sc.example_or_hook {
+                    ok = true;
+                    break;
+                }
+                if sc.shared_examples {
+                    break;
+                }
+            }
+            ok
+        } else {
+            self.scope_stack
+                .iter()
+                .any(|&s| self.scopes[s].example_or_hook)
+        };
+        if !ancestor_ok {
+            return false;
+        }
+        if self.cfg.named_subject_style != 1 {
+            return true; // always
+        }
+        // named_only: the nearest enclosing subject definition must be named.
+        for &s in self.scope_stack.iter().rev() {
+            if let Some(named) = self.scopes[s].subject_def_named {
+                return named;
+            }
+        }
+        false
+    }
+
+    /// `find_subject(block)`: the named-ness of the first direct-child statement
+    /// of the block body that is a `subject?` definition (`(block (send nil?
+    /// #Subjects.all ...) ...)`), or `None`. Stock reads `body.child_nodes`;
+    /// for a single-statement body that statement is R's own container (never a
+    /// subject definition when R is nested inside), so scanning prism's
+    /// statement list matches for every reachable reference.
+    fn find_direct_subject_def(&self, call: &CallNode<'_>) -> Option<bool> {
+        let stmts = call.block()?.as_block_node()?.body()?;
+        let stmts = stmts.as_statements_node()?;
+        for stmt in stmts.body().iter() {
+            let Some(c) = stmt.as_call_node() else { continue };
+            if c.receiver().is_none()
+                && self.cfg.roles_of(c.name().as_slice()) & roles::SUBJECTS != 0
+                && block_kind(&c) == BlockKind::Plain
+            {
+                let named = c
+                    .arguments()
+                    .is_some_and(|a| a.arguments().iter().next().is_some());
+                return Some(named);
+            }
+        }
+        None
     }
 
     /// `(send nil? {#Subjects.all #Helpers.all} $({any_sym str dstr} ...)
@@ -648,6 +758,7 @@ impl RSpecDispatcherRule<'_> {
             multiple_memoized_helpers,
             repeated_description: groups.clone(),
             repeated_example: groups,
+            named_subject: self.ns_offenses,
         }
     }
 
@@ -904,6 +1015,12 @@ pub fn check_rspec_repeated_description(
 /// `check_rspec_repeated_description`).
 pub fn check_rspec_repeated_example(source: &[u8], cfg: &RSpecConfig) -> Vec<Vec<(usize, usize)>> {
     run(source, cfg).repeated_example
+}
+
+/// Standalone entry point for `RSpec/NamedSubject` (the wrapper's fallback
+/// path). The `subject` selector ranges to report.
+pub fn check_rspec_named_subject(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
+    run(source, cfg).named_subject
 }
 
 fn run(source: &[u8], cfg: &RSpecConfig) -> RSpecResult {
@@ -1438,6 +1555,77 @@ mod tests {
         // Two examples in the inner context -> the context is emitted.
         let src2 = "describe 'x' do\n  it('a') { foo }\n  context 'y' do\n    it('b') { bar }\n    it('c') { baz }\n  end\nend\n";
         assert_eq!(re(src2), vec![vec!["it('b') { bar }", "it('c') { baz }"]]);
+    }
+
+    // --- NamedSubject (probed against stock rubocop-rspec 3.10.2) ---
+
+    fn cfg_ns(style: u8, ignore_shared: bool) -> RSpecConfig {
+        let mut c = cfg();
+        c.named_subject_style = style;
+        c.named_subject_ignore_shared = ignore_shared;
+        c
+    }
+
+    /// The `subject` selector source slices reported by NamedSubject.
+    fn ns(src: &str, style: u8, ignore_shared: bool) -> Vec<String> {
+        check_rspec_named_subject(src.as_bytes(), &cfg_ns(style, ignore_shared))
+            .into_iter()
+            .map(|(s, e)| String::from_utf8_lossy(&src.as_bytes()[s..e]).into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn ns_flags_bare_subject_in_examples_and_hooks() {
+        let src = "describe 'd' do\n  it('a') { subject.foo }\n  before { subject }\n  around(:each) do |t|\n    do_x(subject)\n  end\nend\n";
+        assert_eq!(ns(src, 0, true), vec!["subject", "subject", "subject"]);
+    }
+
+    #[test]
+    fn ns_needs_a_plain_block_example_or_hook_ancestor() {
+        // No group at all, and a bare arg to a blockless `it` do not fire.
+        assert_eq!(ns("subject.foo\n", 0, true), Vec::<String>::new());
+        assert_eq!(ns("def foo\n  it(subject)\nend\n", 0, true), Vec::<String>::new());
+        // A numblock example is not a plain block, so `on_block` never fires.
+        assert_eq!(
+            ns("describe 'd' do\n  it('a') { subject.foo; _1 }\nend\n", 0, true),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn ns_matches_the_literal_subject_send_only() {
+        // A subject definition send inside an example matches (`subject { }`),
+        // but `is_expected`, `subject(:x)` and `subject!` do not.
+        let src = "describe 'd' do\n  it('a') do\n    subject { 1 }\n    is_expected.to be\n    subject(:x)\n  end\nend\n";
+        assert_eq!(ns(src, 0, true), vec!["subject"]);
+    }
+
+    #[test]
+    fn ns_ignore_shared_examples() {
+        let shared = "describe 'd' do\n  shared_examples 'x' do\n    it('a') { subject.foo }\n  end\nend\n";
+        assert_eq!(ns(shared, 0, true), Vec::<String>::new());
+        assert_eq!(ns(shared, 0, false), vec!["subject"]);
+        // `shared_context` is NOT a shared example -> never suppressed.
+        let ctx = "describe 'd' do\n  shared_context 'x' do\n    it('a') { subject.foo }\n  end\nend\n";
+        assert_eq!(ns(ctx, 0, true), vec!["subject"]);
+        // An example ABOVE a shared group is not enclosed by it -> reported.
+        let above = "it 'outer' do\n  shared_examples 'x' do\n    it 'inner' do\n      subject.foo\n    end\n  end\nend\n";
+        assert_eq!(ns(above, 0, true), vec!["subject"]);
+    }
+
+    #[test]
+    fn ns_named_only_uses_the_nearest_subject_definition() {
+        let unnamed = "RSpec.describe User do\n  subject { x }\n  it('a') { subject.foo }\nend\n";
+        assert_eq!(ns(unnamed, 1, true), Vec::<String>::new());
+        assert_eq!(ns(unnamed, 0, true), vec!["subject"]);
+        let named = "RSpec.describe User do\n  subject(:u) { x }\n  it('a') { subject.foo }\nend\n";
+        assert_eq!(ns(named, 1, true), vec!["subject"]);
+        // The innermost declaration wins even when an outer one is named.
+        let nearest = "RSpec.describe User do\n  subject(:u) { x }\n  describe 'age' do\n    subject { u.age }\n    it('a') { subject.foo }\n  end\nend\n";
+        assert_eq!(ns(nearest, 1, true), Vec::<String>::new());
+        // subject! definitions count for the nearest resolution too.
+        let bang = "RSpec.describe User do\n  subject! { x }\n  it('a') { subject.foo }\nend\n";
+        assert_eq!(ns(bang, 1, true), Vec::<String>::new());
     }
 
     #[test]

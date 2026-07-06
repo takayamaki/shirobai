@@ -139,7 +139,8 @@ module Shirobai
       rspec_variable_definition: [2, 2].freeze,
       rspec_multiple_memoized_helpers: [2, 3].freeze,
       rspec_repeated_description: [2, 4].freeze,
-      rspec_repeated_example: [2, 5].freeze
+      rspec_repeated_example: [2, 5].freeze,
+      rspec_named_subject: [2, 6].freeze
     }.freeze
 
     # Dormant packed-config segment per plugin origin: the enable flag (first
@@ -151,9 +152,10 @@ module Shirobai
     DORMANT_SEGMENTS = {
       performance: [[0, 0, 0].freeze, [[].freeze].freeze].freeze,
       # rspec: enable flag + per-cop nums (VariableName style,
-      # VariableDefinition style, MMH Max, MMH AllowSubject), then the
-      # sixteen RSpec/Language role lists.
-      rspec: [[0, 0, 0, 0, 0].freeze, ([[].freeze] * 16).freeze].freeze
+      # VariableDefinition style, MMH Max, MMH AllowSubject, NamedSubject
+      # style, NamedSubject IgnoreSharedExamples), then the sixteen
+      # RSpec/Language role lists.
+      rspec: [[0, 0, 0, 0, 0, 0, 0].freeze, ([[].freeze] * 16).freeze].freeze
     }.freeze
 
     class << self

@@ -47,6 +47,11 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rspec" do
       RuboCop::Cop::RSpec::RepeatedExample,
       Shirobai::Cop::RSpec::RepeatedExample,
       "#{prefix}describe 'x' do\n  it 'あ' do\n    expect(値).to be(基準)\n  end\n  it 'い' do\n    expect(値).to be(基準)\n  end\nend\n"
+    ],
+    "RSpec/NamedSubject" => [
+      RuboCop::Cop::RSpec::NamedSubject,
+      Shirobai::Cop::RSpec::NamedSubject,
+      "#{prefix}describe 'x' do\n  subject { described_class.new }\n  it('検証') { expect(subject.値).to be }\nend\n"
     ]
   }
 

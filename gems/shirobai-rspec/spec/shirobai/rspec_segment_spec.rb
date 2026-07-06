@@ -40,7 +40,7 @@ RSpec.describe Shirobai::RSpec do
         }
       )
       nums, lists = described_class.segment(config)
-      expect(nums).to eq([1, 0, 0, 5, 1])
+      expect(nums).to eq([1, 0, 0, 5, 1, 0, 1])
       expect(lists.length).to eq(16)
       expect(lists[0]).to eq(%w[describe context])
       expect(lists[8]).to eq(%w[let let!])
@@ -52,12 +52,13 @@ RSpec.describe Shirobai::RSpec do
         "RSpec" => { "Language" => {} },
         "RSpec/VariableName" => { "EnforcedStyle" => "camelCase" },
         "RSpec/VariableDefinition" => { "EnforcedStyle" => "strings" },
-        "RSpec/MultipleMemoizedHelpers" => { "Max" => 3, "AllowSubject" => false }
+        "RSpec/MultipleMemoizedHelpers" => { "Max" => 3, "AllowSubject" => false },
+        "RSpec/NamedSubject" => { "EnforcedStyle" => "named_only", "IgnoreSharedExamples" => false }
       )
       nums, = described_class.segment(config)
       # [enabled, VariableName style, VariableDefinition style, MMH Max,
-      #  MMH AllowSubject]
-      expect(nums).to eq([1, 1, 1, 3, 0])
+      #  MMH AllowSubject, NamedSubject style, NamedSubject IgnoreSharedExamples]
+      expect(nums).to eq([1, 1, 1, 3, 0, 1, 0])
     end
 
     it "is memoized per config identity" do
@@ -96,7 +97,7 @@ RSpec.describe Shirobai::RSpec do
       # its default.yml into the default configuration.
       config = RuboCop::ConfigLoader.default_configuration
       nums, lists = described_class.segment(config)
-      expect(nums).to eq([1, 0, 0, 5, 1])
+      expect(nums).to eq([1, 0, 0, 5, 1, 0, 1])
       expect(lists[0]).to include("describe", "context", "feature", "example_group")
       expect(lists[3]).to include("it", "specify", "its")
       expect(lists[8]).to eq(%w[let let!])

@@ -172,10 +172,11 @@ if they ever disagree, `Dispatch.offenses_for` returns nil and the
 wrapper falls back to its standalone entry point (speed bug, never an
 offense bug).
 
-### Implemented (6 cops)
+### Implemented (7 cops)
 
 - `RSpec/LetSetup`
 - `RSpec/MultipleMemoizedHelpers`
+- `RSpec/NamedSubject`
 - `RSpec/RepeatedDescription`
 - `RSpec/RepeatedExample`
 - `RSpec/VariableDefinition`
@@ -221,6 +222,19 @@ string body), so the wrappers relocate the nodes via the shared
 stock's grouping (`[metadata, doc_string]` / `[doc_string, example]` for
 descriptions, `[metadata, implementation]` + `its` args for examples)
 VERBATIM — parity by construction for the equality-sensitive part.
+
+`RSpec/NamedSubject` reuses the same frames. A reference is stock's
+hard-coded `subject_usage` search (`$(send nil? :subject)` — the literal
+name `subject`, zero args, no block-pass; an alias or `subject!` never
+counts). Rust reports it when a plain-block example/hook frame encloses it
+(numblock/itblock examples never qualify, matching stock's `on_block`),
+gated by the OUTERMOST example/hook-or-shared frame under
+`IgnoreSharedExamples` (`shared_examples`/`shared_examples_for` only —
+`shared_context` never suppresses), and, under `named_only`, by the
+named-ness of the nearest enclosing `subject` definition. No autocorrect
+(stock has none). Range-level offense dedup falls out of one offense per
+reference node. It fires 3442 times on Mastodon spec/ — the densest RSpec
+signal in the oracle — at zero diff.
 
 One probed parser divergence is handled centrally:
 an empty percent-string (`%()`) is a `str` node in prism 1.9 but a `dstr`

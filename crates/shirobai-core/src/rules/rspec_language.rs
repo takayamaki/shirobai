@@ -57,8 +57,8 @@ pub const HOOK_SCOPES: [&[u8]; 5] = [b"each", b"example", b"context", b"all", b"
 
 /// Length of the rspec segment's `nums`:
 /// `[rspec_enabled, variable_name_style, variable_definition_style, mmh_max,
-/// mmh_allow_subject]`.
-pub const SEGMENT_NUMS_LEN: usize = 5;
+/// mmh_allow_subject, named_subject_style, named_subject_ignore_shared]`.
+pub const SEGMENT_NUMS_LEN: usize = 7;
 
 /// Packed configuration for the shirobai-rspec plugin: the role table plus
 /// per-cop settings.
@@ -77,6 +77,11 @@ pub struct RSpecConfig {
     /// `RSpec/MultipleMemoizedHelpers` `AllowSubject` (true = subjects are
     /// not counted).
     pub mmh_allow_subject: bool,
+    /// `RSpec/NamedSubject` `EnforcedStyle`: 0 = always, 1 = named_only.
+    pub named_subject_style: u8,
+    /// `RSpec/NamedSubject` `IgnoreSharedExamples` (true = implicit subjects
+    /// inside shared example groups are not reported).
+    pub named_subject_ignore_shared: bool,
 }
 
 impl RSpecConfig {
@@ -98,6 +103,8 @@ impl RSpecConfig {
         cfg.variable_definition_style = nums[2] as u8;
         cfg.mmh_max = nums[3];
         cfg.mmh_allow_subject = nums[4] != 0;
+        cfg.named_subject_style = nums[5] as u8;
+        cfg.named_subject_ignore_shared = nums[6] != 0;
         Ok(Some(cfg))
     }
 
@@ -125,6 +132,8 @@ impl RSpecConfig {
             variable_definition_style: 0,
             mmh_max: 5,
             mmh_allow_subject: true,
+            named_subject_style: 0,
+            named_subject_ignore_shared: true,
         })
     }
 

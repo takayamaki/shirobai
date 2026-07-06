@@ -1495,6 +1495,23 @@ fn check_rspec_repeated_example(
     ))
 }
 
+/// Standalone entry point for `RSpec/NamedSubject` (per-cop fallback).
+/// Returns the `subject` selector ranges `[[start, end], ...]`.
+fn check_rspec_named_subject(
+    ruby: &Ruby,
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Result<Vec<(usize, usize)>, Error> {
+    let Some(cfg) = rspec_segment_config(ruby, nums, lists)? else {
+        return Ok(Vec::new());
+    };
+    Ok(shirobai_core::rules::rspec_dispatcher::check_rspec_named_subject(
+        bytes(&source),
+        &cfg,
+    ))
+}
+
 thread_local! {
     /// Bundle configs registered by `register_bundle_config` (token = index,
     /// no eviction: a lint run registers one entry per distinct `Config`
@@ -1589,7 +1606,8 @@ fn register_bundle_config(
 ///
 /// 0 rspec_variable_name / 1 rspec_let_setup /
 /// 2 rspec_variable_definition / 3 rspec_multiple_memoized_helpers /
-/// 4 rspec_repeated_description / 5 rspec_repeated_example
+/// 4 rspec_repeated_description / 5 rspec_repeated_example /
+/// 6 rspec_named_subject
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1746,7 +1764,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         perf.push(map_perf_start_with(r.perf_start_with))?;
         perf.push(map_perf_times_map(r.perf_times_map))?;
         // RSpec origin (result[2]).
-        let rspec = ruby.ary_new_capa(6);
+        let rspec = ruby.ary_new_capa(7);
         rspec.push(map_rspec_variable_name(r.rspec_variable_name))?;
         rspec.push(r.rspec_let_setup)?;
         rspec.push(map_rspec_variable_definition(r.rspec_variable_definition))?;
@@ -1755,6 +1773,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ))?;
         rspec.push(r.rspec_repeated_description)?;
         rspec.push(r.rspec_repeated_example)?;
+        rspec.push(r.rspec_named_subject)?;
         // The nested result is N_ORIGINS + 1 arrays per file (the outer
         // one plus one per origin), nothing per cop.
         let out = ruby.ary_new_capa(3);
@@ -3940,6 +3959,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_rspec_repeated_example",
         function!(check_rspec_repeated_example, 3),
+    )?;
+    module.define_module_function(
+        "check_rspec_named_subject",
+        function!(check_rspec_named_subject, 3),
     )?;
     module.define_module_function(
         "check_stabby_lambda_parentheses",

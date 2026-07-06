@@ -47,6 +47,12 @@ RSpec.describe "lint-mode correctable parity with stock rubocop-rspec" do
       Shirobai::Cop::RSpec::RepeatedExample,
       "describe 'x' do\n  it 'a' do\n    foo\n  end\n  it 'b' do\n    foo\n  end\nend\n",
       false
+    ],
+    "RSpec/NamedSubject" => [
+      RuboCop::Cop::RSpec::NamedSubject,
+      Shirobai::Cop::RSpec::NamedSubject,
+      "describe 'x' do\n  subject { described_class.new }\n  it('a') { expect(subject.foo).to be }\nend\n",
+      false
     ]
   }
 
