@@ -14,10 +14,22 @@ module Shirobai
     # whose expression range matches it exactly.
     #
     # Pre-order means the SHALLOWEST node wins an exact-range tie (a wrapper
-    # node sharing its single child's range resolves to the wrapper). Subtrees
-    # whose range cannot contain any remaining target are pruned, so the walk
-    # cost is proportional to the paths down to the targets, not the whole AST.
-    # Ranges with no matching node are simply absent from the result.
+    # node sharing its single child's range resolves to the wrapper). The
+    # descent stops as soon as every requested range has matched, so on the
+    # common file the walk ends near the last target. Ranges with no matching
+    # node are simply absent from the result.
+    #
+    # It does NOT prune subtrees by expression-range containment: a heredoc
+    # body sits OUTSIDE the expression range of every ancestor between the
+    # heredoc node and the root (their `loc.expression` stops at the `<<~`
+    # marker), so a containment prune would drop candidates nested in heredoc
+    # interpolation (`"#{user.errors.to_h}"`). `locate` runs only when the
+    # wrapper already has candidates (a small fraction of files), and RuboCop
+    # walks the whole AST per investigation anyway, so a full descent here is
+    # negligible and always sound.
+    #
+    # (This is the plugin-gem twin of `Shirobai::NodeLocator`; the rspec gem
+    # keeps its own copy so it needs no dependency on that file.)
     module NodeLocator
       module_function
 
@@ -36,35 +48,24 @@ module Shirobai
       end
 
       # Pre-order visit `node`; record it if its expression range is a target
-      # and unseen, then recurse into children that could still contain a
-      # target.
+      # and unseen, then recurse into every child. Returns `true` once all
+      # targets are found so callers can unwind the descent immediately.
       def descend(node, targets, result)
         expr = node.loc&.expression
         if expr
           key = [expr.begin_pos, expr.end_pos]
           result[key] ||= node if targets.key?(key)
+          return true if result.size == targets.size
         end
 
         node.children.each do |child|
           next unless child.is_a?(Parser::AST::Node)
 
-          child_expr = child.loc&.expression
-          # Prune: a child with a known range that contains no target cannot
-          # lead to one (targets are contained in their ancestors' ranges).
-          next if child_expr && !contains_any?(child_expr, targets)
-
-          descend(child, targets, result)
+          return true if descend(child, targets, result)
         end
+        false
       end
       private_class_method :descend
-
-      # Does `[range.begin_pos, range.end_pos]` contain any target range?
-      def contains_any?(range, targets)
-        b = range.begin_pos
-        e = range.end_pos
-        targets.each_key.any? { |(tb, te)| b <= tb && te <= e }
-      end
-      private_class_method :contains_any?
     end
   end
 end
