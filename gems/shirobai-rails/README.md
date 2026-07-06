@@ -34,15 +34,18 @@ Two things are different from the shirobai-rspec shell:
   (table-driven const-name checks riding the existing shared walk, no
   extra AST pass), because the cost is paid on every file with no gate to
   hide behind.
-- **No behavioral config.** The first cluster is the four Application*
-  cops (`Rails/ApplicationRecord` / `...Controller` / `...Mailer` /
-  `...Job`) — fixed class-inheritance checks — so the segment is just a
-  wake-up flag. Two per-cop concerns that DO vary are handled by the
-  wrappers, not the segment: the `Rails/ApplicationRecord` `Exclude:
-  db/**/*.rb`, and the `TargetRailsVersion`
-  (`requires_gem 'railties', '>= 5.0'`) gate on Record / Mailer / Job.
-  RuboCop resolves both through each wrapper's own cop config exactly as
-  for the stock cop.
+- **Mostly-thin config segment.** The first cluster was the four
+  Application* cops (`Rails/ApplicationRecord` / `...Controller` /
+  `...Mailer` / `...Job`) — fixed class-inheritance checks with no
+  behavioral config. The send/block-table cluster added
+  `Rails/DynamicFindBy` (`AllowedMethods` / `AllowedReceivers` /
+  `Whitelist`) and `Rails/UnknownEnv` (`Environments` + the Rails >= 7.1
+  `local` view), so the segment now carries those lists; each cop's
+  `bundle_args` is the single source of its own config. Per-cop gating
+  that varies (the `Rails/ApplicationRecord` `Exclude: db/**/*.rb`, the
+  `TargetRailsVersion` gates, each cop's `Enabled`) is still handled by
+  the wrappers, not the segment: RuboCop resolves it through each
+  wrapper's own cop config exactly as for the stock cop.
 
 > **Non-Rails projects.** Because the origin has no gate, adding
 > shirobai-rails to a project with no railties in the target bundle still

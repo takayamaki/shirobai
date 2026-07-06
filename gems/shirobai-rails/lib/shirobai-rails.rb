@@ -28,6 +28,8 @@ require_relative "shirobai/cop/rails/application_record"
 require_relative "shirobai/cop/rails/application_controller"
 require_relative "shirobai/cop/rails/application_mailer"
 require_relative "shirobai/cop/rails/application_job"
+require_relative "shirobai/cop/rails/unknown_env"
+require_relative "shirobai/cop/rails/dynamic_find_by"
 
 module Shirobai
   # Glue for the shirobai-rails plugin gem: the packed-config segment (just a
@@ -44,28 +46,35 @@ module Shirobai
       Shirobai::Cop::Rails::ApplicationRecord,
       Shirobai::Cop::Rails::ApplicationController,
       Shirobai::Cop::Rails::ApplicationMailer,
-      Shirobai::Cop::Rails::ApplicationJob
+      Shirobai::Cop::Rails::ApplicationJob,
+      Shirobai::Cop::Rails::UnknownEnv,
+      Shirobai::Cop::Rails::DynamicFindBy
     ].freeze
 
     class << self
-      # The rails origin's `[nums, lists]` segment for `config`. Constant
-      # once the gem is loaded: `[[1], []]` (enabled, no lists).
+      # The rails origin's `[nums, lists]` segment for `config`. The wake-up
+      # flag is always `1` once the gem is loaded; the rest is each config-
+      # bearing cop's own `bundle_args` (the single source of its config).
       #
-      # There is no dormant case on shirobai's side. Two per-cop concerns
-      # that DO vary — the `Rails/ApplicationRecord` `Exclude: db/**/*.rb`
-      # and the `TargetRailsVersion` (`requires_gem 'railties', '>= 5.0'`)
-      # gate on Record / Mailer / Job — are NOT expressed in this segment.
-      # They live in each wrapper: RuboCop resolves Include/Exclude and the
-      # gem-version gate through the wrapper's own cop config exactly as it
-      # does for the stock cop, so a file the wrapper does not run on simply
-      # drops the Rust-computed offenses for that cop while the other three
-      # cops' slots (from the same shared walk) are still consumed. Without
-      # `plugins: [rubocop-rails]` the stock cops usually resolve to
-      # `Enabled: false`, but `NewCops: enable` turns them on without their
-      # default.yml Exclude/metadata — a user misconfiguration outside
-      # shirobai's control; shirobai's own segment is unaffected either way.
-      def segment(_config)
-        [[1], []]
+      # Segment layout (crates/shirobai-core/src/rules/rails_config.rs):
+      #   nums  = [enabled, unknown_env_supports_local]
+      #   lists = [unknown_env_environments,
+      #            dynamic_find_by_allowed_methods,
+      #            dynamic_find_by_allowed_receivers,
+      #            dynamic_find_by_whitelist]
+      #
+      # Per-cop gating that DOES vary (the `Rails/ApplicationRecord`
+      # `Exclude: db/**/*.rb`, the `TargetRailsVersion` gates, and each cop's
+      # `Enabled`) is NOT in this segment: RuboCop resolves it through each
+      # wrapper's own cop config exactly as for the stock cop, so a file a
+      # wrapper does not run on simply drops that cop's Rust-computed slot
+      # while the other cops' slots (from the same shared walk) are consumed.
+      def segment(config)
+        ue = Shirobai::Cop::Rails::UnknownEnv.bundle_args(config)
+        dfb = Shirobai::Cop::Rails::DynamicFindBy.bundle_args(config)
+        nums = [1, *ue[0]]
+        lists = [*ue[1], *dfb[1]]
+        [nums, lists]
       end
     end
   end

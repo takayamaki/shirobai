@@ -7,8 +7,16 @@ require "spec_helper"
 # origin has no per-file gate, so the segment is a constant wake-up flag.
 RSpec.describe Shirobai::Rails do
   describe ".segment" do
-    it "packs the enabled wake-up flag and no lists" do
-      expect(described_class.segment(nil)).to eq([[1], []])
+    let(:config) { RuboCop::ConfigLoader.default_configuration }
+
+    it "packs the wake-up flag plus the send/block-table cops' config" do
+      nums, lists = described_class.segment(config)
+      # nums = [enabled, unknown_env_supports_local]
+      expect(nums.length).to eq(2)
+      expect(nums.first).to eq(1)
+      # lists = [environments, allowed_methods, allowed_receivers, whitelist]
+      expect(lists.length).to eq(4)
+      expect(lists[0]).to include("development", "test", "production")
     end
   end
 
@@ -48,13 +56,14 @@ RSpec.describe Shirobai::Rails do
       token = Shirobai::Dispatch.bundle_token(config, %i[rails].freeze)
       result = Shirobai.check_all("class Foo < ActiveRecord::Base\nend\n", token)
       expect(result.length).to eq(Shirobai::Dispatch::ORIGINS.length)
-      expect(result[3]).to eq([[], [], [], []])
+      expect(result[3]).to eq([[], [], [], [], [], []])
     end
   end
 
   describe "the dormant segment token" do
     it "matches the documented layout" do
-      expect(Shirobai::Dispatch::DORMANT_SEGMENTS.fetch(:rails)).to eq([[0], []])
+      expect(Shirobai::Dispatch::DORMANT_SEGMENTS.fetch(:rails))
+        .to eq([[0, 0], [[], [], [], []]])
     end
   end
 

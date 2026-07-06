@@ -46,6 +46,16 @@ RSpec.describe "lint-mode correctable parity with stock rubocop-rails" do
       RuboCop::Cop::Rails::ApplicationJob,
       Shirobai::Cop::Rails::ApplicationJob,
       "class Foo < ActiveJob::Base\nend\n"
+    ],
+    "Rails/DynamicFindBy" => [
+      RuboCop::Cop::Rails::DynamicFindBy,
+      Shirobai::Cop::Rails::DynamicFindBy,
+      "User.find_by_name(name)\n"
+    ],
+    "Rails/UnknownEnv" => [
+      RuboCop::Cop::Rails::UnknownEnv,
+      Shirobai::Cop::Rails::UnknownEnv,
+      "Rails.env.proudction?\n"
     ]
   }
 

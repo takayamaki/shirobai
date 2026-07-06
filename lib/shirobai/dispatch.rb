@@ -163,7 +163,10 @@ module Shirobai
       rails_application_record: [3, 0].freeze,
       rails_application_controller: [3, 1].freeze,
       rails_application_mailer: [3, 2].freeze,
-      rails_application_job: [3, 3].freeze
+      rails_application_job: [3, 3].freeze,
+      # send/block-table cluster (rails origin slots 4-5), each its own rule.
+      rails_unknown_env: [3, 4].freeze,
+      rails_dynamic_find_by: [3, 5].freeze
     }.freeze
 
     # Dormant packed-config segment per plugin origin: the enable flag (first
@@ -181,9 +184,10 @@ module Shirobai
       # AllowConsecutiveOneLiners), then the sixteen
       # RSpec/Language role lists.
       rspec: [[0, 0, 0, 0, 0, 0, 0, 0, 0].freeze, ([[].freeze] * 16).freeze].freeze,
-      # rails: wake-up flag only (the four Application* cops carry no
-      # behavioral config), and no lists.
-      rails: [[0].freeze, [].freeze].freeze
+      # rails: wake-up flag + UnknownEnv supports_local; four lists
+      # (UnknownEnv Environments + DynamicFindBy AllowedMethods /
+      # AllowedReceivers / Whitelist).
+      rails: [[0, 0].freeze, [[].freeze, [].freeze, [].freeze, [].freeze].freeze].freeze
     }.freeze
 
     class << self

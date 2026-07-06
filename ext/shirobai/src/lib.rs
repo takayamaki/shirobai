@@ -1936,13 +1936,16 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         rspec.push(map_rspec_empty_line(r.rspec_empty_line_after_final_let))?;
         rspec.push(map_rspec_empty_line(r.rspec_empty_line_after_hook))?;
         rspec.push(map_rspec_empty_line(r.rspec_empty_line_after_subject))?;
-        // Rails origin (result[3]). All four slots are `[[start, end], ...]`
-        // byte ranges (offense highlight and autocorrect replace target).
-        let rails = ruby.ary_new_capa(4);
+        // Rails origin (result[3]). Slots 0-3 (Application*) are `[[start,
+        // end], ...]` byte ranges; slots 4-5 carry the send/block-table cops'
+        // richer tuples (see the map functions).
+        let rails = ruby.ary_new_capa(6);
         rails.push(r.rails_application_record)?;
         rails.push(r.rails_application_controller)?;
         rails.push(r.rails_application_mailer)?;
         rails.push(r.rails_application_job)?;
+        rails.push(map_rails_unknown_env(r.rails_unknown_env))?;
+        rails.push(map_rails_dynamic_find_by(r.rails_dynamic_find_by))?;
         // The nested result is N_ORIGINS + 1 arrays per file (the outer
         // one plus one per origin), nothing per cop.
         let out = ruby.ary_new_capa(4);
@@ -3683,6 +3686,77 @@ fn check_rails_application_job(source: RString) -> Vec<(usize, usize)> {
     shirobai_core::rules::rails_app::check_rails_app(bytes(&source)).application_job
 }
 
+/// `Rails/UnknownEnv`: `[[start, end, name], ...]`. `[start, end)` is the
+/// offense highlight; `name` is stock's pre-`chomp('?')` name, so the wrapper
+/// builds the message (including the `DidYouMean` suggestion) Ruby-side.
+fn map_rails_unknown_env(
+    v: Vec<shirobai_core::rules::rails_unknown_env::UnknownEnvOffense>,
+) -> Vec<(usize, usize, String)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.name))
+        .collect()
+}
+
+/// `Rails/DynamicFindBy`: `[[start, end, static_name, sel_start, sel_end,
+/// [[arg_start, keyword], ...]], ...]`. `[start, end)` is the offense
+/// highlight (whole send); the wrapper replaces `[sel_start, sel_end)` with
+/// `static_name` and inserts each `keyword` before `arg_start`.
+#[allow(clippy::type_complexity)]
+fn map_rails_dynamic_find_by(
+    v: Vec<shirobai_core::rules::rails_dynamic_find_by::DynamicFindByOffense>,
+) -> Vec<(usize, usize, String, usize, usize, Vec<(usize, String)>)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.start_offset,
+                o.end_offset,
+                o.static_name,
+                o.sel_start,
+                o.sel_end,
+                o.inserts,
+            )
+        })
+        .collect()
+}
+
+/// Ruby entry point for `Rails/UnknownEnv` (per-cop fallback). Takes the
+/// `Environments` list and the `supports_local` flag.
+fn check_rails_unknown_env(
+    source: RString,
+    environments: Vec<String>,
+    supports_local: bool,
+) -> Vec<(usize, usize, String)> {
+    map_rails_unknown_env(
+        shirobai_core::rules::rails_unknown_env::check_rails_unknown_env(
+            bytes(&source),
+            environments,
+            supports_local,
+        ),
+    )
+}
+
+/// Ruby entry point for `Rails/DynamicFindBy` (per-cop fallback). Takes the
+/// three suppression lists.
+#[allow(clippy::type_complexity)]
+fn check_rails_dynamic_find_by(
+    source: RString,
+    allowed_methods: Vec<String>,
+    allowed_receivers: Vec<String>,
+    whitelist: Vec<String>,
+) -> Vec<(usize, usize, String, usize, usize, Vec<(usize, String)>)> {
+    let config = shirobai_core::rules::rails_dynamic_find_by::Config {
+        allowed_methods,
+        allowed_receivers,
+        whitelist,
+    };
+    map_rails_dynamic_find_by(
+        shirobai_core::rules::rails_dynamic_find_by::check_rails_dynamic_find_by(
+            bytes(&source),
+            config,
+        ),
+    )
+}
+
 /// Ruby entry point for `Lint/UnreachableCode`. Config-less. Returns
 /// `[[start, end], ...]` — the byte range of each unreachable expression.
 fn check_unreachable_code(source: RString) -> Vec<(usize, usize)> {
@@ -4143,6 +4217,14 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_rails_application_job",
         function!(check_rails_application_job, 1),
+    )?;
+    module.define_module_function(
+        "check_rails_unknown_env",
+        function!(check_rails_unknown_env, 3),
+    )?;
+    module.define_module_function(
+        "check_rails_dynamic_find_by",
+        function!(check_rails_dynamic_find_by, 4),
     )?;
     module.define_module_function(
         "check_rspec_variable_name",

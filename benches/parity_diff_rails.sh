@@ -156,6 +156,14 @@ class SelfTestJob < ActiveJob::Base
 end
 
 Anon = Class.new(ActiveRecord::Base)
+
+# Rails/UnknownEnv (unknown environment name).
+if Rails.env.staaging?
+  do_something
+end
+
+# Rails/DynamicFindBy (dynamic finder with a receiver).
+User.find_by_name_and_email(name, email)
 FIXTURE
 # Minimal lockfile so `gem_versions_in_target` resolves railties and the
 # TargetRailsVersion-gated cops (Record / Mailer / Job) activate here.
@@ -181,6 +189,7 @@ ruby -rjson -e '
   cops = %w[
     Rails/ApplicationRecord Rails/ApplicationController
     Rails/ApplicationMailer Rails/ApplicationJob
+    Rails/UnknownEnv Rails/DynamicFindBy
   ]
   d = JSON.parse(File.read(ARGV[0]))
   fired = d["files"].flat_map { |f| f["offenses"].map { |o| o["cop_name"] } }.uniq

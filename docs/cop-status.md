@@ -433,6 +433,83 @@ highlight and autocorrect replace range (message + superclass are wrapper
 constants). Future clusters extend the segment by appending nums / lists in
 `rails_config.rs`, never reordering.
 
+## Plugin cops: shirobai-rails (send/block-table cluster)
+
+Two more rubocop-rails cops, both **full-Rust** (byte-computable detection and
+autocorrect, no parser-AST relocation needed):
+
+- `Rails/DynamicFindBy`
+- `Rails/UnknownEnv`
+
+`Rails/DynamicFindBy` is its own rule with a class-inheritance ancestor stack
+(ENTER_ALL + LEAVE, one frame per branch node so the stack stays 1:1 with
+`leave`; a counter of ActiveRecord-inheriting class ancestors drives the
+receiverless-finder case). It replicates the `/^find_by_(.+?)(!)?$/` name match
+(lazy group 1, so a lone `find_by_!` captures `!` as the column and stays
+`find_by`), the argument-count / no-splat / no-hash gate (a block-pass `&blk`
+counts as a virtual trailing argument, per the trap table), and the
+`AllowedMethods` / `AllowedReceivers` (the receiver's raw source) / deprecated
+`Whitelist` suppressions. Autocorrect replaces the selector and inserts each
+`col: ` keyword before its argument — all in Rust; the wrapper owns only the
+`MSG` and derives the method name from the selector range.
+
+`Rails/UnknownEnv` is its own rule (ENTER_CALL + ENTER_OTHER for the `case`
+form, no stack). Rust detects the predicate / comparison (both operand orders)
+/ `case` shapes off `rails_env?` and emits `[start, end, name]`. The message —
+including the `DidYouMean` spell suggestion, which cannot and must not be
+reproduced in Rust — is built Ruby-side from the wrapper's own `Environments`
+config, so the suggestion text is stock by construction. The `supports_local`
+asymmetry (`local` is known for the predicate form only, and only on Rails
+>= 7.1) is packed into the segment; the comparison and `case` forms never
+allow `local`, matching stock. No autocorrect (stock has none).
+
+Architecture choice: full-Rust for both. `UnknownEnv` needs no node relocation
+(offense ranges are byte-computable and the only Ruby-side machinery,
+DidYouMean, is fed a plain name string). `DynamicFindBy`'s autocorrect is a
+selector replace plus keyword inserts at known byte offsets, so Architecture B
+would add cost without buying parity.
+
+Verified with the same bar as core cops: vendor specs from the
+`vendor/rubocop-rails` submodule (including the `:rails71` / `:ruby27` version
+contexts and the `DidYouMean`-available branch), differential edge-case specs
+for every probed quirk (csend; the nested-class `each_ancestor(:class).any?`
+case; the block-pass virtual argument; the lone-bang column; multiline keyword
+inserts; CRLF fallback; cbase `::Rails.env`; both comparison operand orders;
+multi-condition `case`; non-string `when`), lint-mode correctable parity,
+non-ASCII offset parity (DynamicFindBy through the full autocorrect, UnknownEnv
+on offense offsets), and the rails parity oracle at zero diff on Mastodon /
+Redmine / Discourse / fluentd. The oracle self-test fixture was extended so
+both cops fire on the stock side first (the hollow-zero-diff guard). Corpus
+positives: `DynamicFindBy` fires 81 times on Redmine and 94 on Discourse (a
+whole-tree `--only Rails/DynamicFindBy -A` autocorrect on Redmine is
+byte-identical to stock); `UnknownEnv` has no corpus positives (env-name typos
+are rare in mature code) and rests on the vendor + edge + self-test coverage.
+
+### Wire layout delta
+
+The rails segment grew (append only): `nums = [rails_enabled,
+unknown_env_supports_local]`, `lists = [unknown_env_environments,
+dynamic_find_by_allowed_methods, dynamic_find_by_allowed_receivers,
+dynamic_find_by_whitelist]`. Dormant segment `[[0, 0], [[], [], [], []]]`. New
+slots `rails_unknown_env [3,4]`, `rails_dynamic_find_by [3,5]`. Each cop's
+`bundle_args` is the single source of its own config; `Shirobai::Rails.segment`
+assembles the pieces.
+
+### Deferred (same branch family, not in this cluster)
+
+`Rails/Pluck`, `Rails/IndexBy`, `Rails/IndexWith` were scoped into this cluster
+but deferred rather than rushed, to keep the shipped cluster byte-clean:
+
+- `Rails/Pluck` is full-Rust-feasible but needs a block-ancestor-receiver stack
+  plus lvar-shadow analysis of the `[]` key, and its detection splits on prism's
+  numbered-/`it`-parameter block representation (the R2 divergence lesson). That
+  warrants its own careful probe-and-verify cycle.
+- `Rails/IndexBy` / `Rails/IndexWith` share the `IndexMethod` mixin whose
+  autocorrect is heavy parser-AST geometry (strip prefix/suffix, rename method,
+  rewrite block args, replace body) plus cross-offense `ignore_node` state —
+  the Architecture B relocate-and-dispatch pattern (as in the rspec metadata
+  family), a larger harness than this cluster.
+
 ## Attempted but reverted
 
 These cops were implemented to full drop-in compatibility but reverted because

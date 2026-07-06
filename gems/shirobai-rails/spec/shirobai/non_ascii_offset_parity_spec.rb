@@ -73,6 +73,13 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rails" do
       RuboCop::Cop::Rails::ApplicationJob,
       Shirobai::Cop::Rails::ApplicationJob,
       "#{prefix}class Foo < ActiveJob::Base\nend\n"
+    ],
+    # Selector replace plus two keyword inserts, each at a multibyte-shifted
+    # offset — the densest offset coverage in the cluster.
+    "Rails/DynamicFindBy" => [
+      RuboCop::Cop::Rails::DynamicFindBy,
+      Shirobai::Cop::Rails::DynamicFindBy,
+      "#{prefix}User.find_by_name_and_email(name, email)\n"
     ]
   }
 
@@ -85,6 +92,30 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rails" do
       shirobai_offenses, shirobai_corrected = autocorrect_run(shirobai, source, config)
       expect(shirobai_offenses).to eq(stock_offenses)
       expect(shirobai_corrected).to eq(stock_corrected)
+    end
+  end
+
+  # Rails/UnknownEnv has no autocorrect, so its offset parity is checked on
+  # first-pass offenses only (byte-vs-char under a multibyte prefix).
+  describe "Rails/UnknownEnv (no autocorrect)" do
+    def offense_positions(klass, source, config)
+      cop = klass.new(config)
+      processed = RuboCop::ProcessedSource.new(source, RuboCop::TargetRuby::DEFAULT_VERSION)
+      processed.config = config
+      processed.registry = RuboCop::Cop::Registry.global
+      report = RuboCop::Cop::Commissioner.new([cop]).investigate(processed)
+      expect(report.errors).to be_empty
+      report.offenses.map { |o| [o.location.begin_pos, o.location.end_pos, o.message] }.sort
+    end
+
+    it "matches stock offense offsets on a non-ASCII source" do
+      source = "#{prefix}Rails.env.proudction?\n" \
+               "#{prefix}Rails.env == 'developpment'\n" \
+               "case Rails.env\nwhen 'somethingg'\nend\n"
+      config = config_with_enabled("Rails/UnknownEnv")
+      stock = offense_positions(RuboCop::Cop::Rails::UnknownEnv, source, config)
+      expect(stock).not_to be_empty
+      expect(offense_positions(Shirobai::Cop::Rails::UnknownEnv, source, config)).to eq(stock)
     end
   end
 end
