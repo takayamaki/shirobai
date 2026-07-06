@@ -34,10 +34,11 @@ shirobaiは日本語話者なら当然わかるでしょう、白バイです。
 
 ## 現状
 
-- **88 cop** を Rust 実装済み（Lint / Layout / Metrics / Naming / Style）。
-- **プラグイン cop の PoC**: `gems/shirobai-performance` が rubocop-performance の
-  5 cop を同じ共有 native extension 経由で置き換える。
-  詳細は `docs/cop-status.md` と `gems/shirobai-performance/README.md` を参照。
+- **93 cop** を Rust 実装済み（Lint / Layout / Metrics / Naming / Style）。
+- **プラグイン cop gem**: `gems/shirobai-performance` が rubocop-performance の
+  5 cop を、`gems/shirobai-rspec` が rubocop-rspec の 6 cop を、
+  どちらも同じ共有 native extension 経由で置き換える。
+  詳細は `docs/cop-status.md` と各 gem の README を参照。
   以下のセットアップ手順は core gem のみの説明。
 - **drop-in 完全互換**を実コーパスで検証済み。
   検証は `benches/parity_diff.sh` で行う。実装済み全 cop について offense
@@ -48,13 +49,13 @@ shirobaiは日本語話者なら当然わかるでしょう、白バイです。
 
   | コーパス | files | offenses | stock | shirobai | 削減 |
   |---|---|---|---|---|---|
-  | Mastodon | 3,206 | 0 | 116.25s | 90.57s | **-25.69s (-22.1%)** |
-  | Discourse | 10,229 | 16 | 259.56s | 237.86s | **-21.70s (-8.4%)** |
-  | Redmine | 1,058 | 2 | 56.73s | 43.24s | **-13.49s (-23.8%)** |
-  | fluentd | 456 | 0 | 9.73s | 9.97s | +0.24s (+2.5%) |
+  | Mastodon | 3,206 | 0 | 118.84s | 89.65s | **-29.19s (-24.6%)** |
+  | Discourse | 10,229 | 16 | 227.68s | 182.64s | **-45.04s (-19.8%)** |
+  | Redmine | 1,058 | 2 | 52.27s | 37.09s | **-15.18s (-29.0%)** |
+  | fluentd | 456 | 0 | 8.98s | 8.88s | -0.10s (-1.1%) |
 
   計測環境: GitHub Actions `ubuntu-latest`（4-vCPU 共有 runner）、
-  shirobai は [`84b6906`](https://github.com/takayamaki/shirobai/commit/84b6906) 時点。
+  shirobai は [`2e6ba79`](https://github.com/takayamaki/shirobai/commit/2e6ba79) 時点。
   各実行はまず stock と shirobai が **同じ offense 集合** を報告することを検証してから、
   同じコードを lint する中央値時間を測る。
   任意のコミットで再実行するには `gh workflow run bench.yml`
@@ -66,7 +67,7 @@ shirobaiは日本語話者なら当然わかるでしょう、白バイです。
   （Discourse は plugin 依存が大きい）。
   fluentd は config でほとんどの default cop が無効化されており、
   shirobai が置き換える対象がほとんど残らないため、
-  native extension の固定ロードコストが削減分をわずかに上回る。
+  削減分と native extension の固定ロードコストがほぼ相殺になる。
 
   RuboCop 自身も互換検証には使っているがベンチには含めていない。
   config が `rubocop-internal_affairs` / `rubocop-rake` を要求し、
