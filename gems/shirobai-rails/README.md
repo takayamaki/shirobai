@@ -47,6 +47,17 @@ Two things are different from the shirobai-rspec shell:
   the wrappers, not the segment: RuboCop resolves it through each
   wrapper's own cop config exactly as for the stock cop.
 
+  The second cluster is two **Architecture-B** cops
+  (`Rails/HttpPositionalArguments`, `Rails/DeprecatedActiveModelErrorsMethods`):
+  the Rust side emits candidate SEND ranges on the same shared walk, and the
+  wrapper relocates the parser node (`Shirobai::NodeLocator`) and runs stock's
+  `on_send` + autocorrect VERBATIM. This keeps the source-reconstruction
+  autocorrect and the file-path / target-version heuristics on the parser AST,
+  where they match stock byte for byte, while Rust only narrows which nodes
+  are visited. These cops need no segment config either — their gating
+  (`requires_gem`, `target_rails_version`, `model_file?`) lives in the
+  wrappers.
+
 > **Non-Rails projects.** Because the origin has no gate, adding
 > shirobai-rails to a project with no railties in the target bundle still
 > wakes the shared-walk rule (the gated Record/Mailer/Job cops stay
@@ -92,7 +103,7 @@ repo root (see `benches/README.md`). Like the rspec oracle it writes a
 uniform config into the corpus root that `inherit_from`s the pinned
 rubocop-rails default.yml (so the cops actually resolve on both sides),
 pins railties in the oracle Gemfiles so the `TargetRailsVersion` gate
-activates, and self-tests against a synthetic fixture that must fire all
-four Application* cops on the stock side before the corpus diff counts.
+activates, and self-tests against a synthetic fixture that must fire every
+implemented Rails cop on the stock side before the corpus diff counts.
 
 Implemented cop status lives in `docs/cop-status.md` at the repo root.

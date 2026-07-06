@@ -30,6 +30,9 @@ Ruby layer of shirobai.
   entry point, so a gate bug can cost speed but never offenses.
 - `source_offsets.rb` — Converts byte offsets (prism) to char offsets (parser-gem).
   ASCII fast path: one `ascii_only?` check per source, identity conversion if true.
+- `node_locator.rb` — Relocates parser-gem AST nodes by exact source range, for
+  Architecture-B plugin cops that run stock detection on the located node
+  (heredoc-sound full descent; the plugin-neutral twin of the rspec gem's copy).
 - `cop/base.rb` — Shared base for all wrapper cops.
 - `cop/<dept>/<name>.rb` — One wrapper per implemented cop.
   Each wrapper turns Rust result tuples into `Parser::Source::Range`, offenses,

@@ -64,12 +64,28 @@ const COPS: [CopSpec; 4] = [
 /// Per-file offense ranges for the four Application* cops, indexed like
 /// [`COPS`] (rails origin slots 0..4). Each range is both the offense
 /// highlight and the autocorrect replace target.
+///
+/// The last two vecs are NOT final offenses but Architecture-B *candidate*
+/// ranges (rails origin slots 6..8): each is the parser send-node range of a
+/// send the Rust prefilter thinks might be an offense. The Ruby wrapper
+/// relocates the real parser node at that range and runs stock's detection +
+/// autocorrect verbatim, so these are a cheap superset — false positives are
+/// filtered on the Ruby side (`NodeLocator` + the stock matchers).
 #[derive(Debug, Default, Clone)]
 pub struct RailsAppResult {
     pub application_record: Vec<(usize, usize)>,
     pub application_controller: Vec<(usize, usize)>,
     pub application_mailer: Vec<(usize, usize)>,
     pub application_job: Vec<(usize, usize)>,
+    /// `Rails/HttpPositionalArguments` candidate send ranges (parser send
+    /// range, document order). The wrapper re-runs stock's `http_request?` /
+    /// `needs_conversion?` / routing-block / rack-test guards.
+    pub http_positional_arguments: Vec<(usize, usize)>,
+    /// `Rails/DeprecatedActiveModelErrorsMethods` candidate send ranges
+    /// (parser send range, document order). The wrapper re-runs stock's five
+    /// errors-chain matchers, the model-file receiver rule and the version
+    /// gate.
+    pub deprecated_active_model_errors_methods: Vec<(usize, usize)>,
 }
 
 impl RailsAppResult {
@@ -89,6 +105,22 @@ pub fn check_rails_app(source: &[u8]) -> RailsAppResult {
     let mut visitor = build_rule();
     super::parse_cache::with_parsed(source, |_source, node| visitor.visit(node));
     visitor.finish()
+}
+
+/// Standalone entry point for the `Rails/HttpPositionalArguments` candidate
+/// prefilter (non-bundle-eligible files).
+pub fn check_rails_http_positional_arguments(source: &[u8]) -> Vec<(usize, usize)> {
+    let mut visitor = build_rule();
+    super::parse_cache::with_parsed(source, |_source, node| visitor.visit(node));
+    visitor.finish().http_positional_arguments
+}
+
+/// Standalone entry point for the
+/// `Rails/DeprecatedActiveModelErrorsMethods` candidate prefilter.
+pub fn check_rails_deprecated_active_model_errors_methods(source: &[u8]) -> Vec<(usize, usize)> {
+    let mut visitor = build_rule();
+    super::parse_cache::with_parsed(source, |_source, node| visitor.visit(node));
+    visitor.finish().deprecated_active_model_errors_methods
 }
 
 /// Build the rule for use standalone or in the shared-walk bundle.
@@ -131,9 +163,25 @@ impl RailsAppVisitor {
             .push(cop, (loc.start_offset(), loc.end_offset()));
     }
 
+    /// Architecture-B candidate prefilter for the two send-shaped Rails cops.
+    /// Rides the same `CallNode` entry as the Application `Class.new` check —
+    /// cheap, table-driven, no extra walk. Emits parser send-node ranges; the
+    /// Ruby wrapper relocates and runs stock detection + autocorrect verbatim.
+    fn collect_arch_b(&mut self, node: &CallNode<'_>) {
+        if http_positional_candidate(node) {
+            self.result.http_positional_arguments.push(send_range(node));
+        }
+        if deprecated_errors_candidate(node) {
+            self.result
+                .deprecated_active_model_errors_methods
+                .push(send_range(node));
+        }
+    }
+
     /// `on_send`: flag `Class.new(RECV::Base)` unless the call is an exempt
     /// `SUPERCLASS =` definition.
     fn check_call(&mut self, node: &CallNode<'_>) {
+        self.collect_arch_b(node);
         let Some((cop, arg)) = class_new_base_arg(node) else {
             return;
         };
@@ -263,6 +311,165 @@ fn class_new_base_arg<'a>(node: &CallNode<'a>) -> Option<(usize, Node<'a>)> {
     }
     let cop = matching_base_cop(&arg)?;
     Some((cop, arg))
+}
+
+// --- Architecture-B candidate prefilters ---------------------------------
+
+/// The six HTTP verbs `Rails/HttpPositionalArguments` restricts to
+/// (`RESTRICT_ON_SEND`).
+const HTTP_VERBS: [&[u8]; 6] = [b"get", b"post", b"put", b"patch", b"delete", b"head"];
+
+/// True for a `&.` (csend) call — none of the stock `(send ...)` patterns
+/// match csend, so csend calls are never candidates.
+fn is_csend(node: &CallNode<'_>) -> bool {
+    node.call_operator_loc()
+        .is_some_and(|l| l.as_slice() == b"&.")
+}
+
+/// The receiver of `node` as a plain (non-csend) `CallNode`, if any.
+fn plain_receiver_call<'a>(node: &CallNode<'a>) -> Option<CallNode<'a>> {
+    let recv = node.receiver()?;
+    let call = recv.as_call_node()?;
+    if is_csend(&call) {
+        return None;
+    }
+    Some(call)
+}
+
+/// `(send _ :errors)` — any receiver (the wrapper applies the nil/send/ivar/
+/// lvar + model-file receiver rule); csend excluded.
+fn is_errors_call(call: &CallNode<'_>) -> bool {
+    !is_csend(call) && call.name().as_slice() == b"errors"
+}
+
+/// `(send (send _ :errors) {:messages :details})`.
+fn is_messages_details_on_errors(call: &CallNode<'_>) -> bool {
+    if is_csend(call) {
+        return false;
+    }
+    let name = call.name().as_slice();
+    if name != b"messages" && name != b"details" {
+        return false;
+    }
+    plain_receiver_call(call).is_some_and(|r| is_errors_call(&r))
+}
+
+/// `MANIPULATIVE_METHODS` (rubocop-rails 2.35.5), verbatim.
+fn is_manipulative(m: &[u8]) -> bool {
+    matches!(
+        m,
+        b"<<" | b"append"
+            | b"clear"
+            | b"collect!"
+            | b"compact!"
+            | b"concat"
+            | b"delete"
+            | b"delete_at"
+            | b"delete_if"
+            | b"drop"
+            | b"drop_while"
+            | b"fill"
+            | b"filter!"
+            | b"keep_if"
+            | b"flatten!"
+            | b"insert"
+            | b"map!"
+            | b"pop"
+            | b"prepend"
+            | b"push"
+            | b"reject!"
+            | b"replace"
+            | b"reverse!"
+            | b"rotate!"
+            | b"select!"
+            | b"shift"
+            | b"shuffle!"
+            | b"slice!"
+            | b"sort!"
+            | b"sort_by!"
+            | b"uniq!"
+            | b"unshift"
+    )
+}
+
+/// `Rails/HttpPositionalArguments` candidate: a bare (nil-receiver) send of an
+/// HTTP verb with at least two arguments (`http_request?` needs a non-nil
+/// action plus a captured data arg). Superset of `http_request?` — the
+/// wrapper re-checks the `!nil?` action, `needs_conversion?`, routing-block
+/// and rack-test guards.
+fn http_positional_candidate(node: &CallNode<'_>) -> bool {
+    if is_csend(node) || node.receiver().is_some() {
+        return false;
+    }
+    let name = node.name().as_slice();
+    if !HTTP_VERBS.contains(&name) {
+        return false;
+    }
+    // `http_request?` needs an action arg plus a captured data arg. In the
+    // parser AST a block-pass (`&blk`) is an argument, so stock fires on
+    // `get :x, &blk`; prism keeps it in `block()`, so count it separately.
+    let argc = node
+        .arguments()
+        .map(|a| a.arguments().iter().count())
+        .unwrap_or(0);
+    let block_pass = matches!(node.block(), Some(b) if b.as_block_argument_node().is_some());
+    argc + usize::from(block_pass) >= 2
+}
+
+/// `Rails/DeprecatedActiveModelErrorsMethods` candidate: the outer send of one
+/// of stock's five errors-chain shapes. Structural superset (the errors-chain
+/// receiver types and version gate are re-checked by the wrapper).
+fn deprecated_errors_candidate(node: &CallNode<'_>) -> bool {
+    if is_csend(node) {
+        return false;
+    }
+    let m = node.name().as_slice();
+    let Some(recv) = plain_receiver_call(node) else {
+        return false;
+    };
+    // `errors[...] = v` / `errors.messages[...] = v` (`:[]=`).
+    if m == b"[]=" {
+        return is_errors_call(&recv) || is_messages_details_on_errors(&recv);
+    }
+    // `errors.{keys,values,to_h,to_xml}`.
+    if matches!(m, b"keys" | b"values" | b"to_h" | b"to_xml") {
+        return is_errors_call(&recv);
+    }
+    // Manipulative call on `errors[...]` / `errors.{messages,details}[...]`.
+    if is_manipulative(m) && recv.name().as_slice() == b"[]" {
+        return plain_receiver_call(&recv)
+            .is_some_and(|r| is_errors_call(&r) || is_messages_details_on_errors(&r));
+    }
+    false
+}
+
+/// Parser send-node range for `node` (the range `NodeLocator` matches on the
+/// parser AST). Equals prism `location()` for paren-less no-block calls, but
+/// index brackets (`[]` / `[]=`) put `closing_loc` at `]` while the value
+/// follows, and a literal `do`/`{}` block is a separate parser node outside
+/// the send — so the end is the max of message / closing-paren / last
+/// argument / block-pass, never a literal block. Verified against parser-gem
+/// on heredoc, multiline, index-assign and block forms.
+fn send_range(node: &CallNode<'_>) -> (usize, usize) {
+    let start = node.location().start_offset();
+    let mut end = node
+        .message_loc()
+        .map(|m| m.end_offset())
+        .unwrap_or_else(|| node.location().end_offset());
+    if let Some(cl) = node.closing_loc() {
+        end = end.max(cl.end_offset());
+    }
+    if let Some(args) = node.arguments()
+        && let Some(last) = args.arguments().iter().last()
+    {
+        end = end.max(last.location().end_offset());
+    }
+    if let Some(block) = node.block()
+        && let Some(bp) = block.as_block_argument_node()
+    {
+        end = end.max(bp.location().end_offset());
+    }
+    (start, end)
 }
 
 impl<'pr> Visit<'pr> for RailsAppVisitor {
@@ -444,5 +651,115 @@ mod tests {
         let bundled = rule.finish();
         assert_eq!(bundled.application_record, alone.application_record);
         assert_eq!(bundled.application_record.len(), 2);
+    }
+
+    // --- Architecture-B candidate prefilters ---
+
+    fn http(src: &str) -> Vec<(usize, usize)> {
+        check_rails_http_positional_arguments(src.as_bytes())
+    }
+
+    fn dep(src: &str) -> Vec<(usize, usize)> {
+        check_rails_deprecated_active_model_errors_methods(src.as_bytes())
+    }
+
+    #[test]
+    fn http_candidate_basic_verbs() {
+        // Each verb with >= 2 args -> one candidate covering the whole send.
+        assert_eq!(http("get :new, user_id: @user.id\n"), vec![(0, 27)]);
+        assert_eq!(http("post(:user_attrs, id: 1)\n"), vec![(0, 24)]);
+        assert_eq!(http("head :create, user_id: 1\n").len(), 1);
+    }
+
+    #[test]
+    fn http_candidate_arity_and_receiver() {
+        // One arg -> not a candidate (`http_request?` needs action + data).
+        assert!(http("get :new\n").is_empty());
+        // Explicit receiver -> not a bare send.
+        assert!(http("@user.get.id = ''\n").is_empty());
+        assert!(http("obj.get :new, id: 1\n").is_empty());
+        // Non-verb selector.
+        assert!(http("puts :create, user_id: 1\n").is_empty());
+        assert!(http("process :new, params: { id: 1 }\n").is_empty());
+    }
+
+    #[test]
+    fn http_candidate_superset_forms() {
+        // The wrapper filters these; the prefilter still emits them (superset).
+        assert_eq!(http("get :nothing, **args\n").len(), 1); // kwsplat
+        assert_eq!(http("get(:list, ...)\n").len(), 1); // forwarded args
+        assert_eq!(http("get :new, params: { id: 1 }\n").len(), 1); // already kw
+    }
+
+    #[test]
+    fn http_candidate_block_range_excludes_literal_block() {
+        // `get :x, foo do end` -> send range is `get :x, foo` (block excluded).
+        assert_eq!(http("get :x, foo do end\n"), vec![(0, 11)]);
+        // A block-pass counts as the data arg (stock fires) and is part of the
+        // send range.
+        assert_eq!(http("get :x, &blk\n"), vec![(0, 12)]);
+        // Only a block-pass and no data arg -> not enough args.
+        assert!(http("get &blk\n").is_empty());
+    }
+
+    #[test]
+    fn dep_root_forms() {
+        assert_eq!(dep("user.errors[:name] << 'msg'\n"), vec![(0, 27)]);
+        assert_eq!(dep("user.errors[:name] = []\n"), vec![(0, 23)]);
+        assert_eq!(dep("user.errors[:name].clear\n"), vec![(0, 24)]);
+    }
+
+    #[test]
+    fn dep_errors_deprecated_forms() {
+        // The `.keys` node is the offense, not the outer `.include?`.
+        assert_eq!(dep("user.errors.keys.include?(:name)\n"), vec![(0, 16)]);
+        assert_eq!(dep("user.errors.values\n"), vec![(0, 18)]);
+        assert_eq!(dep("user.errors.to_h\n"), vec![(0, 16)]);
+        assert_eq!(dep("user.errors.to_xml\n"), vec![(0, 18)]);
+    }
+
+    #[test]
+    fn dep_messages_details_forms() {
+        assert_eq!(dep("user.errors.messages[:name] << 'msg'\n"), vec![(0, 36)]);
+        assert_eq!(dep("user.errors.messages[:name] = []\n"), vec![(0, 32)]);
+        assert_eq!(dep("user.errors.details[:name] << {}\n"), vec![(0, 32)]);
+        assert_eq!(dep("errors.details[:name].clear\n"), vec![(0, 27)]);
+    }
+
+    #[test]
+    fn dep_nil_receiver_and_model_forms() {
+        // Bare `errors` (only valid in model files; the wrapper decides).
+        assert_eq!(dep("errors[:name] << 'msg'\n"), vec![(0, 22)]);
+        assert_eq!(dep("errors.keys\n"), vec![(0, 11)]);
+    }
+
+    #[test]
+    fn dep_non_candidates() {
+        // Non-manipulative / wrong shape -> no candidate.
+        assert!(dep("errors[:name].present?\n").is_empty());
+        assert!(dep("errors.messages[:name].keys\n").is_empty());
+        assert!(dep("errors.messages[:name].present?\n").is_empty());
+        assert!(dep("user.foo[:name] << 'msg'\n").is_empty());
+        assert!(dep("user.errors.attribute_names\n").is_empty());
+        // csend is never a candidate.
+        assert!(dep("user&.errors&.keys\n").is_empty());
+    }
+
+    #[test]
+    fn arch_b_candidates_ride_the_shared_walk() {
+        let src = "get :new, id: 1\nuser.errors[:name] << 'x'\n";
+        let mut rule = build_rule();
+        super::super::dispatch::run(src.as_bytes(), &mut [&mut rule]);
+        let bundled = rule.finish();
+        assert_eq!(
+            bundled.http_positional_arguments,
+            check_rails_http_positional_arguments(src.as_bytes())
+        );
+        assert_eq!(
+            bundled.deprecated_active_model_errors_methods,
+            check_rails_deprecated_active_model_errors_methods(src.as_bytes())
+        );
+        assert_eq!(bundled.http_positional_arguments.len(), 1);
+        assert_eq!(bundled.deprecated_active_model_errors_methods.len(), 1);
     }
 }

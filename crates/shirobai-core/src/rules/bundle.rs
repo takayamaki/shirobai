@@ -982,6 +982,12 @@ pub struct BundleResult {
     /// (`rails_dynamic_find_by`); empty when `BundleConfig::rails` is `None`.
     pub rails_unknown_env: Vec<rails_unknown_env::UnknownEnvOffense>,
     pub rails_dynamic_find_by: Vec<rails_dynamic_find_by::DynamicFindByOffense>,
+    /// Architecture-B candidate send ranges (rails origin slots 6..8). Not
+    /// final offenses: the wrapper relocates the parser node and runs stock
+    /// detection + autocorrect verbatim. Computed by the same
+    /// `RailsAppVisitor`; empty when `BundleConfig::rails` is `None`.
+    pub rails_http_positional_arguments: Vec<(usize, usize)>,
+    pub rails_deprecated_active_model_errors_methods: Vec<(usize, usize)>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -1594,6 +1600,9 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         rails_application_job: rails_result.application_job,
         rails_unknown_env,
         rails_dynamic_find_by,
+        rails_http_positional_arguments: rails_result.http_positional_arguments,
+        rails_deprecated_active_model_errors_methods: rails_result
+            .deprecated_active_model_errors_methods,
     }
 }
 

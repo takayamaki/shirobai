@@ -80,6 +80,16 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rails" do
       RuboCop::Cop::Rails::DynamicFindBy,
       Shirobai::Cop::Rails::DynamicFindBy,
       "#{prefix}User.find_by_name_and_email(name, email)\n"
+    ],
+    # Architecture-B cop: the candidate byte range is ahead of its char range
+    # behind the multibyte prefix, so it must round-trip through
+    # `SourceOffsets` before `NodeLocator` can relocate the parser send.
+    # (HttpPositionalArguments needs the railties `requires_gem` gate stubbed,
+    # so its non-ASCII parity lives in its own edge spec.)
+    "Rails/DeprecatedActiveModelErrorsMethods" => [
+      RuboCop::Cop::Rails::DeprecatedActiveModelErrorsMethods,
+      Shirobai::Cop::Rails::DeprecatedActiveModelErrorsMethods,
+      "#{prefix}user.errors[:name] << 'msg'\n"
     ]
   }
 

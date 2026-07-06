@@ -141,7 +141,7 @@ diff_jsons() {
 # railties gate is satisfied; then the fixture itself must show zero diff.
 selftest_dir="$(mktemp -d /tmp/shirobai_rails_selftest.XXXXXX)"
 trap 'rm -rf "$selftest_dir"' EXIT
-mkdir -p "$selftest_dir/app"
+mkdir -p "$selftest_dir/app/spec"
 cat > "$selftest_dir/app/oracle_selftest.rb" <<'FIXTURE'
 class SelfTestModel < ActiveRecord::Base
 end
@@ -164,6 +164,18 @@ end
 
 # Rails/DynamicFindBy (dynamic finder with a receiver).
 User.find_by_name_and_email(name, email)
+
+# Rails/DeprecatedActiveModelErrorsMethods (runs on any file; no Include).
+def add_error(record)
+  record.errors[:name] << 'msg'
+end
+FIXTURE
+# Rails/HttpPositionalArguments only runs under an `Include: **/spec/**` /
+# `**/test/**` path, so this fixture lives in a spec dir under the linted
+# target.
+cat > "$selftest_dir/app/spec/oracle_http_selftest_spec.rb" <<'FIXTURE'
+get :new, user_id: 1
+post(:create, id: 2)
 FIXTURE
 # Minimal lockfile so `gem_versions_in_target` resolves railties and the
 # TargetRailsVersion-gated cops (Record / Mailer / Job) activate here.
@@ -190,6 +202,7 @@ ruby -rjson -e '
     Rails/ApplicationRecord Rails/ApplicationController
     Rails/ApplicationMailer Rails/ApplicationJob
     Rails/UnknownEnv Rails/DynamicFindBy
+    Rails/HttpPositionalArguments Rails/DeprecatedActiveModelErrorsMethods
   ]
   d = JSON.parse(File.read(ARGV[0]))
   fired = d["files"].flat_map { |f| f["offenses"].map { |o| o["cop_name"] } }.uniq
@@ -199,7 +212,7 @@ ruby -rjson -e '
     warn "the uniform config / railties gate is not enabling the Application* cops"
     exit 1
   end
-  puts "self-test: all #{cops.size} Application* cops fired on the stock side"
+  puts "self-test: all #{cops.size} implemented Rails cops fired on the stock side"
 ' "${prefix}_selftest_stock.json"
 
 diff_jsons "${prefix}_selftest_stock.json" "${prefix}_selftest_shirobai.json" fixture

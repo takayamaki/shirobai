@@ -45,18 +45,31 @@ RSpec.describe Shirobai::Rails do
         token
       )
       expect(result.length).to eq(Shirobai::Dispatch::ORIGINS.length)
-      # rails origin = 3, slots 0..3.
+      # rails origin = 3: slots 0..3 Application*, 4..5 send/block-table
+      # (UnknownEnv / DynamicFindBy), 6..7 Architecture-B candidates.
+      expect(result[3].length).to eq(8)
       expect(result[3][0]).to eq([[12, 30]]) # ApplicationRecord: `ActiveRecord::Base`
       expect(result[3][1].length).to eq(1)   # ApplicationController
       expect(result[3][2].length).to eq(1)   # ApplicationMailer
       expect(result[3][3].length).to eq(1)   # ApplicationJob
     end
 
+    it "computes the Architecture-B candidate slots on an awake token" do
+      token = Shirobai::Dispatch.bundle_token(config)
+      result = Shirobai.check_all(
+        "get :new, id: 1\n" \
+        "user.errors[:name] << 'x'\n",
+        token
+      )
+      expect(result[3][6]).to eq([[0, 15]]) # HttpPositionalArguments candidate
+      expect(result[3][7]).to eq([[16, 41]]) # DeprecatedActiveModelErrorsMethods candidate
+    end
+
     it "keeps the rails slots empty on a dormant (forced-inactive) token" do
       token = Shirobai::Dispatch.bundle_token(config, %i[rails].freeze)
       result = Shirobai.check_all("class Foo < ActiveRecord::Base\nend\n", token)
       expect(result.length).to eq(Shirobai::Dispatch::ORIGINS.length)
-      expect(result[3]).to eq([[], [], [], [], [], []])
+      expect(result[3]).to eq([[], [], [], [], [], [], [], []])
     end
   end
 
@@ -74,6 +87,14 @@ RSpec.describe Shirobai::Rails do
       expect(Shirobai.check_rails_application_controller(source).length).to eq(1)
       expect(Shirobai.check_rails_application_mailer(source)).to eq([])
       expect(Shirobai.check_rails_application_job(source)).to eq([])
+    end
+
+    it "returns candidate ranges for the Architecture-B cops" do
+      expect(Shirobai.check_rails_http_positional_arguments("get :new, id: 1\n"))
+        .to eq([[0, 15]])
+      expect(
+        Shirobai.check_rails_deprecated_active_model_errors_methods("user.errors.keys\n")
+      ).to eq([[0, 16]])
     end
   end
 end

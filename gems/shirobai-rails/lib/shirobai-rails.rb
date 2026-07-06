@@ -30,6 +30,9 @@ require_relative "shirobai/cop/rails/application_mailer"
 require_relative "shirobai/cop/rails/application_job"
 require_relative "shirobai/cop/rails/unknown_env"
 require_relative "shirobai/cop/rails/dynamic_find_by"
+require_relative "shirobai/cop/rails/candidate_support"
+require_relative "shirobai/cop/rails/http_positional_arguments"
+require_relative "shirobai/cop/rails/deprecated_active_model_errors_methods"
 
 module Shirobai
   # Glue for the shirobai-rails plugin gem: the packed-config segment (just a
@@ -48,7 +51,9 @@ module Shirobai
       Shirobai::Cop::Rails::ApplicationMailer,
       Shirobai::Cop::Rails::ApplicationJob,
       Shirobai::Cop::Rails::UnknownEnv,
-      Shirobai::Cop::Rails::DynamicFindBy
+      Shirobai::Cop::Rails::DynamicFindBy,
+      Shirobai::Cop::Rails::HttpPositionalArguments,
+      Shirobai::Cop::Rails::DeprecatedActiveModelErrorsMethods
     ].freeze
 
     class << self

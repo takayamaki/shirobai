@@ -56,6 +56,21 @@ RSpec.describe "lint-mode correctable parity with stock rubocop-rails" do
       RuboCop::Cop::Rails::UnknownEnv,
       Shirobai::Cop::Rails::UnknownEnv,
       "Rails.env.proudction?\n"
+    ],
+    "Rails/HttpPositionalArguments" => [
+      RuboCop::Cop::Rails::HttpPositionalArguments,
+      Shirobai::Cop::Rails::HttpPositionalArguments,
+      "get :new, user_id: 1\n"
+    ],
+    "Rails/DeprecatedActiveModelErrorsMethods (<< correctable)" => [
+      RuboCop::Cop::Rails::DeprecatedActiveModelErrorsMethods,
+      Shirobai::Cop::Rails::DeprecatedActiveModelErrorsMethods,
+      "user.errors[:name] << 'msg'\n"
+    ],
+    "Rails/DeprecatedActiveModelErrorsMethods (:[]= uncorrectable)" => [
+      RuboCop::Cop::Rails::DeprecatedActiveModelErrorsMethods,
+      Shirobai::Cop::Rails::DeprecatedActiveModelErrorsMethods,
+      "user.errors[:name] = []\n"
     ]
   }
 

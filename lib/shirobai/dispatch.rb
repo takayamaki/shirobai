@@ -166,7 +166,15 @@ module Shirobai
       rails_application_job: [3, 3].freeze,
       # send/block-table cluster (rails origin slots 4-5), each its own rule.
       rails_unknown_env: [3, 4].freeze,
-      rails_dynamic_find_by: [3, 5].freeze
+      rails_dynamic_find_by: [3, 5].freeze,
+      # Rails Architecture-B cops (origin 3 slots 6-7): the Rust side emits
+      # candidate send ranges here, and the wrapper relocates the parser node
+      # and runs stock detection + autocorrect verbatim (same shape as the
+      # rspec send-candidate cops). The 3-point positional sync (this map,
+      # the `BundleResult` field order in `crates/.../bundle.rs`, the ext
+      # `check_all` push order) moves together.
+      rails_http_positional_arguments: [3, 6].freeze,
+      rails_deprecated_active_model_errors_methods: [3, 7].freeze
     }.freeze
 
     # Dormant packed-config segment per plugin origin: the enable flag (first

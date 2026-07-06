@@ -422,15 +422,65 @@ Rails department keeps the signal clean; the ~134 non-replaced rubocop-rails
 cops still run as stock on both sides, so only the four replaced cops are
 under test.
 
+### Implemented (2 cops, Architecture B)
+
+- `Rails/HttpPositionalArguments`
+- `Rails/DeprecatedActiveModelErrorsMethods`
+
+Both are **Architecture B** (the rspec metadata-family pattern): the Rust
+prefilter emits candidate SEND ranges on the same `RailsAppVisitor` walk (no
+new rule, no new interest flags — it rides `ENTER_CALL`), and the wrapper
+relocates the parser send node with `Shirobai::NodeLocator` and runs stock's
+`on_send` + autocorrect VERBATIM. This is the right split because both cops
+are source-reconstruction heavy (full-node rebuild joining hash pairs with
+`, `; receiver-walk offense ranges; `.source` reads) and carry
+file-path / target-version heuristics — reproducing that byte-for-byte in
+Rust is far riskier than running stock's own Ruby on the located node. The
+candidate sets are narrow: bare HTTP-verb sends with >= 2 args (a block-pass
+counts, as in the parser AST), and the five errors-chain shapes
+(`errors[...]` / `errors.{messages,details}[...]` manipulation & assignment,
+`errors.{keys,values,to_h,to_xml}`).
+
+`Rails/HttpPositionalArguments` carries stock's `requires_gem('railties', '>=
+5.0')` gate (Rails >= 5), replicated on the wrapper like the Application*
+cops; `Include: **/spec/**, **/test/**` resolves through the wrapper badge.
+`Rails/DeprecatedActiveModelErrorsMethods` has no gem gate but reads
+`target_rails_version` in `on_send` (Rails <= 6.0 exempts
+`keys`/`values`/`to_h`/`to_xml`) and `model_file?` (`/models/` allows a nil
+receiver) — both run in the wrapper on the parser AST, unchanged from stock.
+
+Verified with the same bar: vendor specs from `vendor/rubocop-rails` (156
+examples across both cops), differential edge-case specs for every probed
+quirk (session-arg conversion, parentheses, multiline hash join, routing
+block / rack-test / kwsplat guards, `keys`-node-not-`include?` offense,
+version gate, uncorrectable `details <<` and `[]=`, a heredoc-interpolated
+`errors.to_h`, non-ASCII, CRLF fallback), lint-mode correctable parity,
+non-ASCII offset parity, and the parity oracle at zero diff on Mastodon /
+Redmine / Discourse (`app` and `spec` targets), plus a direct `--only ... -A`
+byte comparison. The self-test fixture fires both cops on the stock side.
+
+One `NodeLocator` subtlety surfaced on Discourse: the range-containment prune
+the rspec `NodeLocator` uses is UNSOUND for heredocs — a send in a heredoc
+body sits outside the expression range of every ancestor up to the root, so
+the prune drops it. The core `Shirobai::NodeLocator` (added here, the
+plugin-neutral twin) does a full descent with an all-found early exit
+instead; it runs only when the wrapper already has candidates, so the cost is
+negligible.
+
 ### Wire layout (for the sibling tracks building on this branch)
 
-Rails is origin 3 (`ORIGIN_RAILS` / `N_ORIGINS = 4`). Segment: `nums =
-[rails_enabled]` (wake-up flag only), `lists = []` (the Application* cluster
-has no behavioral config). Dormant segment `[[0], []]`. Slots:
-`rails_application_record [3,0]`, `..._controller [3,1]`, `..._mailer
-[3,2]`, `..._job [3,3]`; each slot is `[[start, end], ...]` — the offense
-highlight and autocorrect replace range (message + superclass are wrapper
-constants). Future clusters extend the segment by appending nums / lists in
+Rails is origin 3 (`ORIGIN_RAILS` / `N_ORIGINS = 4`). Slots after the
+integration of the two 2026-07 clusters: `rails_application_record [3,0]`,
+`..._controller [3,1]`, `..._mailer [3,2]`, `..._job [3,3]` (final offense
+ranges); `rails_unknown_env [3,4]`, `rails_dynamic_find_by [3,5]`
+(send/block-table cluster, see its section below);
+`rails_http_positional_arguments [3,6]`,
+`rails_deprecated_active_model_errors_methods [3,7]` (Architecture-B
+candidate ranges). The two Architecture-B cops add NOTHING to the segment —
+their gating lives in the wrappers — so the segment shape is exactly the
+send/block-table cluster's (`nums = [rails_enabled,
+unknown_env_supports_local]`, four lists; see "Wire layout delta" below).
+Future clusters extend the segment by appending nums / lists in
 `rails_config.rs`, never reordering.
 
 ## Plugin cops: shirobai-rails (send/block-table cluster)

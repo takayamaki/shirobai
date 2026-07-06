@@ -1755,7 +1755,10 @@ fn register_bundle_config(
 /// its packed segment — the rails origin has no per-file gate):
 ///
 /// 0 rails_application_record / 1 rails_application_controller /
-/// 2 rails_application_mailer / 3 rails_application_job
+/// 2 rails_application_mailer / 3 rails_application_job /
+/// 4 rails_unknown_env / 5 rails_dynamic_find_by /
+/// 6 rails_http_positional_arguments (candidates) /
+/// 7 rails_deprecated_active_model_errors_methods (candidates)
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1938,14 +1941,18 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         rspec.push(map_rspec_empty_line(r.rspec_empty_line_after_subject))?;
         // Rails origin (result[3]). Slots 0-3 (Application*) are `[[start,
         // end], ...]` byte ranges; slots 4-5 carry the send/block-table cops'
-        // richer tuples (see the map functions).
-        let rails = ruby.ary_new_capa(6);
+        // richer tuples (see the map functions); slots 6-7 are the two
+        // Architecture-B cops' candidate send ranges (the wrapper relocates
+        // and runs stock detection + autocorrect verbatim).
+        let rails = ruby.ary_new_capa(8);
         rails.push(r.rails_application_record)?;
         rails.push(r.rails_application_controller)?;
         rails.push(r.rails_application_mailer)?;
         rails.push(r.rails_application_job)?;
         rails.push(map_rails_unknown_env(r.rails_unknown_env))?;
         rails.push(map_rails_dynamic_find_by(r.rails_dynamic_find_by))?;
+        rails.push(r.rails_http_positional_arguments)?;
+        rails.push(r.rails_deprecated_active_model_errors_methods)?;
         // The nested result is N_ORIGINS + 1 arrays per file (the outer
         // one plus one per origin), nothing per cop.
         let out = ruby.ary_new_capa(4);
@@ -3757,6 +3764,20 @@ fn check_rails_dynamic_find_by(
     )
 }
 
+/// Standalone candidate prefilter for `Rails/HttpPositionalArguments`
+/// (per-cop fallback on non-bundle-eligible files).
+fn check_rails_http_positional_arguments(source: RString) -> Vec<(usize, usize)> {
+    shirobai_core::rules::rails_app::check_rails_http_positional_arguments(bytes(&source))
+}
+
+/// Standalone candidate prefilter for
+/// `Rails/DeprecatedActiveModelErrorsMethods`.
+fn check_rails_deprecated_active_model_errors_methods(source: RString) -> Vec<(usize, usize)> {
+    shirobai_core::rules::rails_app::check_rails_deprecated_active_model_errors_methods(bytes(
+        &source,
+    ))
+}
+
 /// Ruby entry point for `Lint/UnreachableCode`. Config-less. Returns
 /// `[[start, end], ...]` — the byte range of each unreachable expression.
 fn check_unreachable_code(source: RString) -> Vec<(usize, usize)> {
@@ -4225,6 +4246,14 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_rails_dynamic_find_by",
         function!(check_rails_dynamic_find_by, 4),
+    )?;
+    module.define_module_function(
+        "check_rails_http_positional_arguments",
+        function!(check_rails_http_positional_arguments, 1),
+    )?;
+    module.define_module_function(
+        "check_rails_deprecated_active_model_errors_methods",
+        function!(check_rails_deprecated_active_model_errors_methods, 1),
     )?;
     module.define_module_function(
         "check_rspec_variable_name",
