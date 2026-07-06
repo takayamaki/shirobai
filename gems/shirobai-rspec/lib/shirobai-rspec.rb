@@ -25,6 +25,8 @@ require "rubocop-rspec"
 
 require_relative "shirobai/rspec/version"
 require_relative "shirobai/rspec/node_locator"
+require_relative "shirobai/cop/rspec/metadata_support"
+require_relative "shirobai/cop/rspec/send_candidate_support"
 require_relative "shirobai/cop/rspec/variable_name"
 require_relative "shirobai/cop/rspec/let_setup"
 require_relative "shirobai/cop/rspec/variable_definition"
@@ -32,6 +34,12 @@ require_relative "shirobai/cop/rspec/multiple_memoized_helpers"
 require_relative "shirobai/cop/rspec/repeated_description"
 require_relative "shirobai/cop/rspec/repeated_example"
 require_relative "shirobai/cop/rspec/named_subject"
+require_relative "shirobai/cop/rspec/focus"
+require_relative "shirobai/cop/rspec/pending_without_reason"
+require_relative "shirobai/cop/rspec/metadata_style"
+require_relative "shirobai/cop/rspec/duplicated_metadata"
+require_relative "shirobai/cop/rspec/empty_metadata"
+require_relative "shirobai/cop/rspec/sort_metadata"
 
 module Shirobai
   # Glue for the shirobai-rspec plugin gem: the packed-config segment
@@ -47,7 +55,13 @@ module Shirobai
       Shirobai::Cop::RSpec::MultipleMemoizedHelpers,
       Shirobai::Cop::RSpec::RepeatedDescription,
       Shirobai::Cop::RSpec::RepeatedExample,
-      Shirobai::Cop::RSpec::NamedSubject
+      Shirobai::Cop::RSpec::NamedSubject,
+      Shirobai::Cop::RSpec::Focus,
+      Shirobai::Cop::RSpec::PendingWithoutReason,
+      Shirobai::Cop::RSpec::MetadataStyle,
+      Shirobai::Cop::RSpec::DuplicatedMetadata,
+      Shirobai::Cop::RSpec::EmptyMetadata,
+      Shirobai::Cop::RSpec::SortMetadata
     ].freeze
 
     # `config['RSpec']['Language']` sub-role paths in the fixed wire order of

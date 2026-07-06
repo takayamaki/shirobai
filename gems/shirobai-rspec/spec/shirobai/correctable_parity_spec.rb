@@ -53,6 +53,44 @@ RSpec.describe "lint-mode correctable parity with stock rubocop-rspec" do
       Shirobai::Cop::RSpec::NamedSubject,
       "describe 'x' do\n  subject { described_class.new }\n  it('a') { expect(subject.foo).to be }\nend\n",
       false
+    ],
+    # Focus corrects the metadata-removal form (and the fdescribe rename).
+    "RSpec/Focus" => [
+      RuboCop::Cop::RSpec::Focus,
+      Shirobai::Cop::RSpec::Focus,
+      "describe 'x', :focus do\n  it 'a' do\n  end\nend\n",
+      true
+    ],
+    # PendingWithoutReason has no autocorrect.
+    "RSpec/PendingWithoutReason" => [
+      RuboCop::Cop::RSpec::PendingWithoutReason,
+      Shirobai::Cop::RSpec::PendingWithoutReason,
+      "describe 'x' do\n  it 'a', :pending do\n  end\nend\n",
+      false
+    ],
+    "RSpec/MetadataStyle" => [
+      RuboCop::Cop::RSpec::MetadataStyle,
+      Shirobai::Cop::RSpec::MetadataStyle,
+      "describe 'x', a: true do\n  it 'y' do\n  end\nend\n",
+      true
+    ],
+    "RSpec/DuplicatedMetadata" => [
+      RuboCop::Cop::RSpec::DuplicatedMetadata,
+      Shirobai::Cop::RSpec::DuplicatedMetadata,
+      "describe 'x', :a, :a do\n  it 'y' do\n  end\nend\n",
+      true
+    ],
+    "RSpec/EmptyMetadata" => [
+      RuboCop::Cop::RSpec::EmptyMetadata,
+      Shirobai::Cop::RSpec::EmptyMetadata,
+      "describe 'x', {} do\n  it 'y' do\n  end\nend\n",
+      true
+    ],
+    "RSpec/SortMetadata" => [
+      RuboCop::Cop::RSpec::SortMetadata,
+      Shirobai::Cop::RSpec::SortMetadata,
+      "describe 'x', :b, :a do\n  it 'y' do\n  end\nend\n",
+      true
     ]
   }
 

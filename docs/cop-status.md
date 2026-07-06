@@ -252,6 +252,55 @@ block-kind-sensitive matchers can disagree there. Real spec code calling
 a bare `it` inside a block is essentially nonexistent (RSpec's own `it`
 requires arguments or a block).
 
+## Plugin cops: shirobai-rspec (R2 metadata family)
+
+Six more rubocop-rspec cops through the same `RSpecDispatcherRule`.
+
+### Implemented (6 cops)
+
+- `RSpec/Focus`
+- `RSpec/PendingWithoutReason`
+- `RSpec/MetadataStyle`
+- `RSpec/DuplicatedMetadata`
+- `RSpec/EmptyMetadata`
+- `RSpec/SortMetadata`
+
+These cops' offense detection and (for five of them) autocorrect depend
+heavily on parser-AST geometry — sibling/brace-aware pair removal,
+metadata insertion relative to hashes, sorted-source replacement, and
+selector renaming — that cannot be reproduced byte for byte off prism
+offsets alone. So the split is deliberately thin on the Rust side: the
+`RSpecDispatcherRule` classifies CANDIDATE node ranges on the shared walk
+(a superset), and each wrapper relocates the parser node through the
+shared `Shirobai::RSpec::NodeLocator` and runs STOCK's own `on_send` /
+`Metadata#on_block` plus autocorrect VERBATIM on the real parser AST. The
+wrapper sets `RuboCop::RSpec::Language.config` so the stock matchers
+resolve, and renames the stock entry method so the Commissioner never
+dispatches a per-node callback (only `on_new_investigation` runs). This is
+parity by construction for the equality- and geometry-sensitive parts.
+
+The four `Metadata`-mixin cops share ONE Rust metadata-anchor list (the
+direct example/group/hook blocks plus `RSpec.configure` blocks, emitted
+for every block kind so the wrapper's `(block ...)` matcher self-filters
+parser block kind — this also handles the prism-itblock vs
+parser-plain-block target divergence for free). `Focus` and
+`PendingWithoutReason` each carry their own candidate send list. No new
+wire nums/lists were needed: candidate selection is role-table-only, and
+`MetadataStyle`'s `EnforcedStyle` is read by the wrapper.
+
+Probed quirks pinned as differential edge specs: metadata fires on plain
+blocks only (numblock never, itblock == plain at target < 3.4); `Focus`'s
+non-correctable bare-alias case, the chained / inside-def guards, and
+skipped-inside-focusable metadata; `PendingWithoutReason`'s block vs
+in-example vs metadata forms and the "regular example without body does
+not fire" case; the `RSpec.configure` hook metadata path. Verified with
+vendor specs, lint-mode correctable parity, non-ASCII offset parity, a
+manual `--only`-scoped `-A` byte comparison for `MetadataStyle` on 58 real
+forem files (MATCH), and the rspec parity oracle at zero diff on
+factory_bot / forem / discourse / mastodon (corpus positives:
+`MetadataStyle` and `PendingWithoutReason` fire; `SortMetadata` once; the
+other three have no corpus positives and rest on the synthetic specs).
+
 ## Attempted but reverted
 
 These cops were implemented to full drop-in compatibility but reverted because

@@ -1512,6 +1512,58 @@ fn check_rspec_named_subject(
     ))
 }
 
+/// Standalone entry point for the four `Metadata`-mixin cops (per-cop
+/// fallback). Returns the shared metadata-anchor block ranges
+/// `[[block_start, block_end], ...]` in document order; each wrapper relocates
+/// the parser block node and runs stock's `Metadata#on_block` verbatim.
+fn check_rspec_metadata_anchors(
+    ruby: &Ruby,
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Result<Vec<(usize, usize)>, Error> {
+    let Some(cfg) = rspec_segment_config(ruby, nums, lists)? else {
+        return Ok(Vec::new());
+    };
+    Ok(shirobai_core::rules::rspec_dispatcher::check_rspec_metadata_anchors(
+        bytes(&source),
+        &cfg,
+    ))
+}
+
+/// Standalone entry point for `RSpec/Focus` (per-cop fallback). Candidate send
+/// ranges `[[send_start, send_end], ...]`; the wrapper runs stock's `on_send`.
+fn check_rspec_focus(
+    ruby: &Ruby,
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Result<Vec<(usize, usize)>, Error> {
+    let Some(cfg) = rspec_segment_config(ruby, nums, lists)? else {
+        return Ok(Vec::new());
+    };
+    Ok(shirobai_core::rules::rspec_dispatcher::check_rspec_focus(
+        bytes(&source),
+        &cfg,
+    ))
+}
+
+/// Standalone entry point for `RSpec/PendingWithoutReason` (per-cop fallback).
+fn check_rspec_pending_without_reason(
+    ruby: &Ruby,
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Result<Vec<(usize, usize)>, Error> {
+    let Some(cfg) = rspec_segment_config(ruby, nums, lists)? else {
+        return Ok(Vec::new());
+    };
+    Ok(shirobai_core::rules::rspec_dispatcher::check_rspec_pending_without_reason(
+        bytes(&source),
+        &cfg,
+    ))
+}
+
 thread_local! {
     /// Bundle configs registered by `register_bundle_config` (token = index,
     /// no eviction: a lint run registers one entry per distinct `Config`
@@ -1607,7 +1659,11 @@ fn register_bundle_config(
 /// 0 rspec_variable_name / 1 rspec_let_setup /
 /// 2 rspec_variable_definition / 3 rspec_multiple_memoized_helpers /
 /// 4 rspec_repeated_description / 5 rspec_repeated_example /
-/// 6 rspec_named_subject
+/// 6 rspec_named_subject /
+/// 7 rspec_focus / 8 rspec_pending_without_reason /
+/// 9 rspec_metadata_style / 10 rspec_duplicated_metadata /
+/// 11 rspec_empty_metadata / 12 rspec_sort_metadata
+/// (slots 9-12 carry the same shared metadata-anchor list)
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1764,7 +1820,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         perf.push(map_perf_start_with(r.perf_start_with))?;
         perf.push(map_perf_times_map(r.perf_times_map))?;
         // RSpec origin (result[2]).
-        let rspec = ruby.ary_new_capa(7);
+        let rspec = ruby.ary_new_capa(13);
         rspec.push(map_rspec_variable_name(r.rspec_variable_name))?;
         rspec.push(r.rspec_let_setup)?;
         rspec.push(map_rspec_variable_definition(r.rspec_variable_definition))?;
@@ -1774,6 +1830,14 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         rspec.push(r.rspec_repeated_description)?;
         rspec.push(r.rspec_repeated_example)?;
         rspec.push(r.rspec_named_subject)?;
+        // R2 metadata family (slots 7-12). Slots 9-12 (the four Metadata-mixin
+        // cops) share one anchor list; the ext clones it into each slot.
+        rspec.push(r.rspec_focus)?;
+        rspec.push(r.rspec_pending_without_reason)?;
+        rspec.push(r.rspec_metadata_anchors.clone())?;
+        rspec.push(r.rspec_metadata_anchors.clone())?;
+        rspec.push(r.rspec_metadata_anchors.clone())?;
+        rspec.push(r.rspec_metadata_anchors)?;
         // The nested result is N_ORIGINS + 1 arrays per file (the outer
         // one plus one per origin), nothing per cop.
         let out = ruby.ary_new_capa(3);
@@ -3963,6 +4027,15 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_rspec_named_subject",
         function!(check_rspec_named_subject, 3),
+    )?;
+    module.define_module_function(
+        "check_rspec_metadata_anchors",
+        function!(check_rspec_metadata_anchors, 3),
+    )?;
+    module.define_module_function("check_rspec_focus", function!(check_rspec_focus, 3))?;
+    module.define_module_function(
+        "check_rspec_pending_without_reason",
+        function!(check_rspec_pending_without_reason, 3),
     )?;
     module.define_module_function(
         "check_stabby_lambda_parentheses",

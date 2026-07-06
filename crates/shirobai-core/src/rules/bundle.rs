@@ -927,6 +927,15 @@ pub struct BundleResult {
     pub rspec_repeated_example: Vec<Vec<(usize, usize)>>,
     /// `RSpec/NamedSubject`: the `subject` selector ranges to report.
     pub rspec_named_subject: Vec<(usize, usize)>,
+    /// `RSpec/Focus` candidate send ranges (the wrapper runs stock's `on_send`).
+    pub rspec_focus: Vec<(usize, usize)>,
+    /// `RSpec/PendingWithoutReason` candidate send ranges.
+    pub rspec_pending_without_reason: Vec<(usize, usize)>,
+    /// Shared metadata-anchor block ranges feeding the four `Metadata`-mixin
+    /// cops (`MetadataStyle` / `DuplicatedMetadata` / `EmptyMetadata` /
+    /// `SortMetadata`). Each cop reads the same list from its own slot; the ext
+    /// clones it into each slot.
+    pub rspec_metadata_anchors: Vec<(usize, usize)>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -1490,6 +1499,9 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         rspec_repeated_description: rspec_result.repeated_description,
         rspec_repeated_example: rspec_result.repeated_example,
         rspec_named_subject: rspec_result.named_subject,
+        rspec_focus: rspec_result.focus,
+        rspec_pending_without_reason: rspec_result.pending_without_reason,
+        rspec_metadata_anchors: rspec_result.metadata_anchors,
     }
 }
 
@@ -1820,6 +1832,22 @@ mod tests {
         let standalone_ns =
             rspec_dispatcher::check_rspec_named_subject(src.as_bytes(), rspec_cfg);
         assert_eq!(bundle.rspec_named_subject, standalone_ns);
+        // R2 metadata family: candidate lists match their standalone entries.
+        assert_eq!(
+            bundle.rspec_focus,
+            rspec_dispatcher::check_rspec_focus(src.as_bytes(), rspec_cfg)
+        );
+        assert_eq!(
+            bundle.rspec_pending_without_reason,
+            rspec_dispatcher::check_rspec_pending_without_reason(src.as_bytes(), rspec_cfg)
+        );
+        assert_eq!(
+            bundle.rspec_metadata_anchors,
+            rspec_dispatcher::check_rspec_metadata_anchors(src.as_bytes(), rspec_cfg)
+        );
+        // `let!(:unused) { create(:widget) }` is a hook-free helper; the
+        // describe/context blocks with a description arg are metadata anchors.
+        assert!(!bundle.rspec_metadata_anchors.is_empty());
     }
 
     /// `RSpec/NamedSubject` on the shared walk matches the standalone entry

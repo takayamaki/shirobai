@@ -205,6 +205,24 @@ pub struct RSpecResult {
     /// `RSpec/NamedSubject`: the selector ranges of bare `subject` references
     /// that need an explicit name (already style/shared-filtered).
     pub named_subject: Vec<(usize, usize)>,
+    /// Shared metadata-anchor block ranges (prism call range == parser block
+    /// node range), document order. One list feeds all four `Metadata`-mixin
+    /// cops (`MetadataStyle` / `DuplicatedMetadata` / `EmptyMetadata` /
+    /// `SortMetadata`): each relocates the parser block node and runs stock's
+    /// `Metadata#on_block` verbatim (block-kind / receiver / arity self-filter
+    /// there). Superset of the direct `rspec_metadata` blocks plus the
+    /// `RSpec.configure` blocks (whose inner hook sends the wrapper's
+    /// `metadata_in_block` search finds).
+    pub metadata_anchors: Vec<(usize, usize)>,
+    /// `RSpec/Focus` candidate SEND ranges (parser send range), document order.
+    /// The wrapper relocates each parser send node and runs stock's `on_send`
+    /// verbatim (the chained / inside-def guards and the exact `focused_block?`
+    /// / `metadata` matchers self-filter there).
+    pub focus: Vec<(usize, usize)>,
+    /// `RSpec/PendingWithoutReason` candidate SEND ranges (parser send range),
+    /// document order. The wrapper relocates each parser send node and runs
+    /// stock's `on_send` verbatim (parent-relationship logic self-filters there).
+    pub pending_without_reason: Vec<(usize, usize)>,
 }
 
 /// parser block-kind recovery from a prism call (see module doc).
@@ -389,6 +407,12 @@ pub struct RSpecDispatcherRule<'c> {
     /// `RSpec/NamedSubject` offenses: the `subject` selector ranges, decided at
     /// reference time against the open frame stack.
     ns_offenses: Vec<(usize, usize)>,
+    /// Shared metadata-anchor block ranges (see [`RSpecResult::metadata_anchors`]).
+    metadata_anchors: Vec<(usize, usize)>,
+    /// `RSpec/Focus` candidate send ranges.
+    focus_candidates: Vec<(usize, usize)>,
+    /// `RSpec/PendingWithoutReason` candidate send ranges.
+    pending_candidates: Vec<(usize, usize)>,
 }
 
 pub fn build_rule<'c>(cfg: &'c RSpecConfig) -> RSpecDispatcherRule<'c> {
@@ -406,8 +430,34 @@ pub fn build_rule<'c>(cfg: &'c RSpecConfig) -> RSpecDispatcherRule<'c> {
         vn_passing: Vec::new(),
         vd_offenses: Vec::new(),
         ns_offenses: Vec::new(),
+        metadata_anchors: Vec::new(),
+        focus_candidates: Vec::new(),
+        pending_candidates: Vec::new(),
     }
 }
+
+/// `RSpec/Focus` `focusable_selector?` role set (regular/skipped example
+/// groups, regular/skipped/pending examples, all shared groups). The two
+/// focused role sets are handled separately.
+const FOCUSABLE: u32 = roles::EG_REGULAR
+    | roles::EG_SKIPPED
+    | roles::EX_REGULAR
+    | roles::EX_SKIPPED
+    | roles::EX_PENDING
+    | roles::SG_ALL;
+
+/// `RSpec/Focus` focused role set (`ExampleGroups.focused` /
+/// `Examples.focused`).
+const FOCUSED: u32 = roles::EG_FOCUSED | roles::EX_FOCUSED;
+
+/// `RSpec/PendingWithoutReason` role set whose name alone makes a send a
+/// candidate (`Examples.skipped` / `Examples.pending` / `ExampleGroups.skipped`).
+const SKIP_PENDING: u32 = roles::EX_SKIPPED | roles::EX_PENDING | roles::EG_SKIPPED;
+
+/// Metadata-anchor role set (`Examples.all` / `ExampleGroups.all` /
+/// `SharedGroups.all` / `Hooks`).
+const METADATA_ROLES: u32 =
+    roles::EX_ALL | roles::EG_ALL | roles::SG_ALL | roles::HOOKS;
 
 impl RSpecDispatcherRule<'_> {
     fn handle_call(&mut self, call: &CallNode<'_>) -> StackEntry {
@@ -443,10 +493,54 @@ impl RSpecDispatcherRule<'_> {
             }
         }
 
+        let rspec_recv = recv_none || recv.as_ref().is_some_and(|r| rspec_const(r));
+
+        // `RSpec.configure do |c| ... end` metadata-anchor block: the send name
+        // is `configure` (not a role name, so role_mask is 0), so probe it
+        // before the role gate. The wrapper's `rspec_configure` matcher checks
+        // the single block param; here a block of any kind qualifies (superset).
+        if rspec_recv
+            && name == b"configure"
+            && matches!(kind, BlockKind::Plain | BlockKind::Numbered | BlockKind::It)
+        {
+            let loc = call.location();
+            self.metadata_anchors.push((loc.start_offset(), loc.end_offset()));
+        }
+
         if role_mask == 0 {
             return entry;
         }
-        let rspec_recv = recv_none || recv.as_ref().is_some_and(|r| rspec_const(r));
+
+        // Direct metadata anchor: an example/group/shared-group/hook block with
+        // an rspec receiver and >= 1 argument (the `_` description/scope arg).
+        // Any block kind is emitted; the wrapper's `(block ...)` matcher filters
+        // parser block kind (numblock never fires; itblock == plain at < 3.4).
+        if rspec_recv
+            && matches!(kind, BlockKind::Plain | BlockKind::Numbered | BlockKind::It)
+            && role_mask & METADATA_ROLES != 0
+            && n_args >= 1
+        {
+            let loc = call.location();
+            self.metadata_anchors.push((loc.start_offset(), loc.end_offset()));
+        }
+
+        // `RSpec/Focus` candidate: a focused alias, or a focusable selector
+        // carrying `:focus` / `focus: true` metadata (the wrapper re-checks the
+        // exact matcher plus the chained / inside-def guards).
+        if rspec_recv
+            && (role_mask & FOCUSED != 0
+                || (role_mask & FOCUSABLE != 0 && has_focus_metadata(call)))
+        {
+            self.focus_candidates.push(parser_send_range(call, kind));
+        }
+
+        // `RSpec/PendingWithoutReason` candidate: a skipped/pending example or
+        // skipped example-group name, or any send carrying `:skip` / `:pending`
+        // metadata (the wrapper re-checks receiver and parent relationships).
+        if role_mask & SKIP_PENDING != 0 || has_skip_pending_metadata(call) {
+            self.pending_candidates
+                .push(parser_send_range(call, kind));
+        }
 
         // Top-level `spec_group?` (any_block): the gate for the Variable
         // cops. `self.stack` holds only the ProgramNode entry when a
@@ -759,6 +853,9 @@ impl RSpecDispatcherRule<'_> {
             repeated_description: groups.clone(),
             repeated_example: groups,
             named_subject: self.ns_offenses,
+            metadata_anchors: self.metadata_anchors,
+            focus: self.focus_candidates,
+            pending_without_reason: self.pending_candidates,
         }
     }
 
@@ -945,6 +1042,52 @@ fn parser_send_range(call: &CallNode<'_>, kind: BlockKind) -> (usize, usize) {
     (start, end)
 }
 
+/// True when any direct argument is a `(sym :name)` for a name in `syms`, or
+/// the LAST argument is a hash-like literal (`{...}` or trailing keyword args)
+/// containing a pair whose key is such a symbol. The pair VALUE is not checked
+/// here — the wrapper re-runs the exact stock matcher, which verifies `true`;
+/// this is a safe superset for candidate selection.
+fn has_symbol_metadata(call: &CallNode<'_>, syms: &[&[u8]]) -> bool {
+    let Some(args) = call.arguments() else {
+        return false;
+    };
+    let list = args.arguments();
+    let mut last = None;
+    for arg in list.iter() {
+        if let Some(s) = arg.as_symbol_node()
+            && syms.iter().any(|k| *k == s.unescaped())
+        {
+            return true;
+        }
+        last = Some(arg);
+    }
+    let Some(last) = last else { return false };
+    let elements = if let Some(h) = last.as_hash_node() {
+        h.elements()
+    } else if let Some(h) = last.as_keyword_hash_node() {
+        h.elements()
+    } else {
+        return false;
+    };
+    for el in elements.iter() {
+        if let Some(assoc) = el.as_assoc_node()
+            && let Some(s) = assoc.key().as_symbol_node()
+            && syms.iter().any(|k| *k == s.unescaped())
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn has_focus_metadata(call: &CallNode<'_>) -> bool {
+    has_symbol_metadata(call, &[b"focus"])
+}
+
+fn has_skip_pending_metadata(call: &CallNode<'_>) -> bool {
+    has_symbol_metadata(call, &[b"skip", b"pending"])
+}
+
 impl Rule for RSpecDispatcherRule<'_> {
     fn enter(&mut self, node: &Node<'_>) {
         let entry = if let Some(call) = node.as_call_node() {
@@ -1021,6 +1164,25 @@ pub fn check_rspec_repeated_example(source: &[u8], cfg: &RSpecConfig) -> Vec<Vec
 /// path). The `subject` selector ranges to report.
 pub fn check_rspec_named_subject(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
     run(source, cfg).named_subject
+}
+
+/// Standalone entry point for the four `Metadata`-mixin cops
+/// (`MetadataStyle` / `DuplicatedMetadata` / `EmptyMetadata` / `SortMetadata`):
+/// the shared metadata-anchor block ranges. Each cop's wrapper relocates these
+/// parser block nodes and runs stock's `Metadata#on_block` verbatim.
+pub fn check_rspec_metadata_anchors(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
+    run(source, cfg).metadata_anchors
+}
+
+/// Standalone entry point for `RSpec/Focus` (candidate send ranges).
+pub fn check_rspec_focus(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
+    run(source, cfg).focus
+}
+
+/// Standalone entry point for `RSpec/PendingWithoutReason` (candidate send
+/// ranges).
+pub fn check_rspec_pending_without_reason(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
+    run(source, cfg).pending_without_reason
 }
 
 fn run(source: &[u8], cfg: &RSpecConfig) -> RSpecResult {
@@ -1636,5 +1798,98 @@ mod tests {
         let groups = re(src);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].len(), 2);
+    }
+
+    // --- candidate emission for the R2 metadata-family cops ---
+
+    fn slices(src: &str, ranges: Vec<(usize, usize)>) -> Vec<String> {
+        ranges
+            .into_iter()
+            .map(|(s, e)| String::from_utf8_lossy(&src.as_bytes()[s..e]).into_owned())
+            .collect()
+    }
+
+    fn anchors(src: &str) -> Vec<String> {
+        slices(src, check_rspec_metadata_anchors(src.as_bytes(), &cfg()))
+    }
+
+    fn focus(src: &str) -> Vec<String> {
+        slices(src, check_rspec_focus(src.as_bytes(), &cfg()))
+    }
+
+    fn pending(src: &str) -> Vec<String> {
+        slices(src, check_rspec_pending_without_reason(src.as_bytes(), &cfg()))
+    }
+
+    #[test]
+    fn metadata_anchor_covers_every_block_kind() {
+        // Every block kind is emitted; the wrapper's parser matcher filters
+        // block kind. Prism call range == parser block node range.
+        let src = "RSpec.describe 'x' do\n  it('plain', a: true) { foo }\n  it('num', b: true) { _1 }\n  it('it', c: true) { it.foo }\n  context('ctx', d: true) { bar }\nend\n";
+        let a = anchors(src);
+        // Outer describe (1 arg) + all four inner blocks (all kinds).
+        assert!(a.iter().any(|s| s.starts_with("RSpec.describe 'x'")));
+        assert!(a.iter().any(|s| s.starts_with("it('plain', a: true)")));
+        assert!(a.iter().any(|s| s.starts_with("it('num', b: true)")));
+        assert!(a.iter().any(|s| s.starts_with("it('it', c: true)")));
+        assert!(a.iter().any(|s| s.starts_with("context('ctx', d: true)")));
+    }
+
+    #[test]
+    fn metadata_anchor_needs_arg_and_rspec_receiver() {
+        // Zero-arg blocks and non-rspec receivers are not anchors.
+        let src = "describe 'x' do\n  it { foo }\n  before { bar }\n  Foo.describe('y', a: true) { baz }\nend\n";
+        // Only the outer describe (1 arg, rspec recv) qualifies.
+        assert_eq!(anchors(src), vec!["describe 'x' do\n  it { foo }\n  before { bar }\n  Foo.describe('y', a: true) { baz }\nend".to_string()]);
+    }
+
+    #[test]
+    fn metadata_anchor_hooks_and_shared_groups_and_configure() {
+        let src = "describe 'x' do\n  before(:each, a: true) { foo }\nend\nshared_examples 'y', b: true do\n  it { foo }\nend\nRSpec.configure do |c|\n  c.before(:each, d: true) { bar }\nend\n";
+        let a = anchors(src);
+        assert!(a.iter().any(|s| s.starts_with("before(:each, a: true)")));
+        assert!(a.iter().any(|s| s.starts_with("shared_examples 'y', b: true")));
+        assert!(a.iter().any(|s| s.starts_with("RSpec.configure")));
+    }
+
+    #[test]
+    fn focus_candidates_cover_aliases_and_metadata() {
+        let src = "RSpec.describe MyClass, focus: true do\n  describe 'a', :focus do\n    fit 'b' do; end\n    fdescribe 'c' do; end\n    focus 'd' do; end\n    it 'e', :focus do; end\n    xit 'f', :focus do; end\n    shared_examples 'g', focus: true do; end\n  end\n  foo.fdescribe 'chained' do; end\nend\n";
+        let f = focus(src);
+        // Every stock offender is a candidate; the non-rspec `foo.fdescribe` is not.
+        assert!(f.iter().any(|s| s.starts_with("RSpec.describe MyClass, focus: true")));
+        assert!(f.iter().any(|s| s == "describe 'a', :focus"));
+        assert!(f.iter().any(|s| s == "fit 'b'"));
+        assert!(f.iter().any(|s| s == "fdescribe 'c'"));
+        assert!(f.iter().any(|s| s == "focus 'd'"));
+        assert!(f.iter().any(|s| s == "it 'e', :focus"));
+        assert!(f.iter().any(|s| s == "xit 'f', :focus"));
+        assert!(f.iter().any(|s| s == "shared_examples 'g', focus: true"));
+        assert!(!f.iter().any(|s| s.contains("chained")));
+    }
+
+    #[test]
+    fn focus_ignores_plain_examples_without_focus_metadata() {
+        let src = "describe 'x' do\n  it 'a' do; end\n  it 'b', slow: true do; end\nend\n";
+        assert_eq!(focus(src), Vec::<String>::new());
+    }
+
+    #[test]
+    fn pending_candidates_cover_names_and_metadata() {
+        let src = "RSpec.describe 'x' do\n  pending 'p' do; end\n  it 'a', :pending do; end\n  it 'b' do; pending; end\n  xdescribe 'c' do; end\n  skip 'd' do; end\n  it 'e', :skip do; end\n  it 'f' do; skip; end\n  it 'g'\n  it 'h', pending: 'reason' do; end\n  xit 'j' do; end\nend\n";
+        let p = pending(src);
+        assert!(p.iter().any(|s| s == "pending 'p'"));
+        assert!(p.iter().any(|s| s == "it 'a', :pending"));
+        assert!(p.iter().any(|s| s == "pending")); // bare in example body
+        assert!(p.iter().any(|s| s == "xdescribe 'c'"));
+        assert!(p.iter().any(|s| s == "skip 'd'"));
+        assert!(p.iter().any(|s| s == "it 'e', :skip"));
+        assert!(p.iter().any(|s| s == "skip")); // bare in example body
+        assert!(p.iter().any(|s| s == "xit 'j'"));
+        // `it 'h', pending: 'reason'` carries pending metadata -> candidate
+        // (the wrapper drops it because the value is a string, not true).
+        assert!(p.iter().any(|s| s == "it 'h', pending: 'reason'"));
+        // A plain regular example without a body is never a candidate.
+        assert!(!p.iter().any(|s| s == "it 'g'"));
     }
 }

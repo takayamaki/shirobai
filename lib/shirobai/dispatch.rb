@@ -140,7 +140,15 @@ module Shirobai
       rspec_multiple_memoized_helpers: [2, 3].freeze,
       rspec_repeated_description: [2, 4].freeze,
       rspec_repeated_example: [2, 5].freeze,
-      rspec_named_subject: [2, 6].freeze
+      rspec_named_subject: [2, 6].freeze,
+      # R2 metadata family (rspec origin slots 7-12). Slots 9-12 (the four
+      # Metadata-mixin cops) read the same shared metadata-anchor list.
+      rspec_focus: [2, 7].freeze,
+      rspec_pending_without_reason: [2, 8].freeze,
+      rspec_metadata_style: [2, 9].freeze,
+      rspec_duplicated_metadata: [2, 10].freeze,
+      rspec_empty_metadata: [2, 11].freeze,
+      rspec_sort_metadata: [2, 12].freeze
     }.freeze
 
     # Dormant packed-config segment per plugin origin: the enable flag (first

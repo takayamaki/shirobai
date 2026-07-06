@@ -52,6 +52,16 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rspec" do
       RuboCop::Cop::RSpec::NamedSubject,
       Shirobai::Cop::RSpec::NamedSubject,
       "#{prefix}describe 'x' do\n  subject { described_class.new }\n  it('検証') { expect(subject.値).to be }\nend\n"
+    ],
+    "RSpec/PendingWithoutReason" => [
+      RuboCop::Cop::RSpec::PendingWithoutReason,
+      Shirobai::Cop::RSpec::PendingWithoutReason,
+      "#{prefix}describe 'x' do\n  it '説明', :pending do\n  end\nend\n"
+    ],
+    "RSpec/Focus" => [
+      RuboCop::Cop::RSpec::Focus,
+      Shirobai::Cop::RSpec::Focus,
+      "#{prefix}describe 'テスト', :focus do\n  it 'あ' do\n  end\nend\n"
     ]
   }
 
@@ -74,5 +84,48 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rspec" do
       config
     )
     expect(corrected).to include("let(:ユーザ)")
+  end
+
+  # Autocorrect parity for the metadata-family AC cops with a multibyte
+  # description ahead of the metadata (every byte offset > its char offset).
+  autocorrect_cases = {
+    "RSpec/MetadataStyle" => [
+      RuboCop::Cop::RSpec::MetadataStyle,
+      Shirobai::Cop::RSpec::MetadataStyle,
+      "#{prefix}describe 'テスト', a: true do\n  it 'あ' do\n  end\nend\n",
+      "describe 'テスト', :a do"
+    ],
+    "RSpec/Focus" => [
+      RuboCop::Cop::RSpec::Focus,
+      Shirobai::Cop::RSpec::Focus,
+      "#{prefix}describe 'テスト', :focus do\n  it 'あ' do\n  end\nend\n",
+      "describe 'テスト' do"
+    ],
+    "RSpec/DuplicatedMetadata" => [
+      RuboCop::Cop::RSpec::DuplicatedMetadata,
+      Shirobai::Cop::RSpec::DuplicatedMetadata,
+      "#{prefix}describe 'テスト', :a, :a do\n  it 'あ' do\n  end\nend\n",
+      "describe 'テスト', :a do"
+    ],
+    "RSpec/EmptyMetadata" => [
+      RuboCop::Cop::RSpec::EmptyMetadata,
+      Shirobai::Cop::RSpec::EmptyMetadata,
+      "#{prefix}describe 'テスト', {} do\n  it 'あ' do\n  end\nend\n",
+      "describe 'テスト' do"
+    ],
+    "RSpec/SortMetadata" => [
+      RuboCop::Cop::RSpec::SortMetadata,
+      Shirobai::Cop::RSpec::SortMetadata,
+      "#{prefix}describe 'テスト', :b, :a do\n  it 'あ' do\n  end\nend\n",
+      "describe 'テスト', :a, :b do"
+    ]
+  }
+
+  autocorrect_cases.each do |name, (stock, shirobai, source, expected)|
+    it "autocorrects #{name} byte-identically with a multibyte description" do
+      config = RuboCop::ConfigLoader.default_configuration
+      corrected = expect_autocorrect_parity(stock, shirobai, source, config)
+      expect(corrected).to include(expected)
+    end
   end
 end
