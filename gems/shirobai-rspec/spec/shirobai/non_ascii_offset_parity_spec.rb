@@ -47,6 +47,31 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rspec" do
       RuboCop::Cop::RSpec::RepeatedExample,
       Shirobai::Cop::RSpec::RepeatedExample,
       "#{prefix}describe 'x' do\n  it 'あ' do\n    expect(値).to be(基準)\n  end\n  it 'い' do\n    expect(値).to be(基準)\n  end\nend\n"
+    ],
+    "RSpec/NamedSubject" => [
+      RuboCop::Cop::RSpec::NamedSubject,
+      Shirobai::Cop::RSpec::NamedSubject,
+      "#{prefix}describe 'x' do\n  subject { described_class.new }\n  it('検証') { expect(subject.値).to be }\nend\n"
+    ],
+    "RSpec/PendingWithoutReason" => [
+      RuboCop::Cop::RSpec::PendingWithoutReason,
+      Shirobai::Cop::RSpec::PendingWithoutReason,
+      "#{prefix}describe 'x' do\n  it '説明', :pending do\n  end\nend\n"
+    ],
+    "RSpec/Focus" => [
+      RuboCop::Cop::RSpec::Focus,
+      Shirobai::Cop::RSpec::Focus,
+      "#{prefix}describe 'テスト', :focus do\n  it 'あ' do\n  end\nend\n"
+    ],
+    "RSpec/EmptyLineAfterExample" => [
+      RuboCop::Cop::RSpec::EmptyLineAfterExample,
+      Shirobai::Cop::RSpec::EmptyLineAfterExample,
+      "#{prefix}describe 'x' do\n  it 'あ' do\n    値\n  end\n  it 'い' do\n    基準\n  end\nend\n"
+    ],
+    "RSpec/EmptyLineAfterSubject" => [
+      RuboCop::Cop::RSpec::EmptyLineAfterSubject,
+      Shirobai::Cop::RSpec::EmptyLineAfterSubject,
+      "#{prefix}describe 'x' do\n  subject(:主体) { 値 }\n  let(:補助) { 他 }\nend\n"
     ]
   }
 
@@ -69,5 +94,63 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rspec" do
       config
     )
     expect(corrected).to include("let(:ユーザ)")
+  end
+
+  # Autocorrect parity for the metadata-family AC cops with a multibyte
+  # description ahead of the metadata (every byte offset > its char offset).
+  autocorrect_cases = {
+    "RSpec/MetadataStyle" => [
+      RuboCop::Cop::RSpec::MetadataStyle,
+      Shirobai::Cop::RSpec::MetadataStyle,
+      "#{prefix}describe 'テスト', a: true do\n  it 'あ' do\n  end\nend\n",
+      "describe 'テスト', :a do"
+    ],
+    "RSpec/Focus" => [
+      RuboCop::Cop::RSpec::Focus,
+      Shirobai::Cop::RSpec::Focus,
+      "#{prefix}describe 'テスト', :focus do\n  it 'あ' do\n  end\nend\n",
+      "describe 'テスト' do"
+    ],
+    "RSpec/DuplicatedMetadata" => [
+      RuboCop::Cop::RSpec::DuplicatedMetadata,
+      Shirobai::Cop::RSpec::DuplicatedMetadata,
+      "#{prefix}describe 'テスト', :a, :a do\n  it 'あ' do\n  end\nend\n",
+      "describe 'テスト', :a do"
+    ],
+    "RSpec/EmptyMetadata" => [
+      RuboCop::Cop::RSpec::EmptyMetadata,
+      Shirobai::Cop::RSpec::EmptyMetadata,
+      "#{prefix}describe 'テスト', {} do\n  it 'あ' do\n  end\nend\n",
+      "describe 'テスト' do"
+    ],
+    "RSpec/SortMetadata" => [
+      RuboCop::Cop::RSpec::SortMetadata,
+      Shirobai::Cop::RSpec::SortMetadata,
+      "#{prefix}describe 'テスト', :b, :a do\n  it 'あ' do\n  end\nend\n",
+      "describe 'テスト', :a, :b do"
+    ]
+  }
+
+  autocorrect_cases.each do |name, (stock, shirobai, source, expected)|
+    it "autocorrects #{name} byte-identically with a multibyte description" do
+      config = RuboCop::ConfigLoader.default_configuration
+      corrected = expect_autocorrect_parity(stock, shirobai, source, config)
+      expect(corrected).to include(expected)
+    end
+  end
+
+  it "autocorrects RSpec/EmptyLineAfterFinalLet with a multibyte offending line" do
+    config = RuboCop::ConfigLoader.default_configuration
+    # The offending line itself carries multibyte content, so the offense range
+    # (trimmed line content) and the `"\n"` insertion point must land on the
+    # correct CHARACTER offset, not the byte offset.
+    source = "#{prefix}describe 'x' do\n  let(:変数) { 値 }\n  let(:別名) { 他 }\n  it 'あ' do\n    x\n  end\nend\n"
+    corrected = expect_autocorrect_parity(
+      RuboCop::Cop::RSpec::EmptyLineAfterFinalLet,
+      Shirobai::Cop::RSpec::EmptyLineAfterFinalLet,
+      source,
+      config
+    )
+    expect(corrected).to include("let(:別名) { 他 }\n\n  it")
   end
 end

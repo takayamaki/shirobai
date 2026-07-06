@@ -70,6 +70,7 @@ pub mod redundant_self;
 pub mod redundant_self_assignment;
 pub mod require_parentheses;
 pub mod rspec_dispatcher;
+pub mod rspec_empty_line;
 pub mod rspec_language;
 pub mod safe_navigation_chain;
 pub mod self_assignment;

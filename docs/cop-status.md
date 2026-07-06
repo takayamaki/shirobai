@@ -172,10 +172,11 @@ if they ever disagree, `Dispatch.offenses_for` returns nil and the
 wrapper falls back to its standalone entry point (speed bug, never an
 offense bug).
 
-### Implemented (6 cops)
+### Implemented (7 cops)
 
 - `RSpec/LetSetup`
 - `RSpec/MultipleMemoizedHelpers`
+- `RSpec/NamedSubject`
 - `RSpec/RepeatedDescription`
 - `RSpec/RepeatedExample`
 - `RSpec/VariableDefinition`
@@ -222,6 +223,19 @@ stock's grouping (`[metadata, doc_string]` / `[doc_string, example]` for
 descriptions, `[metadata, implementation]` + `its` args for examples)
 VERBATIM — parity by construction for the equality-sensitive part.
 
+`RSpec/NamedSubject` reuses the same frames. A reference is stock's
+hard-coded `subject_usage` search (`$(send nil? :subject)` — the literal
+name `subject`, zero args, no block-pass; an alias or `subject!` never
+counts). Rust reports it when a plain-block example/hook frame encloses it
+(numblock/itblock examples never qualify, matching stock's `on_block`),
+gated by the OUTERMOST example/hook-or-shared frame under
+`IgnoreSharedExamples` (`shared_examples`/`shared_examples_for` only —
+`shared_context` never suppresses), and, under `named_only`, by the
+named-ness of the nearest enclosing `subject` definition. No autocorrect
+(stock has none). Range-level offense dedup falls out of one offense per
+reference node. It fires 3442 times on Mastodon spec/ — the densest RSpec
+signal in the oracle — at zero diff.
+
 One probed parser divergence is handled centrally:
 an empty percent-string (`%()`) is a `str` node in prism 1.9 but a `dstr`
 in the parser gem, so `string_is_parser_dstr` treats it as `dstr`
@@ -237,6 +251,118 @@ prism Latest and under stock with `TargetRubyVersion >= 3.4`, but a plain
 block-kind-sensitive matchers can disagree there. Real spec code calling
 a bare `it` inside a block is essentially nonexistent (RSpec's own `it`
 requires arguments or a block).
+
+## Plugin cops: shirobai-rspec (R2 metadata family)
+
+Six more rubocop-rspec cops through the same `RSpecDispatcherRule`.
+
+### Implemented (6 cops)
+
+- `RSpec/Focus`
+- `RSpec/PendingWithoutReason`
+- `RSpec/MetadataStyle`
+- `RSpec/DuplicatedMetadata`
+- `RSpec/EmptyMetadata`
+- `RSpec/SortMetadata`
+
+These cops' offense detection and (for five of them) autocorrect depend
+heavily on parser-AST geometry — sibling/brace-aware pair removal,
+metadata insertion relative to hashes, sorted-source replacement, and
+selector renaming — that cannot be reproduced byte for byte off prism
+offsets alone. So the split is deliberately thin on the Rust side: the
+`RSpecDispatcherRule` classifies CANDIDATE node ranges on the shared walk
+(a superset), and each wrapper relocates the parser node through the
+shared `Shirobai::RSpec::NodeLocator` and runs STOCK's own `on_send` /
+`Metadata#on_block` plus autocorrect VERBATIM on the real parser AST. The
+wrapper sets `RuboCop::RSpec::Language.config` so the stock matchers
+resolve, and renames the stock entry method so the Commissioner never
+dispatches a per-node callback (only `on_new_investigation` runs). This is
+parity by construction for the equality- and geometry-sensitive parts.
+
+The four `Metadata`-mixin cops share ONE Rust metadata-anchor list (the
+direct example/group/hook blocks plus `RSpec.configure` blocks, emitted
+for every block kind so the wrapper's `(block ...)` matcher self-filters
+parser block kind — this also handles the prism-itblock vs
+parser-plain-block target divergence for free). `Focus` and
+`PendingWithoutReason` each carry their own candidate send list. No new
+wire nums/lists were needed: candidate selection is role-table-only, and
+`MetadataStyle`'s `EnforcedStyle` is read by the wrapper.
+
+Probed quirks pinned as differential edge specs: metadata fires on plain
+blocks only (numblock never, itblock == plain at target < 3.4); `Focus`'s
+non-correctable bare-alias case, the chained / inside-def guards, and
+skipped-inside-focusable metadata; `PendingWithoutReason`'s block vs
+in-example vs metadata forms and the "regular example without body does
+not fire" case; the `RSpec.configure` hook metadata path. Verified with
+vendor specs, lint-mode correctable parity, non-ASCII offset parity, a
+manual `--only`-scoped `-A` byte comparison for `MetadataStyle` on 58 real
+forem files (MATCH), and the rspec parity oracle at zero diff on
+factory_bot / forem / discourse / mastodon (corpus positives:
+`MetadataStyle` and `PendingWithoutReason` fire; `SortMetadata` once; the
+other three have no corpus positives and rest on the synthetic specs).
+
+## Plugin cops: shirobai-rspec (R2: empty-line family)
+
+The first rspec cops with autocorrect. All five wrap rubocop-rspec's
+shared `EmptyLineSeparation` mixin: they resolve a "concept" node (an
+example / example group / final let / hook / subject) and flag it when it
+has a following sibling in a `:begin` sequence and the line after its
+`final_end_location` (heredoc-aware) is not blank; autocorrect inserts one
+`"\n"`.
+
+### Implemented (5 cops)
+
+- `RSpec/EmptyLineAfterExample`
+- `RSpec/EmptyLineAfterExampleGroup`
+- `RSpec/EmptyLineAfterFinalLet`
+- `RSpec/EmptyLineAfterHook`
+- `RSpec/EmptyLineAfterSubject`
+
+A SECOND shared rspec rule (`rspec_empty_line.rs`) runs alongside the R1
+`RSpecDispatcherRule` on the same walk and produces all five cops' results
+at once. It owns the parts that need the AST — concept classification
+(reusing the R1 `RSpecConfig` role table), `last_child?` (the parser
+`:begin` recovery), the one-liner allowances (`AllowConsecutiveOneLiners`
+for Example / Hook), and the heredoc-aware `final_end_location.line` — and
+emits, per cop, `[final_end_line, method_name]` for each surviving
+candidate. The Ruby side (a shared `EmptyLineSeparationSupport` module)
+replays the REST of the stock mixin — the trailing-comment walk, the
+enabled-`# rubocop:enable` directive tracking, the blank-line
+suppression, the offense location and the `"\n"` autocorrect — over the
+same `ProcessedSource`, so those parts are byte-for-byte stock by
+construction.
+
+Probed quirks pinned as differential edge specs (offenses AND `-A`
+byte-equal): a plain `begin a; b end` is `:kwbegin` (not `begin_type?`, no
+offense) while `begin ... rescue`/`ensure` bodies and rescue/ensure clause
+bodies ARE `:begin`; a non-directive trailing comment keeps the offense on
+the node end line (blank before the comment) while an enabled directive
+moves it onto the directive line (blank after); a comment (or a
+trailing-comment code line) followed by a blank line suppresses the
+offense; a heredoc spilling below a one-line brace concept fixes the
+offense on the heredoc terminator line; `on_block`-only cops (all but Hook)
+ignore numbered/`it`-param blocks while Hook fires on every block form; the
+Subject `inside_example_group?` gate needs the outermost top-level
+statement to be a spec group; and the final-let is the LAST `let?` (block
+form or `let(:x, &blk)` send form) among the group body's direct children.
+
+The `:begin` recovery is the subtle part: prism folds `begin`/`rescue`/
+`ensure` and single-vs-multi bodies differently from parser, and the
+dispatcher visits several statement sequences (the program root, a
+BeginNode's main/ensure/else bodies, a RescueNode's body) FRAMELESS via
+`visit_statements_node` directly, so the walk's current frame for a concept
+in them is the enclosing Program / Begin / Rescue node, resolved shape by
+shape.
+
+Whether a second-layer trait would remove duplication between the five
+cops' logic: the arena/post-walk pattern stayed sufficient WITHIN this
+cluster (one rule, five result vectors, no per-cop copy). The only real
+duplication is CROSS-cluster: this rule re-derives the `top_spec_depth`
+top-level-spec-group gate and the block-kind / `rspec?` receiver helpers
+that `RSpecDispatcherRule` already computes. A shared "rspec walk context"
+trait exposing role classification + `top_spec_depth` + block-kind to
+multiple rspec rules would remove that ~30-line overlap; the arena pattern
+itself did not need abstracting.
 
 ## Attempted but reverted
 
