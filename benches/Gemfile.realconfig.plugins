@@ -6,6 +6,7 @@ gemspec path: ".."
 
 gem "shirobai-performance", path: "../gems/shirobai-performance"
 gem "shirobai-rspec", path: "../gems/shirobai-rspec"
+gem "shirobai-rails", path: "../gems/shirobai-rails"
 
 # Plugins required by test corpora
 gem "rubocop-capybara"        # Mastodon

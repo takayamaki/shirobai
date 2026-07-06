@@ -1,0 +1,22 @@
+# frozen_string_literal: true
+
+# Development bundle for the shirobai-rails gem (specs live under
+# gems/shirobai-rails/spec and run from this directory).
+# Kept separate from the repo-root Gemfile on purpose: having
+# rubocop-rails in the root bundle would make its plugin auto-integrate
+# into the default configuration for the CORE spec suite too (CopHelper's
+# before(:all) scans Gem.loaded_specs).
+source "https://rubygems.org"
+
+gemspec
+
+gem "shirobai", path: "../.."
+
+gem "rake", "~> 13.0"
+gem "rspec", "~> 3.0"
+
+# rubocop-rails's Application* vendor specs mock `gem_versions_in_target`
+# via the `:rails50` shared context (no real railties needed), but the
+# ApplicationRecord/Mailer/Job cops declare `requires_gem 'railties'`, so
+# railties must be resolvable for the gate metadata to load.
+gem "railties", "= 7.0.8"

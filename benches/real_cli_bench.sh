@@ -115,6 +115,7 @@ if modes_contains plugins || modes_contains plugins-main; then
       shells = []
       shells << "--require shirobai-performance" if config.keys.any? { |k| k.start_with?("Performance/") }
       shells << "--require shirobai-rspec" if config.keys.any? { |k| k.start_with?("RSpec/") }
+      shells << "--require shirobai-rails" if config.keys.any? { |k| k.start_with?("Rails/") }
       puts shells.join(" ")
     ')"
   if [[ -n "$plugin_requires" ]]; then
@@ -162,7 +163,7 @@ for mode in "${modes[@]}"; do
   line="$(BENCH_MODE="$mode" BUNDLE_GEMFILE="$(mode_gemfile "$mode")" bundle exec ruby -e '
     require "bundler"
     versions = Bundler.load.specs.each_with_object({}) { |s, h| h[s.name] = s.version.to_s }
-    want = %w[rubocop rubocop-ast parser prism rubocop-performance rubocop-rspec shirobai-performance shirobai-rspec]
+    want = %w[rubocop rubocop-ast parser prism rubocop-performance rubocop-rspec rubocop-rails shirobai-performance shirobai-rspec shirobai-rails]
     parts = want.filter_map { |n| "#{n}=#{versions[n]}" if versions[n] }
     puts "provenance: mode=#{ENV["BENCH_MODE"]} #{parts.join(" ")}"
   ')"

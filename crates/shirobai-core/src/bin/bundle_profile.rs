@@ -102,6 +102,11 @@ fn read_packed(path: &str) -> (Vec<Vec<i64>>, Vec<Vec<Vec<String>>>) {
         packed_nums.push(vec![0]);
         packed_lists.push(vec![vec![]; 16]);
     }
+    if packed_nums.len() < 4 {
+        // Dormant rails segment: enable flag off + no lists.
+        packed_nums.push(vec![0]);
+        packed_lists.push(vec![]);
+    }
     (packed_nums, packed_lists)
 }
 

@@ -364,6 +364,202 @@ trait exposing role classification + `top_spec_depth` + block-kind to
 multiple rspec rules would remove that ~30-line overlap; the arena pattern
 itself did not need abstracting.
 
+## Plugin cops: shirobai-rails (Phase 0 + Application* cluster)
+
+`gems/shirobai-rails` replaces rubocop-rails (pinned `= 2.35.5`) cops with
+Rust rules in the shared shirobai-core extension (no second native build).
+This batch stands up the plumbing for a NEW plugin origin (origin 3) plus a
+proof cluster of four trivial cops.
+
+The rails origin differs from the rspec origin in one structural way: it has
+**no per-file gate**. rubocop-rails cops run on every Ruby file (no
+department Include like RSpec's `**/*_spec.rb`), so the origin is always
+awake once the gem is loaded. The design constraint that follows: candidate
+classification on the Rust side must stay cheap (table-driven const-name
+checks riding the existing shared walk, no extra AST pass), because there is
+no gate to hide the cost behind. `RailsAppVisitor` subscribes only
+`ENTER_CLASS_MOD | ENTER_CALL | ENTER_WRITE` and needs no ancestor stack:
+the `Class.new(Base)` exemption is pre-marked from the `SUPERCLASS =`
+constant-write side, so no `LEAVE` bookkeeping is paid.
+
+### Implemented (4 cops)
+
+- `Rails/ApplicationRecord`
+- `Rails/ApplicationController`
+- `Rails/ApplicationMailer`
+- `Rails/ApplicationJob`
+
+All four share stock's `EnforceSuperclass` machinery: `class X <
+RECV::Base` (unless `X`'s terminal name is the enforced superclass) and
+`Class.new(RECV::Base)` (unless it is the direct value of a `SUPERCLASS =`
+constant write, covering the `do..end` / `{}` block forms). Offense and
+autocorrect range = the base const node (leading `::` included), replaced
+with the bare superclass name.
+
+`TargetRailsVersion`: Record / Mailer / Job carry stock's
+`requires_gem('railties', '>= 5.0')` gate, replicated on the wrappers via
+`extend RuboCop::Cop::TargetRailsVersion` + `minimum_target_rails_version
+5.0` (the wrappers do not subclass the stock cop, so the gem-requirement
+metadata does not come for free). Controller has no gate. The
+`Rails/ApplicationRecord` `Exclude: db/**/*.rb` is resolved by RuboCop
+through each wrapper's badge, exactly as for the stock cop.
+
+Verified with the same bar as core cops: vendor specs from the
+`vendor/rubocop-rails` submodule (`= 2.35.5`, plus its `:rails*` version
+shared contexts), differential edge-case specs for every probed quirk
+(cbase base, scope-insensitive name exemption, the Class.new exemption /
+block / cbase-casgn / namespaced-casgn / cross-cop cases, arity gating,
+CRLF fallback), lint-mode correctable parity, non-ASCII offset parity, and
+the plugin parity oracle (`benches/parity_diff_rails.sh`) at zero diff on
+Mastodon / Redmine / Discourse (rails-dense) and fluentd (no-rails
+non-interference).
+
+The rails oracle deviates from the rspec oracle in one place:
+`DisabledByDefault: true` (rspec uses `false`). Rails cops share files with
+core cops, so enabling every department would fold core-cop parity — owned
+by `benches/parity_diff.sh` — into this oracle as noise. Scoping to the
+Rails department keeps the signal clean; the ~134 non-replaced rubocop-rails
+cops still run as stock on both sides, so only the four replaced cops are
+under test.
+
+### Implemented (2 cops, Architecture B)
+
+- `Rails/HttpPositionalArguments`
+- `Rails/DeprecatedActiveModelErrorsMethods`
+
+Both are **Architecture B** (the rspec metadata-family pattern): the Rust
+prefilter emits candidate SEND ranges on the same `RailsAppVisitor` walk (no
+new rule, no new interest flags — it rides `ENTER_CALL`), and the wrapper
+relocates the parser send node with `Shirobai::NodeLocator` and runs stock's
+`on_send` + autocorrect VERBATIM. This is the right split because both cops
+are source-reconstruction heavy (full-node rebuild joining hash pairs with
+`, `; receiver-walk offense ranges; `.source` reads) and carry
+file-path / target-version heuristics — reproducing that byte-for-byte in
+Rust is far riskier than running stock's own Ruby on the located node. The
+candidate sets are narrow: bare HTTP-verb sends with >= 2 args (a block-pass
+counts, as in the parser AST), and the five errors-chain shapes
+(`errors[...]` / `errors.{messages,details}[...]` manipulation & assignment,
+`errors.{keys,values,to_h,to_xml}`).
+
+`Rails/HttpPositionalArguments` carries stock's `requires_gem('railties', '>=
+5.0')` gate (Rails >= 5), replicated on the wrapper like the Application*
+cops; `Include: **/spec/**, **/test/**` resolves through the wrapper badge.
+`Rails/DeprecatedActiveModelErrorsMethods` has no gem gate but reads
+`target_rails_version` in `on_send` (Rails <= 6.0 exempts
+`keys`/`values`/`to_h`/`to_xml`) and `model_file?` (`/models/` allows a nil
+receiver) — both run in the wrapper on the parser AST, unchanged from stock.
+
+Verified with the same bar: vendor specs from `vendor/rubocop-rails` (156
+examples across both cops), differential edge-case specs for every probed
+quirk (session-arg conversion, parentheses, multiline hash join, routing
+block / rack-test / kwsplat guards, `keys`-node-not-`include?` offense,
+version gate, uncorrectable `details <<` and `[]=`, a heredoc-interpolated
+`errors.to_h`, non-ASCII, CRLF fallback), lint-mode correctable parity,
+non-ASCII offset parity, and the parity oracle at zero diff on Mastodon /
+Redmine / Discourse (`app` and `spec` targets), plus a direct `--only ... -A`
+byte comparison. The self-test fixture fires both cops on the stock side.
+
+One `NodeLocator` subtlety surfaced on Discourse: the range-containment prune
+the rspec `NodeLocator` uses is UNSOUND for heredocs — a send in a heredoc
+body sits outside the expression range of every ancestor up to the root, so
+the prune drops it. The core `Shirobai::NodeLocator` (added here, the
+plugin-neutral twin) does a full descent with an all-found early exit
+instead; it runs only when the wrapper already has candidates, so the cost is
+negligible.
+
+### Wire layout (for the sibling tracks building on this branch)
+
+Rails is origin 3 (`ORIGIN_RAILS` / `N_ORIGINS = 4`). Slots after the
+integration of the two 2026-07 clusters: `rails_application_record [3,0]`,
+`..._controller [3,1]`, `..._mailer [3,2]`, `..._job [3,3]` (final offense
+ranges); `rails_unknown_env [3,4]`, `rails_dynamic_find_by [3,5]`
+(send/block-table cluster, see its section below);
+`rails_http_positional_arguments [3,6]`,
+`rails_deprecated_active_model_errors_methods [3,7]` (Architecture-B
+candidate ranges). The two Architecture-B cops add NOTHING to the segment —
+their gating lives in the wrappers — so the segment shape is exactly the
+send/block-table cluster's (`nums = [rails_enabled,
+unknown_env_supports_local]`, four lists; see "Wire layout delta" below).
+Future clusters extend the segment by appending nums / lists in
+`rails_config.rs`, never reordering.
+
+## Plugin cops: shirobai-rails (send/block-table cluster)
+
+Two more rubocop-rails cops, both **full-Rust** (byte-computable detection and
+autocorrect, no parser-AST relocation needed):
+
+- `Rails/DynamicFindBy`
+- `Rails/UnknownEnv`
+
+`Rails/DynamicFindBy` is its own rule with a class-inheritance ancestor stack
+(ENTER_ALL + LEAVE, one frame per branch node so the stack stays 1:1 with
+`leave`; a counter of ActiveRecord-inheriting class ancestors drives the
+receiverless-finder case). It replicates the `/^find_by_(.+?)(!)?$/` name match
+(lazy group 1, so a lone `find_by_!` captures `!` as the column and stays
+`find_by`), the argument-count / no-splat / no-hash gate (a block-pass `&blk`
+counts as a virtual trailing argument, per the trap table), and the
+`AllowedMethods` / `AllowedReceivers` (the receiver's raw source) / deprecated
+`Whitelist` suppressions. Autocorrect replaces the selector and inserts each
+`col: ` keyword before its argument — all in Rust; the wrapper owns only the
+`MSG` and derives the method name from the selector range.
+
+`Rails/UnknownEnv` is its own rule (ENTER_CALL + ENTER_OTHER for the `case`
+form, no stack). Rust detects the predicate / comparison (both operand orders)
+/ `case` shapes off `rails_env?` and emits `[start, end, name]`. The message —
+including the `DidYouMean` spell suggestion, which cannot and must not be
+reproduced in Rust — is built Ruby-side from the wrapper's own `Environments`
+config, so the suggestion text is stock by construction. The `supports_local`
+asymmetry (`local` is known for the predicate form only, and only on Rails
+>= 7.1) is packed into the segment; the comparison and `case` forms never
+allow `local`, matching stock. No autocorrect (stock has none).
+
+Architecture choice: full-Rust for both. `UnknownEnv` needs no node relocation
+(offense ranges are byte-computable and the only Ruby-side machinery,
+DidYouMean, is fed a plain name string). `DynamicFindBy`'s autocorrect is a
+selector replace plus keyword inserts at known byte offsets, so Architecture B
+would add cost without buying parity.
+
+Verified with the same bar as core cops: vendor specs from the
+`vendor/rubocop-rails` submodule (including the `:rails71` / `:ruby27` version
+contexts and the `DidYouMean`-available branch), differential edge-case specs
+for every probed quirk (csend; the nested-class `each_ancestor(:class).any?`
+case; the block-pass virtual argument; the lone-bang column; multiline keyword
+inserts; CRLF fallback; cbase `::Rails.env`; both comparison operand orders;
+multi-condition `case`; non-string `when`), lint-mode correctable parity,
+non-ASCII offset parity (DynamicFindBy through the full autocorrect, UnknownEnv
+on offense offsets), and the rails parity oracle at zero diff on Mastodon /
+Redmine / Discourse / fluentd. The oracle self-test fixture was extended so
+both cops fire on the stock side first (the hollow-zero-diff guard). Corpus
+positives: `DynamicFindBy` fires 81 times on Redmine and 94 on Discourse (a
+whole-tree `--only Rails/DynamicFindBy -A` autocorrect on Redmine is
+byte-identical to stock); `UnknownEnv` has no corpus positives (env-name typos
+are rare in mature code) and rests on the vendor + edge + self-test coverage.
+
+### Wire layout delta
+
+The rails segment grew (append only): `nums = [rails_enabled,
+unknown_env_supports_local]`, `lists = [unknown_env_environments,
+dynamic_find_by_allowed_methods, dynamic_find_by_allowed_receivers,
+dynamic_find_by_whitelist]`. Dormant segment `[[0, 0], [[], [], [], []]]`. New
+slots `rails_unknown_env [3,4]`, `rails_dynamic_find_by [3,5]`. Each cop's
+`bundle_args` is the single source of its own config; `Shirobai::Rails.segment`
+assembles the pieces.
+
+### Deferred (same branch family, not in this cluster)
+
+`Rails/Pluck`, `Rails/IndexBy`, `Rails/IndexWith` were scoped into this cluster
+but deferred rather than rushed, to keep the shipped cluster byte-clean:
+
+- `Rails/Pluck` is full-Rust-feasible but needs a block-ancestor-receiver stack
+  plus lvar-shadow analysis of the `[]` key, and its detection splits on prism's
+  numbered-/`it`-parameter block representation (the R2 divergence lesson). That
+  warrants its own careful probe-and-verify cycle.
+- `Rails/IndexBy` / `Rails/IndexWith` share the `IndexMethod` mixin whose
+  autocorrect is heavy parser-AST geometry (strip prefix/suffix, rename method,
+  rewrite block args, replace body) plus cross-offense `ignore_node` state —
+  the Architecture B relocate-and-dispatch pattern (as in the rspec metadata
+  family), a larger harness than this cluster.
+
 ## Attempted but reverted
 
 These cops were implemented to full drop-in compatibility but reverted because

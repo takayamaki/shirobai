@@ -25,6 +25,7 @@ module Shirobai
 end
 
 require_relative "source_offsets"
+require_relative "node_locator"
 require_relative "cop/base"
 require_relative "dispatch"
 require_relative "cop/lint/debugger"

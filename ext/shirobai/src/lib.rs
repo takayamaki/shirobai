@@ -1750,6 +1750,15 @@ fn register_bundle_config(
 /// 13 rspec_empty_line_after_example / 14 rspec_empty_line_after_example_group /
 /// 15 rspec_empty_line_after_final_let / 16 rspec_empty_line_after_hook /
 /// 17 rspec_empty_line_after_subject
+///
+/// Rails slots (origin 3; every slot empty unless the plugin gem registered
+/// its packed segment — the rails origin has no per-file gate):
+///
+/// 0 rails_application_record / 1 rails_application_controller /
+/// 2 rails_application_mailer / 3 rails_application_job /
+/// 4 rails_unknown_env / 5 rails_dynamic_find_by /
+/// 6 rails_http_positional_arguments (candidates) /
+/// 7 rails_deprecated_active_model_errors_methods (candidates)
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1930,12 +1939,27 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         rspec.push(map_rspec_empty_line(r.rspec_empty_line_after_final_let))?;
         rspec.push(map_rspec_empty_line(r.rspec_empty_line_after_hook))?;
         rspec.push(map_rspec_empty_line(r.rspec_empty_line_after_subject))?;
+        // Rails origin (result[3]). Slots 0-3 (Application*) are `[[start,
+        // end], ...]` byte ranges; slots 4-5 carry the send/block-table cops'
+        // richer tuples (see the map functions); slots 6-7 are the two
+        // Architecture-B cops' candidate send ranges (the wrapper relocates
+        // and runs stock detection + autocorrect verbatim).
+        let rails = ruby.ary_new_capa(8);
+        rails.push(r.rails_application_record)?;
+        rails.push(r.rails_application_controller)?;
+        rails.push(r.rails_application_mailer)?;
+        rails.push(r.rails_application_job)?;
+        rails.push(map_rails_unknown_env(r.rails_unknown_env))?;
+        rails.push(map_rails_dynamic_find_by(r.rails_dynamic_find_by))?;
+        rails.push(r.rails_http_positional_arguments)?;
+        rails.push(r.rails_deprecated_active_model_errors_methods)?;
         // The nested result is N_ORIGINS + 1 arrays per file (the outer
         // one plus one per origin), nothing per cop.
-        let out = ruby.ary_new_capa(3);
+        let out = ruby.ary_new_capa(4);
         out.push(ary)?;
         out.push(perf)?;
         out.push(rspec)?;
+        out.push(rails)?;
         Ok(out)
     })
 }
@@ -3647,6 +3671,113 @@ fn check_perf_times_map(
     ))
 }
 
+/// Ruby entry points for the four Application* cops (shirobai-rails), the
+/// per-cop fallback path for non-bundle-eligible files. Config-less; each
+/// returns `[[start, end], ...]` — the offense highlight and autocorrect
+/// replace range (the message and superclass replacement are wrapper
+/// constants). The rail origin has no per-file gate, so these mirror the
+/// bundle's slots exactly.
+fn check_rails_application_record(source: RString) -> Vec<(usize, usize)> {
+    shirobai_core::rules::rails_app::check_rails_app(bytes(&source)).application_record
+}
+
+fn check_rails_application_controller(source: RString) -> Vec<(usize, usize)> {
+    shirobai_core::rules::rails_app::check_rails_app(bytes(&source)).application_controller
+}
+
+fn check_rails_application_mailer(source: RString) -> Vec<(usize, usize)> {
+    shirobai_core::rules::rails_app::check_rails_app(bytes(&source)).application_mailer
+}
+
+fn check_rails_application_job(source: RString) -> Vec<(usize, usize)> {
+    shirobai_core::rules::rails_app::check_rails_app(bytes(&source)).application_job
+}
+
+/// `Rails/UnknownEnv`: `[[start, end, name], ...]`. `[start, end)` is the
+/// offense highlight; `name` is stock's pre-`chomp('?')` name, so the wrapper
+/// builds the message (including the `DidYouMean` suggestion) Ruby-side.
+fn map_rails_unknown_env(
+    v: Vec<shirobai_core::rules::rails_unknown_env::UnknownEnvOffense>,
+) -> Vec<(usize, usize, String)> {
+    v.into_iter()
+        .map(|o| (o.start_offset, o.end_offset, o.name))
+        .collect()
+}
+
+/// `Rails/DynamicFindBy`: `[[start, end, static_name, sel_start, sel_end,
+/// [[arg_start, keyword], ...]], ...]`. `[start, end)` is the offense
+/// highlight (whole send); the wrapper replaces `[sel_start, sel_end)` with
+/// `static_name` and inserts each `keyword` before `arg_start`.
+#[allow(clippy::type_complexity)]
+fn map_rails_dynamic_find_by(
+    v: Vec<shirobai_core::rules::rails_dynamic_find_by::DynamicFindByOffense>,
+) -> Vec<(usize, usize, String, usize, usize, Vec<(usize, String)>)> {
+    v.into_iter()
+        .map(|o| {
+            (
+                o.start_offset,
+                o.end_offset,
+                o.static_name,
+                o.sel_start,
+                o.sel_end,
+                o.inserts,
+            )
+        })
+        .collect()
+}
+
+/// Ruby entry point for `Rails/UnknownEnv` (per-cop fallback). Takes the
+/// `Environments` list and the `supports_local` flag.
+fn check_rails_unknown_env(
+    source: RString,
+    environments: Vec<String>,
+    supports_local: bool,
+) -> Vec<(usize, usize, String)> {
+    map_rails_unknown_env(
+        shirobai_core::rules::rails_unknown_env::check_rails_unknown_env(
+            bytes(&source),
+            environments,
+            supports_local,
+        ),
+    )
+}
+
+/// Ruby entry point for `Rails/DynamicFindBy` (per-cop fallback). Takes the
+/// three suppression lists.
+#[allow(clippy::type_complexity)]
+fn check_rails_dynamic_find_by(
+    source: RString,
+    allowed_methods: Vec<String>,
+    allowed_receivers: Vec<String>,
+    whitelist: Vec<String>,
+) -> Vec<(usize, usize, String, usize, usize, Vec<(usize, String)>)> {
+    let config = shirobai_core::rules::rails_dynamic_find_by::Config {
+        allowed_methods,
+        allowed_receivers,
+        whitelist,
+    };
+    map_rails_dynamic_find_by(
+        shirobai_core::rules::rails_dynamic_find_by::check_rails_dynamic_find_by(
+            bytes(&source),
+            config,
+        ),
+    )
+}
+
+/// Standalone candidate prefilter for `Rails/HttpPositionalArguments`
+/// (per-cop fallback on non-bundle-eligible files).
+fn check_rails_http_positional_arguments(source: RString) -> Vec<(usize, usize)> {
+    shirobai_core::rules::rails_app::check_rails_http_positional_arguments(bytes(&source))
+}
+
+/// Standalone candidate prefilter for
+/// `Rails/DeprecatedActiveModelErrorsMethods`.
+fn check_rails_deprecated_active_model_errors_methods(source: RString) -> Vec<(usize, usize)> {
+    shirobai_core::rules::rails_app::check_rails_deprecated_active_model_errors_methods(bytes(
+        &source,
+    ))
+}
+
 /// Ruby entry point for `Lint/UnreachableCode`. Config-less. Returns
 /// `[[start, end], ...]` — the byte range of each unreachable expression.
 fn check_unreachable_code(source: RString) -> Vec<(usize, usize)> {
@@ -4091,6 +4222,38 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_perf_times_map",
         function!(check_perf_times_map, 1),
+    )?;
+    module.define_module_function(
+        "check_rails_application_record",
+        function!(check_rails_application_record, 1),
+    )?;
+    module.define_module_function(
+        "check_rails_application_controller",
+        function!(check_rails_application_controller, 1),
+    )?;
+    module.define_module_function(
+        "check_rails_application_mailer",
+        function!(check_rails_application_mailer, 1),
+    )?;
+    module.define_module_function(
+        "check_rails_application_job",
+        function!(check_rails_application_job, 1),
+    )?;
+    module.define_module_function(
+        "check_rails_unknown_env",
+        function!(check_rails_unknown_env, 3),
+    )?;
+    module.define_module_function(
+        "check_rails_dynamic_find_by",
+        function!(check_rails_dynamic_find_by, 4),
+    )?;
+    module.define_module_function(
+        "check_rails_http_positional_arguments",
+        function!(check_rails_http_positional_arguments, 1),
+    )?;
+    module.define_module_function(
+        "check_rails_deprecated_active_model_errors_methods",
+        function!(check_rails_deprecated_active_model_errors_methods, 1),
     )?;
     module.define_module_function(
         "check_rspec_variable_name",
