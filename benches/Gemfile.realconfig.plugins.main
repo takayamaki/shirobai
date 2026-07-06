@@ -13,6 +13,7 @@ end
 gem "shirobai", path: main_tree
 gem "shirobai-performance", path: "#{main_tree}/gems/shirobai-performance"
 gem "shirobai-rspec", path: "#{main_tree}/gems/shirobai-rspec"
+gem "shirobai-rails", path: "#{main_tree}/gems/shirobai-rails"
 
 # Plugins required by test corpora (same list as Gemfile.realconfig.shirobai)
 gem "rubocop-capybara"        # Mastodon
