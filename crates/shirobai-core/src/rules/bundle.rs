@@ -2131,8 +2131,8 @@ mod tests {
         assert_eq!(bundle.multiline_operation.len(), op_alone.len());
         for (a, b) in bundle.multiline_operation.iter().zip(&op_alone) {
             assert_eq!(
-                (a.start_offset, a.column_delta),
-                (b.start_offset, b.column_delta)
+                (a.start_offset, a.column_delta, &a.message),
+                (b.start_offset, b.column_delta, &b.message)
             );
         }
 

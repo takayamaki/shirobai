@@ -95,6 +95,10 @@ impl KwKind {
 struct KwInfo {
     kind: KwKind,
     is_modifier: bool,
+    /// True when this `if` frame is the `elsif` branch of an if/elsif chain.
+    /// Prism models `elsif` as a nested `IfNode` whose keyword token is
+    /// `elsif`, so stock's `node.loc.keyword.source` reports `elsif`, not `if`.
+    is_elsif: bool,
 }
 
 /// The parser-gem-equivalent ancestor of a node, holding only what the mixin's
@@ -111,6 +115,8 @@ enum FrameKind {
         expr: Option<(usize, usize)>,
         is_modifier: bool,
         is_ternary: bool,
+        /// See `KwInfo::is_elsif`. Only ever true for `if` frames.
+        is_elsif: bool,
     },
     /// An `lvasgn` / `op_asgn` / ... node. `rhs` is `extract_rhs` (its value).
     Assignment {
@@ -202,6 +208,7 @@ impl<'a> Visitor<'a> {
                 expr,
                 is_modifier,
                 is_ternary,
+                is_elsif,
             } = *f
             {
                 if is_ternary {
@@ -210,7 +217,11 @@ impl<'a> Visitor<'a> {
                 if let Some(e) = expr
                     && within(op, e)
                 {
-                    return Some(KwInfo { kind, is_modifier });
+                    return Some(KwInfo {
+                        kind,
+                        is_modifier,
+                        is_elsif,
+                    });
                 }
             }
         }
@@ -304,7 +315,7 @@ impl<'a> Visitor<'a> {
         assign_rhs: Option<(usize, usize)>,
     ) -> String {
         if let Some(k) = kw {
-            let keyword = k.kind.keyword();
+            let keyword = if k.is_elsif { "elsif" } else { k.kind.keyword() };
             let kind = if k.kind == KwKind::For {
                 "collection"
             } else {
@@ -400,13 +411,16 @@ impl<'a> Visitor<'a> {
 
     fn frame_for(&self, node: &Node<'_>) -> FrameKind {
         if let Some(n) = node.as_if_node() {
-            let is_ternary = n.if_keyword_loc().is_none();
+            let if_kw = n.if_keyword_loc();
+            let is_ternary = if_kw.is_none();
             let is_modifier = !is_ternary && n.end_keyword_loc().is_none();
+            let is_elsif = if_kw.is_some_and(|l| l.as_slice() == b"elsif");
             return FrameKind::Keyword {
                 kind: KwKind::If,
                 expr: Some(loc(&n.predicate().location())),
                 is_modifier,
                 is_ternary,
+                is_elsif,
             };
         }
         if let Some(n) = node.as_unless_node() {
@@ -415,6 +429,7 @@ impl<'a> Visitor<'a> {
                 expr: Some(loc(&n.predicate().location())),
                 is_modifier: n.end_keyword_loc().is_none(),
                 is_ternary: false,
+                is_elsif: false,
             };
         }
         if let Some(n) = node.as_while_node() {
@@ -423,6 +438,7 @@ impl<'a> Visitor<'a> {
                 expr: Some(loc(&n.predicate().location())),
                 is_modifier: false,
                 is_ternary: false,
+                is_elsif: false,
             };
         }
         if let Some(n) = node.as_until_node() {
@@ -431,6 +447,7 @@ impl<'a> Visitor<'a> {
                 expr: Some(loc(&n.predicate().location())),
                 is_modifier: false,
                 is_ternary: false,
+                is_elsif: false,
             };
         }
         if let Some(n) = node.as_for_node() {
@@ -439,6 +456,7 @@ impl<'a> Visitor<'a> {
                 expr: Some(loc(&n.collection().location())),
                 is_modifier: false,
                 is_ternary: false,
+                is_elsif: false,
             };
         }
         if let Some(n) = node.as_return_node() {
@@ -450,6 +468,7 @@ impl<'a> Visitor<'a> {
                 expr,
                 is_modifier: false,
                 is_ternary: false,
+                is_elsif: false,
             };
         }
         if let Some(n) = node.as_parentheses_node() {
@@ -638,6 +657,28 @@ mod tests {
     #[test]
     fn aligned_if_condition() {
         let got = run("if a +\n    b\n  something\nend\n", Style::Aligned);
+        assert_eq!(got.len(), 1);
+        assert_eq!(
+            got[0].3,
+            "Align the operands of a condition in an `if` statement spanning multiple lines."
+        );
+    }
+
+    #[test]
+    fn elsif_condition_names_elsif_keyword() {
+        // Prism nests `elsif` as an inner IfNode whose keyword token is
+        // `elsif`; stock's message names it `elsif` (article `a`, not `an`).
+        let got = run("if a\n  1\nelsif b ||\n    c\n  2\nend\n", Style::Aligned);
+        assert_eq!(got.len(), 1);
+        assert_eq!(
+            got[0].3,
+            "Align the operands of a condition in a `elsif` statement spanning multiple lines."
+        );
+    }
+
+    #[test]
+    fn leading_if_condition_still_names_if() {
+        let got = run("if a ||\n    b\n  1\nelsif c\n  2\nend\n", Style::Aligned);
         assert_eq!(got.len(), 1);
         assert_eq!(
             got[0].3,
