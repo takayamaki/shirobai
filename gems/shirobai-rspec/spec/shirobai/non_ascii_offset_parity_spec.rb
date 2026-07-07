@@ -82,6 +82,11 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rspec" do
       RuboCop::Cop::RSpec::EmptyExampleGroup,
       Shirobai::Cop::RSpec::EmptyExampleGroup,
       "#{prefix}describe 'テスト' do\n  context '空のコンテキスト' do\n    let(:変数) { 値 }\n  end\nend\n"
+    ],
+    "RSpec/ScatteredSetup" => [
+      RuboCop::Cop::RSpec::ScatteredSetup,
+      Shirobai::Cop::RSpec::ScatteredSetup,
+      "#{prefix}describe 'テスト' do\n  before { 準備1 }\n  before { 準備2 }\nend\n"
     ]
   }
 
@@ -153,6 +158,19 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rspec" do
       corrected = expect_autocorrect_parity(stock, shirobai, source, config)
       expect(corrected).to include(expected)
     end
+  end
+
+  it "autocorrects RSpec/ScatteredSetup byte-identically with multibyte hooks" do
+    config = RuboCop::ConfigLoader.default_configuration
+    source = "#{prefix}describe 'テスト' do\n  before { 準備1 }\n  before { 準備2 }\nend\n"
+    corrected = expect_autocorrect_parity(
+      RuboCop::Cop::RSpec::ScatteredSetup,
+      Shirobai::Cop::RSpec::ScatteredSetup,
+      source,
+      config
+    )
+    expect(corrected).to include("準備1")
+    expect(corrected).to include("準備2")
   end
 
   it "autocorrects RSpec/EmptyLineAfterFinalLet with a multibyte offending line" do
