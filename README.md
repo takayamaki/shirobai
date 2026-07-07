@@ -44,9 +44,10 @@ The image is simple: RuboCop hops on a shiro-bai and gets faster.
 ## Current status
 
 - **93 cops** reimplemented in Rust (Lint / Layout / Metrics / Naming / Style).
-- **Plugin-cop gems**: `gems/shirobai-performance` replaces 5
-  rubocop-performance cops and `gems/shirobai-rspec` replaces 6
-  rubocop-rspec cops, both through the same shared native extension.
+- **Plugin-cop gems** (35 more cops through the same shared native
+  extension, no second cargo build): `gems/shirobai-rspec` replaces 21
+  rubocop-rspec cops, `gems/shirobai-rails` replaces 9 rubocop-rails cops,
+  and `gems/shirobai-performance` replaces 5 rubocop-performance cops.
   See `docs/cop-status.md` and each gem's README;
   the setup below describes the core gem only.
 - **Full drop-in compatibility** verified on real codebases.
@@ -57,27 +58,34 @@ The image is simple: RuboCop hops on a shiro-bai and gets faster.
 - **Real-world speedup** — real CLI, each project's own `.rubocop.yml`,
   all plugin gems installed, 5-round median:
 
-  | Corpus | files | offenses | stock | shirobai | saving |
+  | Corpus | files | offenses | stock | shirobai (core only) | + plugin gems |
   |---|---|---|---|---|---|
-  | Mastodon | 3,206 | 0 | 118.84s | 89.65s | **-29.19s (-24.6%)** |
-  | Discourse | 10,229 | 16 | 227.68s | 182.64s | **-45.04s (-19.8%)** |
-  | Redmine | 1,058 | 2 | 52.27s | 37.09s | **-15.18s (-29.0%)** |
-  | fluentd | 456 | 0 | 8.98s | 8.88s | -0.10s (-1.1%) |
+  | Mastodon | 3,206 | 0 | 110.19s | 80.08s (-27.3%) | 67.83s (**-38.4%**) |
+  | Discourse | 10,229 | 16 | 232.81s | 181.20s (-22.2%) | 170.35s (**-26.8%**) |
+  | Redmine | 1,058 | 2 | 55.14s | 39.18s (-28.9%) | 39.07s (**-29.1%**) |
+  | fluentd | 456 | 0 | 7.00s | 7.25s (+3.6%) | 7.96s (+13.8%) |
 
+  The "shirobai (core only)" column installs the core gem alone; the
+  "+ plugin gems" column adds shirobai-rspec / shirobai-rails /
+  shirobai-performance on top (each required only when the corpus's own
+  config loads the matching stock plugin, exactly as a real user would).
   Measured on GitHub Actions `ubuntu-latest` (4-vCPU shared runner)
-  against shirobai at commit [`2e6ba79`](https://github.com/takayamaki/shirobai/commit/2e6ba79).
+  against shirobai at commit [`1e5a54c`](https://github.com/takayamaki/shirobai/commit/1e5a54c).
   Each run first verifies that stock and shirobai report the **same offense set**
   on the corpus's own config; the table shows the median time to lint the same code.
   Rerun on any commit via `gh workflow run bench.yml`
   (`.github/workflows/bench.yml`).
 
-  shirobai only replaces cops from the rubocop gem itself.
-  Plugin cops (rubocop-rails, rubocop-rspec, etc.) run unchanged,
-  so projects that spend more time on plugin cops see a lower percentage improvement
-  (Discourse is a heavy plugin user).
-  fluentd's config disables most default cops, leaving very few rubocop-gem cops
-  for shirobai to replace — the savings there roughly cancel out the small
-  fixed cost of loading the native extension.
+  Projects that spend their time on plugin cops gain from the plugin gems
+  what the core gem alone cannot reach (Discourse is a heavy plugin user:
+  core -22.2%, with plugin gems -26.8%; Mastodon's spec-heavy suite gains
+  11 points from shirobai-rspec/-rails).
+  fluentd is the honest fine print: its config disables most default cops,
+  so there is little for shirobai to replace and the fixed cost of loading
+  the native extension slightly exceeds the saving — and the plugin shells
+  only add fixed cost there. On plugin-light or heavily-restricted configs,
+  measure first; installing shirobai (or its plugin gems) is not
+  automatically a win.
 
   RuboCop itself is also used for compatibility verification but not benchmarked,
   because its own config needs `rubocop-internal_affairs` / `rubocop-rake`
@@ -205,8 +213,10 @@ Each directory has its own `README.md` with details.
 | `vendor/rubocop/` | Git submodule pinned to 1.88.0 for vendor specs |
 | `gems/shirobai-performance/` | Plugin gem (rubocop-performance cops) |
 | `gems/shirobai-rspec/` | Plugin gem (rubocop-rspec cops) |
+| `gems/shirobai-rails/` | Plugin gem (rubocop-rails cops) |
 | `vendor/rubocop-performance/` | Git submodule pinned to 1.26.1 for plugin vendor specs |
 | `vendor/rubocop-rspec/` | Git submodule pinned to 3.10.2 for plugin vendor specs |
+| `vendor/rubocop-rails/` | Git submodule pinned to 2.35.5 for plugin vendor specs |
 
 ## Building and testing
 
