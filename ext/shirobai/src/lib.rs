@@ -1758,7 +1758,8 @@ fn register_bundle_config(
 /// 2 rails_application_mailer / 3 rails_application_job /
 /// 4 rails_unknown_env / 5 rails_dynamic_find_by /
 /// 6 rails_http_positional_arguments (candidates) /
-/// 7 rails_deprecated_active_model_errors_methods (candidates)
+/// 7 rails_deprecated_active_model_errors_methods (candidates) /
+/// 8 rails_pluck
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -1944,7 +1945,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         // richer tuples (see the map functions); slots 6-7 are the two
         // Architecture-B cops' candidate send ranges (the wrapper relocates
         // and runs stock detection + autocorrect verbatim).
-        let rails = ruby.ary_new_capa(8);
+        let rails = ruby.ary_new_capa(9);
         rails.push(r.rails_application_record)?;
         rails.push(r.rails_application_controller)?;
         rails.push(r.rails_application_mailer)?;
@@ -1953,6 +1954,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         rails.push(map_rails_dynamic_find_by(r.rails_dynamic_find_by))?;
         rails.push(r.rails_http_positional_arguments)?;
         rails.push(r.rails_deprecated_active_model_errors_methods)?;
+        rails.push(map_rails_pluck(r.rails_pluck))?;
         // The nested result is N_ORIGINS + 1 arrays per file (the outer
         // one plus one per origin), nothing per cop.
         let out = ruby.ary_new_capa(4);
@@ -3764,6 +3766,24 @@ fn check_rails_dynamic_find_by(
     )
 }
 
+/// `Rails/Pluck`: `[[sel_start, block_end, key_src_start, key_src_end], ...]`.
+/// `[sel_start, block_end)` is the offense highlight and replace range; the
+/// replacement is `pluck(<source[key_src_start..key_src_end]>)`.
+fn map_rails_pluck(
+    v: Vec<shirobai_core::rules::rails_pluck::PluckOffense>,
+) -> Vec<(usize, usize, usize, usize)> {
+    v.into_iter()
+        .map(|o| (o.sel_start, o.block_end, o.key_src_start, o.key_src_end))
+        .collect()
+}
+
+/// Ruby entry point for `Rails/Pluck` (per-cop fallback). No config needed.
+fn check_rails_pluck(source: RString) -> Vec<(usize, usize, usize, usize)> {
+    map_rails_pluck(shirobai_core::rules::rails_pluck::check_rails_pluck(
+        bytes(&source),
+    ))
+}
+
 /// Standalone candidate prefilter for `Rails/HttpPositionalArguments`
 /// (per-cop fallback on non-bundle-eligible files).
 fn check_rails_http_positional_arguments(source: RString) -> Vec<(usize, usize)> {
@@ -4246,6 +4266,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_rails_dynamic_find_by",
         function!(check_rails_dynamic_find_by, 4),
+    )?;
+    module.define_module_function(
+        "check_rails_pluck",
+        function!(check_rails_pluck, 1),
     )?;
     module.define_module_function(
         "check_rails_http_positional_arguments",

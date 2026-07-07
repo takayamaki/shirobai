@@ -57,6 +57,11 @@ RSpec.describe "lint-mode correctable parity with stock rubocop-rails" do
       Shirobai::Cop::Rails::UnknownEnv,
       "Rails.env.proudction?\n"
     ],
+    "Rails/Pluck" => [
+      RuboCop::Cop::Rails::Pluck,
+      Shirobai::Cop::Rails::Pluck,
+      "x.map { |a| a[:foo] }\n"
+    ],
     "Rails/HttpPositionalArguments" => [
       RuboCop::Cop::Rails::HttpPositionalArguments,
       Shirobai::Cop::Rails::HttpPositionalArguments,
