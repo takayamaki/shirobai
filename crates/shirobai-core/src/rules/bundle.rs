@@ -958,6 +958,10 @@ pub struct BundleResult {
     pub rspec_focus: Vec<(usize, usize)>,
     /// `RSpec/PendingWithoutReason` candidate send ranges.
     pub rspec_pending_without_reason: Vec<(usize, usize)>,
+    /// `RSpec/EmptyExampleGroup` candidate example-group block ranges. The
+    /// wrapper locates each parser block node and runs stock's `on_block`
+    /// detection verbatim.
+    pub rspec_empty_example_group: Vec<(usize, usize)>,
     /// Shared metadata-anchor block ranges feeding the four `Metadata`-mixin
     /// cops (`MetadataStyle` / `DuplicatedMetadata` / `EmptyMetadata` /
     /// `SortMetadata`). Each cop reads the same list from its own slot; the ext
@@ -1588,6 +1592,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         rspec_named_subject: rspec_result.named_subject,
         rspec_focus: rspec_result.focus,
         rspec_pending_without_reason: rspec_result.pending_without_reason,
+        rspec_empty_example_group: rspec_result.empty_example_group,
         rspec_metadata_anchors: rspec_result.metadata_anchors,
         rspec_empty_line_after_example: rspec_el_result.example,
         rspec_empty_line_after_example_group: rspec_el_result.example_group,

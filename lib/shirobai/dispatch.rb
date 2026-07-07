@@ -156,6 +156,7 @@ module Shirobai
       rspec_empty_line_after_final_let: [2, 15].freeze,
       rspec_empty_line_after_hook: [2, 16].freeze,
       rspec_empty_line_after_subject: [2, 17].freeze,
+      rspec_empty_example_group: [2, 18].freeze,
       # shirobai-rails plugin slots (origin 3), all filled by the single
       # RailsAppVisitor. The rails origin is NOT per-file gated: the
       # Application* cops run on every Ruby file, so it is always awake once

@@ -121,6 +121,12 @@ RSpec.describe "lint-mode correctable parity with stock rubocop-rspec" do
       Shirobai::Cop::RSpec::EmptyLineAfterSubject,
       "describe 'x' do\n  subject(:obj) { described_class }\n  let(:foo) { bar }\nend\n",
       true
+    ],
+    "RSpec/EmptyExampleGroup" => [
+      RuboCop::Cop::RSpec::EmptyExampleGroup,
+      Shirobai::Cop::RSpec::EmptyExampleGroup,
+      "describe Foo do\n  context 'empty' do\n    let(:foo) { bar }\n  end\nend\n",
+      true
     ]
   }
 
