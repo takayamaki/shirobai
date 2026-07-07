@@ -37,6 +37,7 @@ require_relative "shirobai/cop/rspec/repeated_example"
 require_relative "shirobai/cop/rspec/named_subject"
 require_relative "shirobai/cop/rspec/focus"
 require_relative "shirobai/cop/rspec/pending_without_reason"
+require_relative "shirobai/cop/rspec/described_class"
 require_relative "shirobai/cop/rspec/metadata_style"
 require_relative "shirobai/cop/rspec/duplicated_metadata"
 require_relative "shirobai/cop/rspec/empty_metadata"
@@ -65,6 +66,7 @@ module Shirobai
       Shirobai::Cop::RSpec::NamedSubject,
       Shirobai::Cop::RSpec::Focus,
       Shirobai::Cop::RSpec::PendingWithoutReason,
+      Shirobai::Cop::RSpec::DescribedClass,
       Shirobai::Cop::RSpec::MetadataStyle,
       Shirobai::Cop::RSpec::DuplicatedMetadata,
       Shirobai::Cop::RSpec::EmptyMetadata,
