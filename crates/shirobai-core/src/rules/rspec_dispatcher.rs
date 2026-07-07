@@ -223,6 +223,14 @@ pub struct RSpecResult {
     /// document order. The wrapper relocates each parser send node and runs
     /// stock's `on_send` verbatim (parent-relationship logic self-filters there).
     pub pending_without_reason: Vec<(usize, usize)>,
+    /// `RSpec/EmptyExampleGroup` candidate example-group BLOCK ranges (prism
+    /// call range == parser block node range), document order. Every
+    /// plain-block `example_group?` frame (rspec receiver + ExampleGroups.all
+    /// name) is emitted. The wrapper relocates each parser block node and
+    /// runs stock's `on_block` detection verbatim (the mutually recursive
+    /// `examples?` matcher, `offensive?` check, and
+    /// `each_ancestor(:any_def)` / `inside_example?` guards self-filter).
+    pub empty_example_group: Vec<(usize, usize)>,
 }
 
 /// parser block-kind recovery from a prism call (see module doc).
@@ -845,6 +853,7 @@ impl RSpecDispatcherRule<'_> {
         // Both cops read identical group data (each owns its slot); the
         // collection is computed once and cloned.
         let groups = self.repeated_example_groups();
+        let empty_example_group = self.empty_example_group_candidates();
         RSpecResult {
             variable_name: (self.vn_offenses, self.vn_passing),
             let_setup,
@@ -856,6 +865,7 @@ impl RSpecDispatcherRule<'_> {
             metadata_anchors: self.metadata_anchors,
             focus: self.focus_candidates,
             pending_without_reason: self.pending_candidates,
+            empty_example_group,
         }
     }
 
@@ -879,6 +889,19 @@ impl RSpecDispatcherRule<'_> {
             );
         }
         out
+    }
+
+    /// `EmptyExampleGroup`: every `example_group?` frame's block range in
+    /// document order. No filtering here — the wrapper runs stock's
+    /// `each_ancestor(:any_def)`, `inside_example?`, `example_group_body`,
+    /// and the mutually recursive `examples?` / `offensive?` matchers on the
+    /// located parser block node.
+    fn empty_example_group_candidates(&self) -> Vec<(usize, usize)> {
+        self.scopes
+            .iter()
+            .filter(|s| s.example_group)
+            .map(|s| s.range)
+            .collect()
     }
 
     /// `MultipleMemoizedHelpers`: for every plain-block spec group, union the
@@ -1183,6 +1206,13 @@ pub fn check_rspec_focus(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)
 /// ranges).
 pub fn check_rspec_pending_without_reason(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
     run(source, cfg).pending_without_reason
+}
+
+/// Standalone entry point for `RSpec/EmptyExampleGroup` (candidate
+/// example-group block ranges). The wrapper locates each parser block node
+/// and runs stock's `on_block` detection verbatim.
+pub fn check_rspec_empty_example_group(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
+    run(source, cfg).empty_example_group
 }
 
 fn run(source: &[u8], cfg: &RSpecConfig) -> RSpecResult {

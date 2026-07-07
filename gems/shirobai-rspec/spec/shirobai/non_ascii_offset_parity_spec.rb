@@ -72,6 +72,11 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rspec" do
       RuboCop::Cop::RSpec::EmptyLineAfterSubject,
       Shirobai::Cop::RSpec::EmptyLineAfterSubject,
       "#{prefix}describe 'x' do\n  subject(:主体) { 値 }\n  let(:補助) { 他 }\nend\n"
+    ],
+    "RSpec/EmptyExampleGroup" => [
+      RuboCop::Cop::RSpec::EmptyExampleGroup,
+      Shirobai::Cop::RSpec::EmptyExampleGroup,
+      "#{prefix}describe 'テスト' do\n  context '空のコンテキスト' do\n    let(:変数) { 値 }\n  end\nend\n"
     ]
   }
 
@@ -152,5 +157,18 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rspec" do
       config
     )
     expect(corrected).to include("let(:別名) { 他 }\n\n  it")
+  end
+
+  it "autocorrects RSpec/EmptyExampleGroup with multibyte content byte-identically" do
+    config = RuboCop::ConfigLoader.default_configuration
+    source = "#{prefix}describe 'テスト' do\n  context '空のコンテキスト' do\n    let(:変数) { 値 }\n  end\n\n  it '動作する' do\n    x\n  end\nend\n"
+    corrected = expect_autocorrect_parity(
+      RuboCop::Cop::RSpec::EmptyExampleGroup,
+      Shirobai::Cop::RSpec::EmptyExampleGroup,
+      source,
+      config
+    )
+    expect(corrected).to include("it '動作する'")
+    expect(corrected).not_to include("空のコンテキスト")
   end
 end

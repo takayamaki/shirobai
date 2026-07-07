@@ -41,6 +41,7 @@ require_relative "shirobai/cop/rspec/metadata_style"
 require_relative "shirobai/cop/rspec/duplicated_metadata"
 require_relative "shirobai/cop/rspec/empty_metadata"
 require_relative "shirobai/cop/rspec/sort_metadata"
+require_relative "shirobai/cop/rspec/empty_example_group"
 require_relative "shirobai/cop/rspec/empty_line_after_example"
 require_relative "shirobai/cop/rspec/empty_line_after_example_group"
 require_relative "shirobai/cop/rspec/empty_line_after_final_let"
@@ -68,6 +69,7 @@ module Shirobai
       Shirobai::Cop::RSpec::DuplicatedMetadata,
       Shirobai::Cop::RSpec::EmptyMetadata,
       Shirobai::Cop::RSpec::SortMetadata,
+      Shirobai::Cop::RSpec::EmptyExampleGroup,
       Shirobai::Cop::RSpec::EmptyLineAfterExample,
       Shirobai::Cop::RSpec::EmptyLineAfterExampleGroup,
       Shirobai::Cop::RSpec::EmptyLineAfterFinalLet,
