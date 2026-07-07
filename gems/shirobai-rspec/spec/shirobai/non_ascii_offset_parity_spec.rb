@@ -63,6 +63,11 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rspec" do
       Shirobai::Cop::RSpec::Focus,
       "#{prefix}describe 'テスト', :focus do\n  it 'あ' do\n  end\nend\n"
     ],
+    "RSpec/DescribedClass" => [
+      RuboCop::Cop::RSpec::DescribedClass,
+      Shirobai::Cop::RSpec::DescribedClass,
+      "#{prefix}describe MyClass do\n  subject { MyClass.do_something }\nend\n"
+    ],
     "RSpec/EmptyLineAfterExample" => [
       RuboCop::Cop::RSpec::EmptyLineAfterExample,
       Shirobai::Cop::RSpec::EmptyLineAfterExample,
@@ -115,6 +120,12 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rspec" do
       Shirobai::Cop::RSpec::Focus,
       "#{prefix}describe 'テスト', :focus do\n  it 'あ' do\n  end\nend\n",
       "describe 'テスト' do"
+    ],
+    "RSpec/DescribedClass" => [
+      RuboCop::Cop::RSpec::DescribedClass,
+      Shirobai::Cop::RSpec::DescribedClass,
+      "#{prefix}describe MyClass do\n  subject { MyClass.do_something }\nend\n",
+      "described_class.do_something"
     ],
     "RSpec/DuplicatedMetadata" => [
       RuboCop::Cop::RSpec::DuplicatedMetadata,

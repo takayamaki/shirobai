@@ -1581,6 +1581,22 @@ fn check_rspec_empty_example_group(
     ))
 }
 
+/// Standalone entry point for `RSpec/DescribedClass` (candidate block ranges).
+fn check_rspec_described_class(
+    ruby: &Ruby,
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Result<Vec<(usize, usize)>, Error> {
+    let Some(cfg) = rspec_segment_config(ruby, nums, lists)? else {
+        return Ok(Vec::new());
+    };
+    Ok(shirobai_core::rules::rspec_dispatcher::check_rspec_described_class(
+        bytes(&source),
+        &cfg,
+    ))
+}
+
 /// `[[final_end_line, method_name], ...]` for one empty-line-family cop.
 fn map_rspec_empty_line(
     v: Vec<shirobai_core::rules::rspec_empty_line::EmptyLineOffense>,
@@ -1767,7 +1783,8 @@ fn register_bundle_config(
 /// 13 rspec_empty_line_after_example / 14 rspec_empty_line_after_example_group /
 /// 15 rspec_empty_line_after_final_let / 16 rspec_empty_line_after_hook /
 /// 17 rspec_empty_line_after_subject /
-/// 18 rspec_empty_example_group (candidates)
+/// 18 rspec_empty_example_group (candidates) /
+/// 19 rspec_described_class (candidates)
 ///
 /// Rails slots (origin 3; every slot empty unless the plugin gem registered
 /// its packed segment — the rails origin has no per-file gate):
@@ -1934,7 +1951,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         perf.push(map_perf_start_with(r.perf_start_with))?;
         perf.push(map_perf_times_map(r.perf_times_map))?;
         // RSpec origin (result[2]).
-        let rspec = ruby.ary_new_capa(19);
+        let rspec = ruby.ary_new_capa(20);
         rspec.push(map_rspec_variable_name(r.rspec_variable_name))?;
         rspec.push(r.rspec_let_setup)?;
         rspec.push(map_rspec_variable_definition(r.rspec_variable_definition))?;
@@ -1960,6 +1977,8 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         rspec.push(map_rspec_empty_line(r.rspec_empty_line_after_subject))?;
         // R2 EmptyExampleGroup (slot 18): candidate block ranges.
         rspec.push(r.rspec_empty_example_group)?;
+        // R3 DescribedClass (slot 19): candidate block ranges.
+        rspec.push(r.rspec_described_class)?;
         // Rails origin (result[3]). Slots 0-3 (Application*) are `[[start,
         // end], ...]` byte ranges; slots 4-5 carry the send/block-table cops'
         // richer tuples (see the map functions); slots 6-7 are the two
@@ -4339,6 +4358,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_rspec_empty_example_group",
         function!(check_rspec_empty_example_group, 3),
+    )?;
+    module.define_module_function(
+        "check_rspec_described_class",
+        function!(check_rspec_described_class, 3),
     )?;
     module.define_module_function(
         "check_rspec_empty_line_after_example",

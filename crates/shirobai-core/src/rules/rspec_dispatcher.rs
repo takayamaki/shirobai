@@ -231,6 +231,11 @@ pub struct RSpecResult {
     /// `examples?` matcher, `offensive?` check, and
     /// `each_ancestor(:any_def)` / `inside_example?` guards self-filter).
     pub empty_example_group: Vec<(usize, usize)>,
+    /// `RSpec/DescribedClass` candidate block ranges: `describe(Const)` blocks
+    /// whose send is an `example_group?` call with a const as the first
+    /// argument. The wrapper relocates the parser block node and runs stock's
+    /// full detection + autocorrect verbatim.
+    pub described_class: Vec<(usize, usize)>,
 }
 
 /// parser block-kind recovery from a prism call (see module doc).
@@ -373,6 +378,9 @@ struct Scope {
     /// The frame is itself a `subject?` node — halts the subjects collection
     /// only.
     subject_barrier: bool,
+    /// `RSpec/DescribedClass` candidate: an `example_group?` block whose first
+    /// argument is a constant (`ConstantReadNode` or `ConstantPathNode`).
+    described_class_candidate: bool,
     /// Collected `let?` items (indexes into `let_items`), document order.
     lets: Vec<u32>,
     /// Collected `subject?` items (indexes into `subject_items`), document
@@ -604,6 +612,13 @@ impl RSpecDispatcherRule<'_> {
             let example_or_hook =
                 recv_none && role_mask & (roles::EX_ALL | roles::HOOKS) != 0;
             let shared_examples = rspec_recv && role_mask & roles::SG_EXAMPLES != 0;
+            let described_class_candidate = example_group && call
+                .arguments()
+                .and_then(|a| a.arguments().iter().next())
+                .is_some_and(|arg| {
+                    arg.as_constant_read_node().is_some()
+                        || arg.as_constant_path_node().is_some()
+                });
             let subject_def_named = self.find_direct_subject_def(call);
             let loc = call.location();
             self.scopes.push(Scope {
@@ -618,6 +633,7 @@ impl RSpecDispatcherRule<'_> {
                 subject_def_named,
                 let_barrier: is_let,
                 subject_barrier: is_subject,
+                described_class_candidate,
                 lets: Vec::new(),
                 subjects: Vec::new(),
                 examples: Vec::new(),
@@ -854,6 +870,12 @@ impl RSpecDispatcherRule<'_> {
         // collection is computed once and cloned.
         let groups = self.repeated_example_groups();
         let empty_example_group = self.empty_example_group_candidates();
+        let described_class: Vec<(usize, usize)> = self
+            .scopes
+            .iter()
+            .filter(|s| s.described_class_candidate)
+            .map(|s| s.range)
+            .collect();
         RSpecResult {
             variable_name: (self.vn_offenses, self.vn_passing),
             let_setup,
@@ -866,6 +888,7 @@ impl RSpecDispatcherRule<'_> {
             focus: self.focus_candidates,
             pending_without_reason: self.pending_candidates,
             empty_example_group,
+            described_class,
         }
     }
 
@@ -1213,6 +1236,13 @@ pub fn check_rspec_pending_without_reason(source: &[u8], cfg: &RSpecConfig) -> V
 /// and runs stock's `on_block` detection verbatim.
 pub fn check_rspec_empty_example_group(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
     run(source, cfg).empty_example_group
+}
+
+/// Standalone entry point for `RSpec/DescribedClass` (candidate block
+/// ranges). The wrapper relocates the parser block node and runs stock's
+/// full detection + autocorrect verbatim.
+pub fn check_rspec_described_class(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
+    run(source, cfg).described_class
 }
 
 fn run(source: &[u8], cfg: &RSpecConfig) -> RSpecResult {
@@ -1921,5 +1951,45 @@ mod tests {
         assert!(p.iter().any(|s| s == "it 'h', pending: 'reason'"));
         // A plain regular example without a body is never a candidate.
         assert!(!p.iter().any(|s| s == "it 'g'"));
+    }
+
+    // --- DescribedClass candidate emission ---
+
+    fn dc(src: &str) -> Vec<String> {
+        slices(src, check_rspec_described_class(src.as_bytes(), &cfg()))
+    }
+
+    #[test]
+    fn described_class_identifies_describe_const_blocks() {
+        let src = "describe MyClass do\n  subject { MyClass }\nend\n";
+        let result = dc(src);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].starts_with("describe MyClass do"));
+    }
+
+    #[test]
+    fn described_class_ignores_describe_string() {
+        let src = "describe 'MyClass' do\n  subject { MyClass }\nend\n";
+        assert!(dc(src).is_empty());
+    }
+
+    #[test]
+    fn described_class_identifies_nested_const_path() {
+        let src = "describe A::B do\n  it { A::B }\nend\n";
+        let result = dc(src);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn described_class_identifies_cbase_const() {
+        let src = "describe ::MyClass do\n  it { ::MyClass }\nend\n";
+        let result = dc(src);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn described_class_ignores_shared_groups_with_const() {
+        let src = "shared_examples MyClass do\n  it { MyClass }\nend\n";
+        assert!(dc(src).is_empty());
     }
 }

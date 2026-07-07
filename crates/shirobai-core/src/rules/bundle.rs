@@ -967,6 +967,8 @@ pub struct BundleResult {
     /// `SortMetadata`). Each cop reads the same list from its own slot; the ext
     /// clones it into each slot.
     pub rspec_metadata_anchors: Vec<(usize, usize)>,
+    /// `RSpec/DescribedClass` candidate block ranges.
+    pub rspec_described_class: Vec<(usize, usize)>,
     /// The RSpec empty-line family (`RSpec/EmptyLineAfter{Example,
     /// ExampleGroup,FinalLet,Hook,Subject}`), all from the single
     /// `RSpecEmptyLineRule`; empty when `BundleConfig::rspec` is `None`.
@@ -1601,6 +1603,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         rspec_pending_without_reason: rspec_result.pending_without_reason,
         rspec_empty_example_group: rspec_result.empty_example_group,
         rspec_metadata_anchors: rspec_result.metadata_anchors,
+        rspec_described_class: rspec_result.described_class,
         rspec_empty_line_after_example: rspec_el_result.example,
         rspec_empty_line_after_example_group: rspec_el_result.example_group,
         rspec_empty_line_after_final_let: rspec_el_result.final_let,
