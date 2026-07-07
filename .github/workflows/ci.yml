@@ -14,7 +14,7 @@ jobs:
       - name: Check the README rules convention
         run: bin/check-readme-rules
 
-  test:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -36,19 +36,21 @@ jobs:
       - name: Build native extension
         run: bundle exec rake compile
 
-      - name: RSpec
-        run: bundle exec rspec
-
       - name: Cargo test
         run: cargo test
 
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
-  # The plugin gem has its own bundle on purpose: rubocop-performance in the
-  # root bundle would leak into the core suite's default config through
-  # rubocop/rspec/support (CopHelper scans Gem.loaded_specs).
-  test-shirobai-performance:
+      - name: Upload native extension
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: shirobai-so
+          path: lib/shirobai/shirobai.so
+          retention-days: 1
+
+  test:
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -60,14 +62,36 @@ jobs:
           ruby-version: "4.0"
           bundler-cache: true
 
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+      - name: Download native extension
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          toolchain: stable
+          name: shirobai-so
+          path: lib/shirobai/
 
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2.9.1
+      - name: RSpec
+        run: bundle exec rspec
 
-      - name: Build native extension
-        run: bundle exec rake compile
+  # The plugin gem has its own bundle on purpose: rubocop-performance in the
+  # root bundle would leak into the core suite's default config through
+  # rubocop/rspec/support (CopHelper scans Gem.loaded_specs).
+  test-shirobai-performance:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: true
+
+      - uses: ruby/setup-ruby@89f90524b88a01fe6e0b732220432cc6142926af # v1.313.0
+        with:
+          ruby-version: "4.0"
+          bundler-cache: true
+
+      - name: Download native extension
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: shirobai-so
+          path: lib/shirobai/
 
       - name: Install the plugin bundle
         working-directory: gems/shirobai-performance
@@ -80,6 +104,7 @@ jobs:
   # Same separate-bundle reasoning as the performance job: rubocop-rspec in
   # the root bundle would leak into the core suite's default config.
   test-shirobai-rspec:
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -91,14 +116,11 @@ jobs:
           ruby-version: "4.0"
           bundler-cache: true
 
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+      - name: Download native extension
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          toolchain: stable
-
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2.9.1
-
-      - name: Build native extension
-        run: bundle exec rake compile
+          name: shirobai-so
+          path: lib/shirobai/
 
       - name: Install the plugin bundle
         working-directory: gems/shirobai-rspec
@@ -108,7 +130,11 @@ jobs:
         working-directory: gems/shirobai-rspec
         run: bundle exec rspec
 
-  parity:
+  # Parity oracle: corpus x mode matrix.
+  # Stock jobs skip the Rust build entirely; shirobai jobs download the
+  # pre-built .so. A merge job diffs each corpus's stock vs shirobai JSON.
+  parity-run:
+    needs: build
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -126,6 +152,10 @@ jobs:
           - name: fluentd
             repo: fluent/fluentd
             ref: 3b34a7b9a066a347d19e976b238be1ce9ea877fa
+          - name: rubocop_source
+            repo: ""
+            ref: ""
+        mode: [stock, shirobai]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -136,54 +166,82 @@ jobs:
           ruby-version: "4.0"
           bundler-cache: true
 
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+      - name: Download native extension
+        if: matrix.mode == 'shirobai'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          toolchain: stable
-
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2.9.1
-
-      - name: Build native extension
-        run: bundle exec rake compile
+          name: shirobai-so
+          path: lib/shirobai/
 
       - name: Checkout corpus
+        if: matrix.corpus.repo != ''
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: ${{ matrix.corpus.repo }}
           ref: ${{ matrix.corpus.ref }}
           path: .tmp/${{ matrix.corpus.name }}
 
-      - name: Install stock Gemfile
+      - name: Create rubocop_source symlink
+        if: matrix.corpus.name == 'rubocop_source'
+        run: ln -s ../vendor/rubocop .tmp/rubocop_source
+
+      - name: Install Gemfile (stock)
+        if: matrix.mode == 'stock'
         run: BUNDLE_GEMFILE=Gemfile.stock bundle install
 
-      - name: Parity check (${{ matrix.corpus.name }})
-        run: benches/parity_diff.sh .tmp/${{ matrix.corpus.name }}
+      - name: Run rubocop (stock)
+        if: matrix.mode == 'stock'
+        run: |
+          BUNDLE_GEMFILE=Gemfile.stock bundle exec rubocop \
+            --force-default-config --cache false --no-server -f json \
+            ".tmp/${{ matrix.corpus.name }}" \
+            > offense.json 2>/dev/null || true
 
-  parity-rubocop-source:
+      - name: Run rubocop (shirobai)
+        if: matrix.mode == 'shirobai'
+        run: |
+          BUNDLE_GEMFILE=Gemfile.with_shirobai bundle exec rubocop \
+            --require shirobai --force-default-config --cache false --no-server -f json \
+            ".tmp/${{ matrix.corpus.name }}" \
+            > offense.json 2>/dev/null || true
+
+      - name: Upload offense JSON
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: parity-${{ matrix.corpus.name }}-${{ matrix.mode }}
+          path: offense.json
+          retention-days: 1
+
+  parity-check:
+    needs: parity-run
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          submodules: true
 
       - uses: ruby/setup-ruby@89f90524b88a01fe6e0b732220432cc6142926af # v1.313.0
         with:
           ruby-version: "4.0"
-          bundler-cache: true
 
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+      - name: Download all parity artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          toolchain: stable
+          path: artifacts/
+          pattern: parity-*
 
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2.9.1
-
-      - name: Build native extension
-        run: bundle exec rake compile
-
-      - name: Create rubocop_source symlink
-        run: ln -s ../vendor/rubocop .tmp/rubocop_source
-
-      - name: Install stock Gemfile
-        run: BUNDLE_GEMFILE=Gemfile.stock bundle install
-
-      - name: Parity check (rubocop_source)
-        run: benches/parity_diff.sh .tmp/rubocop_source
+      - name: Compare all corpora
+        run: |
+          failed=0
+          for corpus in mastodon discourse redmine fluentd rubocop_source; do
+            echo "=== $corpus ==="
+            stock="artifacts/parity-${corpus}-stock/offense.json"
+            shirobai="artifacts/parity-${corpus}-shirobai/offense.json"
+            if [[ ! -f "$stock" || ! -f "$shirobai" ]]; then
+              echo "SKIP: missing artifact for $corpus"
+              continue
+            fi
+            if ! benches/parity_compare.sh "$stock" "$shirobai"; then
+              failed=1
+            fi
+            echo
+          done
+          exit $failed
