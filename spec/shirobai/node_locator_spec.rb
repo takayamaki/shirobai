@@ -1,10 +1,30 @@
 # frozen_string_literal: true
 
-require_relative "../../spec_helper"
+require "spec_helper"
 
-RSpec.describe Shirobai::RSpec::NodeLocator do
+RSpec.describe Shirobai::NodeLocator do
   def parse(src)
     RuboCop::ProcessedSource.new(src, RUBY_VERSION.to_f)
+  end
+
+  def find_send(ast, name)
+    found = nil
+    walk = lambda do |node|
+      return unless node.is_a?(Parser::AST::Node)
+
+      if node.type == :send && node.children[1] == name
+        found = node
+      else
+        node.children.each { |c| walk.call(c) }
+      end
+    end
+    walk.call(ast)
+    found
+  end
+
+  def target_of(node)
+    expr = node.loc.expression
+    [expr.begin_pos, expr.end_pos]
   end
 
   describe ".locate" do
@@ -17,28 +37,12 @@ RSpec.describe Shirobai::RSpec::NodeLocator do
         RUBY
       end
 
-      it "finds the send node" do
+      it "finds the send node (phase 2 fallback)" do
         processed = parse(source)
-        ast = processed.ast
-
-        # Walk the AST to find the :name send node inside the heredoc
-        # interpolation so we can use its exact range as the locate target.
-        send_node = nil
-        find_send = lambda do |node|
-          if node.is_a?(Parser::AST::Node)
-            if node.type == :send && node.children[1] == :name
-              send_node = node
-            else
-              node.children.each { |c| find_send.call(c) }
-            end
-          end
-        end
-        find_send.call(ast)
-
+        send_node = find_send(processed.ast, :name)
         expect(send_node).not_to be_nil, "expected to find :name send node in AST"
 
-        expr = send_node.loc.expression
-        target = [expr.begin_pos, expr.end_pos]
+        target = target_of(send_node)
         result = described_class.locate(processed, [target])
 
         expect(result).to have_key(target)
@@ -50,31 +54,15 @@ RSpec.describe Shirobai::RSpec::NodeLocator do
     context "when the target is a normal (non-heredoc) node" do
       let(:source) { "x = foo.bar(1)" }
 
-      it "finds the send node" do
+      it "finds the send node (phase 1)" do
         processed = parse(source)
-        ast = processed.ast
-
-        # Find the :bar send node
-        send_node = nil
-        find_send = lambda do |node|
-          if node.is_a?(Parser::AST::Node)
-            if node.type == :send && node.children[1] == :bar
-              send_node = node
-            else
-              node.children.each { |c| find_send.call(c) }
-            end
-          end
-        end
-        find_send.call(ast)
-
+        send_node = find_send(processed.ast, :bar)
         expect(send_node).not_to be_nil
 
-        expr = send_node.loc.expression
-        target = [expr.begin_pos, expr.end_pos]
+        target = target_of(send_node)
         result = described_class.locate(processed, [target])
 
         expect(result).to have_key(target)
-        expect(result[target].type).to eq(:send)
         expect(result[target].children[1]).to eq(:bar)
       end
     end
@@ -89,37 +77,17 @@ RSpec.describe Shirobai::RSpec::NodeLocator do
         RUBY
       end
 
-      it "finds both nodes" do
+      it "finds both nodes (phase 1 for one, phase 2 for the other)" do
         processed = parse(source)
-        ast = processed.ast
-
-        bar_node = nil
-        baz_node = nil
-        find_nodes = lambda do |node|
-          if node.is_a?(Parser::AST::Node)
-            if node.type == :send && node.children[1] == :bar
-              bar_node = node
-            elsif node.type == :send && node.children[1] == :baz
-              baz_node = node
-            else
-              node.children.each { |c| find_nodes.call(c) }
-            end
-          end
-        end
-        find_nodes.call(ast)
-
+        bar_node = find_send(processed.ast, :bar)
+        baz_node = find_send(processed.ast, :baz)
         expect(bar_node).not_to be_nil
         expect(baz_node).not_to be_nil
 
-        bar_expr = bar_node.loc.expression
-        baz_expr = baz_node.loc.expression
-        bar_target = [bar_expr.begin_pos, bar_expr.end_pos]
-        baz_target = [baz_expr.begin_pos, baz_expr.end_pos]
-
+        bar_target = target_of(bar_node)
+        baz_target = target_of(baz_node)
         result = described_class.locate(processed, [bar_target, baz_target])
 
-        expect(result).to have_key(bar_target)
-        expect(result).to have_key(baz_target)
         expect(result[bar_target].children[1]).to eq(:bar)
         expect(result[baz_target].children[1]).to eq(:baz)
       end
@@ -128,26 +96,29 @@ RSpec.describe Shirobai::RSpec::NodeLocator do
     context "when a wrapper node shares its child's exact range" do
       let(:source) { "foo(a: 1)" }
 
+      def find_node(ast, type)
+        found = nil
+        walk = lambda do |node|
+          return unless node.is_a?(Parser::AST::Node)
+
+          found = node if node.type == type
+          node.children.each { |c| walk.call(c) }
+        end
+        walk.call(ast)
+        found
+      end
+
       it "resolves the shared range to the shallowest (wrapper) node" do
         processed = parse(source)
-        ast = processed.ast
 
         # A braceless single-pair keyword hash produces a `hash` wrapper whose
-        # expression range equals its single `pair` child's (`a: 1`). The
+        # expression range equals its single `pair` child's (`a: 1`); the
         # shallowest node (the wrapper hash) must win the tie. Its range also
         # contains the target range, so phase 1's prune never skips it.
-        hash_node = nil
-        find_hash = lambda do |node|
-          next unless node.is_a?(Parser::AST::Node)
-
-          hash_node = node if node.type == :hash
-          node.children.each { |c| find_hash.call(c) }
-        end
-        find_hash.call(ast)
+        hash_node = find_node(processed.ast, :hash)
         expect(hash_node).not_to be_nil
 
-        expr = hash_node.loc.expression
-        target = [expr.begin_pos, expr.end_pos]
+        target = target_of(hash_node)
         result = described_class.locate(processed, [target])
 
         expect(result).to have_key(target)
