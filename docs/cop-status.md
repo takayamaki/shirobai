@@ -364,6 +364,57 @@ trait exposing role classification + `top_spec_depth` + block-kind to
 multiple rspec rules would remove that ~30-line overlap; the arena pattern
 itself did not need abstracting.
 
+## Plugin cops: shirobai-rspec (R3: example-group family)
+
+Three more rubocop-rspec cops, all **Architecture B** (the metadata-family
+pattern): the `RSpecDispatcherRule` emits candidate block ranges on the
+shared walk, and each wrapper relocates the parser node through
+`Shirobai::RSpec::NodeLocator` and runs stock's detection + autocorrect
+VERBATIM. All three depend on parser-AST machinery that cannot be
+reproduced bytewise.
+
+### Implemented (3 cops)
+
+- `RSpec/EmptyExampleGroup`
+- `RSpec/DescribedClass`
+- `RSpec/ScatteredSetup`
+
+`RSpec/EmptyExampleGroup` (slot `[2, 18]`) and `RSpec/ScatteredSetup`
+(slot `[2, 20]`) share ONE candidate set — every `example_group?` frame
+range, computed once on the walk and cloned into both slots (the same
+precedent as repeated_description / repeated_example). EmptyExampleGroup's
+wrapper runs stock's mutually recursive `examples?` node-pattern grammar
+(examples in branches, inside non-hook blocks, across conditionals) plus
+the `each_ancestor(:any_def)` and `inside_example?` guards; autocorrect
+removes the group by whole lines. ScatteredSetup's wrapper enumerates
+hooks through stock's `RuboCop::RSpec::ExampleGroup` wrapper, filters by
+`inside_class_method?` / `knowable_scope?` / non-`around`, groups by
+`[name, scope, metadata]` via `RepeatedItems`, and replays the body-merge
+autocorrect with the heredoc-aware `final_end_location`. The
+first-occurrence-not-correctable quirk (stock's autocorrect early-return)
+is pinned in the correctable parity spec.
+
+`RSpec/DescribedClass` (slot `[2, 19]`) gets its own narrower candidate
+set: blocks whose send is an example-group call with a const first
+argument (`describe(Const)`). The wrapper carries stock's full config
+surface — `EnforcedStyle` (`described_class` / `explicit`), `SkipBlocks`,
+`OnlyStaticConstants` — and runs stock's `Namespace` mixin,
+`collapse_namespace` const resolution, and the recursive `find_usage`
+descent with scope-change stops (`def` / `class` / `module`, the
+`Class.new` / `class_eval` closure family, and non-RSpec blocks under
+`SkipBlocks`) unchanged on the parser AST: parity by construction for the
+namespace-sensitive part. This is the densest-firing rubocop-rspec cop on
+real corpora.
+
+A speed lesson surfaced right after this cluster merged: dense Arch-B
+candidate sets make the per-file `NodeLocator.locate` cost visible on
+spec-heavy corpora (Discourse), which is what motivated the two-phase
+locate (pruned descent first, heredoc-sound full-descent fallback only
+for targets the prune misses — see `lib/shirobai/node_locator.rb`).
+When scoping future Arch-B cops, include relocation frequency (candidate
+density x corpus spec size) in the speed estimate, not just the stock
+cop's standalone cost.
+
 ## Plugin cops: shirobai-rails (Phase 0 + Application* cluster)
 
 `gems/shirobai-rails` replaces rubocop-rails (pinned `= 2.35.5`) cops with
@@ -463,9 +514,11 @@ One `NodeLocator` subtlety surfaced on Discourse: the range-containment prune
 the rspec `NodeLocator` uses is UNSOUND for heredocs — a send in a heredoc
 body sits outside the expression range of every ancestor up to the root, so
 the prune drops it. The core `Shirobai::NodeLocator` (added here, the
-plugin-neutral twin) does a full descent with an all-found early exit
-instead; it runs only when the wrapper already has candidates, so the cost is
-negligible.
+plugin-neutral twin) was born as a full descent with an all-found early
+exit; after the rspec R3 cluster made the per-file locate cost visible on
+Discourse, both twins became **two-phase** — the fast pruned descent runs
+first, and the full descent runs only for targets the prune missed (the
+heredoc-interior case) — keeping the soundness at pruned-descent cost.
 
 ### Wire layout (for the sibling tracks building on this branch)
 
@@ -476,7 +529,8 @@ ranges); `rails_unknown_env [3,4]`, `rails_dynamic_find_by [3,5]`
 (send/block-table cluster, see its section below);
 `rails_http_positional_arguments [3,6]`,
 `rails_deprecated_active_model_errors_methods [3,7]` (Architecture-B
-candidate ranges). The two Architecture-B cops add NOTHING to the segment —
+candidate ranges); `rails_pluck [3,8]` (full-Rust offense tuples, see its
+section below). The two Architecture-B cops add NOTHING to the segment —
 their gating lives in the wrappers — so the segment shape is exactly the
 send/block-table cluster's (`nums = [rails_enabled,
 unknown_env_supports_local]`, four lists; see "Wire layout delta" below).
@@ -545,15 +599,30 @@ slots `rails_unknown_env [3,4]`, `rails_dynamic_find_by [3,5]`. Each cop's
 `bundle_args` is the single source of its own config; `Shirobai::Rails.segment`
 assembles the pieces.
 
+## Plugin cops: shirobai-rails (Pluck)
+
+- `Rails/Pluck` (slot `[3, 8]`) — **full-Rust** detection and autocorrect.
+  Deferred out of the send/block-table cluster, then shipped in its own
+  probe-and-verify cycle as predicted. The rule handles all three prism
+  block kinds (`block` / numbered `_1` / `it`), the
+  ancestor-block-with-receiver guard (stock's N+1-iteration suppression:
+  `each_ancestor(:any_block).first&.receiver`), the regexp-key exclusion,
+  and the block-arg-in-key false-positive suppression
+  (`x.map { |x| x[x] }` never fires). Autocorrect replaces
+  selector-through-block-end with `pluck(<key source>)`; the wrapper owns
+  only the `TargetRailsVersion >= 5.0` gate and the offense message.
+  Verified with the standard bar: vendor specs, differential edge specs
+  (numblock, itblock, ancestor guard, arg shadowing, regexp key, csend,
+  `collect`, string / method-call keys, CRLF fallback), lint-mode
+  correctable parity, non-ASCII offset parity through the autocorrect,
+  and the rails parity oracle.
+
 ### Deferred (same branch family, not in this cluster)
 
-`Rails/Pluck`, `Rails/IndexBy`, `Rails/IndexWith` were scoped into this cluster
-but deferred rather than rushed, to keep the shipped cluster byte-clean:
+`Rails/IndexBy` and `Rails/IndexWith` were scoped into the send/block-table
+cluster but deferred rather than rushed, to keep the shipped cluster
+byte-clean:
 
-- `Rails/Pluck` is full-Rust-feasible but needs a block-ancestor-receiver stack
-  plus lvar-shadow analysis of the `[]` key, and its detection splits on prism's
-  numbered-/`it`-parameter block representation (the R2 divergence lesson). That
-  warrants its own careful probe-and-verify cycle.
 - `Rails/IndexBy` / `Rails/IndexWith` share the `IndexMethod` mixin whose
   autocorrect is heavy parser-AST geometry (strip prefix/suffix, rename method,
   rewrite block args, replace body) plus cross-offense `ignore_node` state —
