@@ -962,6 +962,10 @@ pub struct BundleResult {
     /// wrapper locates each parser block node and runs stock's `on_block`
     /// detection verbatim.
     pub rspec_empty_example_group: Vec<(usize, usize)>,
+    /// `RSpec/ScatteredSetup`: example-group block ranges (prism call range ==
+    /// parser block node range), document order. The wrapper relocates each
+    /// parser block node and runs stock's detection + autocorrect verbatim.
+    pub rspec_scattered_setup: Vec<(usize, usize)>,
     /// Shared metadata-anchor block ranges feeding the four `Metadata`-mixin
     /// cops (`MetadataStyle` / `DuplicatedMetadata` / `EmptyMetadata` /
     /// `SortMetadata`). Each cop reads the same list from its own slot; the ext
@@ -1602,6 +1606,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         rspec_focus: rspec_result.focus,
         rspec_pending_without_reason: rspec_result.pending_without_reason,
         rspec_empty_example_group: rspec_result.empty_example_group,
+        rspec_scattered_setup: rspec_result.scattered_setup,
         rspec_metadata_anchors: rspec_result.metadata_anchors,
         rspec_described_class: rspec_result.described_class,
         rspec_empty_line_after_example: rspec_el_result.example,
@@ -2010,6 +2015,10 @@ mod tests {
             bundle.rspec_metadata_anchors,
             rspec_dispatcher::check_rspec_metadata_anchors(src.as_bytes(), rspec_cfg)
         );
+        assert_eq!(
+            bundle.rspec_scattered_setup,
+            rspec_dispatcher::check_rspec_scattered_setup(src.as_bytes(), rspec_cfg)
+        );
         // `let!(:unused) { create(:widget) }` is a hook-free helper; the
         // describe/context blocks with a description arg are metadata anchors.
         assert!(!bundle.rspec_metadata_anchors.is_empty());
@@ -2063,6 +2072,22 @@ mod tests {
         );
         assert_eq!(bundle.rspec_repeated_description.len(), 1);
         assert_eq!(bundle.rspec_repeated_description[0].len(), 2);
+    }
+
+    /// `RSpec/ScatteredSetup` on the shared walk matches the standalone entry
+    /// point on a source with example groups.
+    #[test]
+    fn shared_walk_matches_standalone_rspec_scattered_setup() {
+        let src = "describe 'x' do\n  before { bar }\n  before { baz }\nend\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let rspec_cfg = cfg.rspec.as_ref().unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        assert_eq!(
+            bundle.rspec_scattered_setup,
+            rspec_dispatcher::check_rspec_scattered_setup(src.as_bytes(), rspec_cfg)
+        );
+        assert_eq!(bundle.rspec_scattered_setup.len(), 1);
     }
 
     #[test]

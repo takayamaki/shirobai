@@ -48,6 +48,7 @@ require_relative "shirobai/cop/rspec/empty_line_after_example_group"
 require_relative "shirobai/cop/rspec/empty_line_after_final_let"
 require_relative "shirobai/cop/rspec/empty_line_after_hook"
 require_relative "shirobai/cop/rspec/empty_line_after_subject"
+require_relative "shirobai/cop/rspec/scattered_setup"
 
 module Shirobai
   # Glue for the shirobai-rspec plugin gem: the packed-config segment
@@ -76,7 +77,8 @@ module Shirobai
       Shirobai::Cop::RSpec::EmptyLineAfterExampleGroup,
       Shirobai::Cop::RSpec::EmptyLineAfterFinalLet,
       Shirobai::Cop::RSpec::EmptyLineAfterHook,
-      Shirobai::Cop::RSpec::EmptyLineAfterSubject
+      Shirobai::Cop::RSpec::EmptyLineAfterSubject,
+      Shirobai::Cop::RSpec::ScatteredSetup
     ].freeze
 
     # `config['RSpec']['Language']` sub-role paths in the fixed wire order of

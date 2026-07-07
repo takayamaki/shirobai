@@ -236,6 +236,11 @@ pub struct RSpecResult {
     /// argument. The wrapper relocates the parser block node and runs stock's
     /// full detection + autocorrect verbatim.
     pub described_class: Vec<(usize, usize)>,
+    /// `RSpec/ScatteredSetup`: example-group block ranges (prism call range ==
+    /// parser block node range), document order. The wrapper relocates each
+    /// parser block node, wraps it in `RuboCop::RSpec::ExampleGroup`, and runs
+    /// stock's `repeated_hooks` / `autocorrect` verbatim.
+    pub scattered_setup: Vec<(usize, usize)>,
 }
 
 /// parser block-kind recovery from a prism call (see module doc).
@@ -869,7 +874,11 @@ impl RSpecDispatcherRule<'_> {
         // Both cops read identical group data (each owns its slot); the
         // collection is computed once and cloned.
         let groups = self.repeated_example_groups();
+        // EmptyExampleGroup and ScatteredSetup read the SAME candidate set
+        // (every example_group? frame's range); computed once and cloned,
+        // each cop owns its slot.
         let empty_example_group = self.empty_example_group_candidates();
+        let scattered_setup = empty_example_group.clone();
         let described_class: Vec<(usize, usize)> = self
             .scopes
             .iter()
@@ -889,6 +898,7 @@ impl RSpecDispatcherRule<'_> {
             pending_without_reason: self.pending_candidates,
             empty_example_group,
             described_class,
+            scattered_setup,
         }
     }
 
@@ -914,11 +924,10 @@ impl RSpecDispatcherRule<'_> {
         out
     }
 
-    /// `EmptyExampleGroup`: every `example_group?` frame's block range in
-    /// document order. No filtering here — the wrapper runs stock's
-    /// `each_ancestor(:any_def)`, `inside_example?`, `example_group_body`,
-    /// and the mutually recursive `examples?` / `offensive?` matchers on the
-    /// located parser block node.
+    /// Every `example_group?` frame's block range in document order. Feeds
+    /// both `EmptyExampleGroup` and `ScatteredSetup` (each wrapper runs its
+    /// own stock detection on the located parser block node). No filtering
+    /// here — the wrappers' guards self-filter.
     fn empty_example_group_candidates(&self) -> Vec<(usize, usize)> {
         self.scopes
             .iter()
@@ -1243,6 +1252,12 @@ pub fn check_rspec_empty_example_group(source: &[u8], cfg: &RSpecConfig) -> Vec<
 /// full detection + autocorrect verbatim.
 pub fn check_rspec_described_class(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
     run(source, cfg).described_class
+}
+
+/// Standalone entry point for `RSpec/ScatteredSetup` (candidate example-group
+/// block ranges).
+pub fn check_rspec_scattered_setup(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
+    run(source, cfg).scattered_setup
 }
 
 fn run(source: &[u8], cfg: &RSpecConfig) -> RSpecResult {
