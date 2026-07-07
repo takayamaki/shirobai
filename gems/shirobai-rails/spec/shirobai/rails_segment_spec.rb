@@ -46,8 +46,9 @@ RSpec.describe Shirobai::Rails do
       )
       expect(result.length).to eq(Shirobai::Dispatch::ORIGINS.length)
       # rails origin = 3: slots 0..3 Application*, 4..5 send/block-table
-      # (UnknownEnv / DynamicFindBy), 6..7 Architecture-B candidates.
-      expect(result[3].length).to eq(8)
+      # (UnknownEnv / DynamicFindBy), 6..7 Architecture-B candidates,
+      # 8 Rails/Pluck.
+      expect(result[3].length).to eq(9)
       expect(result[3][0]).to eq([[12, 30]]) # ApplicationRecord: `ActiveRecord::Base`
       expect(result[3][1].length).to eq(1)   # ApplicationController
       expect(result[3][2].length).to eq(1)   # ApplicationMailer
@@ -69,7 +70,7 @@ RSpec.describe Shirobai::Rails do
       token = Shirobai::Dispatch.bundle_token(config, %i[rails].freeze)
       result = Shirobai.check_all("class Foo < ActiveRecord::Base\nend\n", token)
       expect(result.length).to eq(Shirobai::Dispatch::ORIGINS.length)
-      expect(result[3]).to eq([[], [], [], [], [], [], [], []])
+      expect(result[3]).to eq([[], [], [], [], [], [], [], [], []])
     end
   end
 

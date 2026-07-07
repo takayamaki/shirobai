@@ -81,6 +81,12 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rails" do
       Shirobai::Cop::Rails::DynamicFindBy,
       "#{prefix}User.find_by_name_and_email(name, email)\n"
     ],
+    # Pluck: selector-to-block-end replace, each at a multibyte-shifted offset.
+    "Rails/Pluck" => [
+      RuboCop::Cop::Rails::Pluck,
+      Shirobai::Cop::Rails::Pluck,
+      "#{prefix}x.map { |a| a[:foo] }\n"
+    ],
     # Architecture-B cop: the candidate byte range is ahead of its char range
     # behind the multibyte prefix, so it must round-trip through
     # `SourceOffsets` before `NodeLocator` can relocate the parser send.

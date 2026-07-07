@@ -36,7 +36,7 @@ use super::{
     percent_literal_delimiters,
     perf_detect, perf_end_with, perf_start_with, perf_string_include, perf_times_map,
     predicate_prefix, punctuation_spacing, rails_app, rails_config, rails_dynamic_find_by,
-    rails_unknown_env, redundant_freeze,
+    rails_pluck, rails_unknown_env, redundant_freeze,
     redundant_self,
     redundant_self_assignment,
     require_parentheses, rspec_dispatcher, rspec_empty_line, rspec_language, safe_navigation_chain,
@@ -982,6 +982,8 @@ pub struct BundleResult {
     /// (`rails_dynamic_find_by`); empty when `BundleConfig::rails` is `None`.
     pub rails_unknown_env: Vec<rails_unknown_env::UnknownEnvOffense>,
     pub rails_dynamic_find_by: Vec<rails_dynamic_find_by::DynamicFindByOffense>,
+    /// `Rails/Pluck` offenses; empty when `BundleConfig::rails` is `None`.
+    pub rails_pluck: Vec<super::rails_pluck::PluckOffense>,
     /// Architecture-B candidate send ranges (rails origin slots 6..8). Not
     /// final offenses: the wrapper relocates the parser node and runs stock
     /// detection + autocorrect verbatim. Computed by the same
@@ -1234,6 +1236,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         .rails
         .as_ref()
         .map(|c| rails_dynamic_find_by::build_rule(c.dynamic_find_by.clone()));
+    let mut rails_pluck_rule = cfg.rails.as_ref().map(|_| rails_pluck::build_rule());
 
     let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
         &mut op_rule,
@@ -1349,12 +1352,16 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     if let Some(rule) = rails_dfb_rule.as_mut() {
         rules.push(rule);
     }
+    if let Some(rule) = rails_pluck_rule.as_mut() {
+        rules.push(rule);
+    }
     super::dispatch::run(source, &mut rules);
     let rspec_result = rspec_rule.map(|r| r.finish()).unwrap_or_default();
     let rspec_el_result = rspec_el_rule.map(|r| r.finish()).unwrap_or_default();
     let rails_result = rails_rule.map(|r| r.finish()).unwrap_or_default();
     let rails_unknown_env = rails_ue_rule.map(|r| r.finish()).unwrap_or_default();
     let rails_dynamic_find_by = rails_dfb_rule.map(|r| r.finish()).unwrap_or_default();
+    let rails_pluck = rails_pluck_rule.map(|r| r.finish()).unwrap_or_default();
 
     let multiline_operation = op_rule.offenses;
     let multiline_method_call = mc_rule.offenses;
@@ -1600,6 +1607,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         rails_application_job: rails_result.application_job,
         rails_unknown_env,
         rails_dynamic_find_by,
+        rails_pluck,
         rails_http_positional_arguments: rails_result.http_positional_arguments,
         rails_deprecated_active_model_errors_methods: rails_result
             .deprecated_active_model_errors_methods,

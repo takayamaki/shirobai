@@ -174,7 +174,8 @@ module Shirobai
       # the `BundleResult` field order in `crates/.../bundle.rs`, the ext
       # `check_all` push order) moves together.
       rails_http_positional_arguments: [3, 6].freeze,
-      rails_deprecated_active_model_errors_methods: [3, 7].freeze
+      rails_deprecated_active_model_errors_methods: [3, 7].freeze,
+      rails_pluck: [3, 8].freeze
     }.freeze
 
     # Dormant packed-config segment per plugin origin: the enable flag (first
