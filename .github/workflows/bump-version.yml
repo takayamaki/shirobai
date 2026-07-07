@@ -23,7 +23,13 @@ jobs:
       - name: Update version.rb
         run: |
           ver="${{ steps.version.outputs.version }}"
-          sed -i "s/VERSION = .*/VERSION = \"$ver\"/" lib/shirobai/version.rb
+          for f in \
+            lib/shirobai/version.rb \
+            gems/shirobai-performance/lib/shirobai/performance/version.rb \
+            gems/shirobai-rspec/lib/shirobai/rspec/version.rb \
+            gems/shirobai-rails/lib/shirobai/rails/version.rb; do
+            sed -i "s/VERSION = .*/VERSION = \"$ver\"/" "$f"
+          done
 
       - name: Create PR
         env:
@@ -34,7 +40,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
-          git add lib/shirobai/version.rb
+          git add \
+            lib/shirobai/version.rb \
+            gems/shirobai-performance/lib/shirobai/performance/version.rb \
+            gems/shirobai-rspec/lib/shirobai/rspec/version.rb \
+            gems/shirobai-rails/lib/shirobai/rails/version.rb
           git commit -m "Bump version to $ver"
           git push origin "$branch"
           gh pr create \
