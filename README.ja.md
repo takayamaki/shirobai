@@ -35,9 +35,9 @@ shirobaiは日本語話者なら当然わかるでしょう、白バイです。
 ## 現状
 
 - **93 cop** を Rust 実装済み（Lint / Layout / Metrics / Naming / Style）。
-- **プラグイン cop gem**（共有 native extension 経由でさらに 35 cop、
+- **プラグイン cop gem**（共有 native extension 経由でさらに 37 cop、
   cargo build の追加なし）: `gems/shirobai-rspec` が rubocop-rspec の 21 cop を、
-  `gems/shirobai-rails` が rubocop-rails の 9 cop を、
+  `gems/shirobai-rails` が rubocop-rails の 11 cop を、
   `gems/shirobai-performance` が rubocop-performance の 5 cop を置き換える。
   詳細は `docs/cop-status.md` と各 gem の README を参照。
   以下のセットアップ手順は core gem のみの説明。

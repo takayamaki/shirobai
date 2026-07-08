@@ -169,6 +169,17 @@ User.find_by_name_and_email(name, email)
 def add_error(record)
   record.errors[:name] << 'msg'
 end
+
+# Rails/IndexBy (value is the original element; key transformed).
+def build_index_by(list)
+  list.each_with_object({}) { |el, h| h[el.to_sym] = el }
+end
+
+# Rails/IndexWith (key is the original element; value transformed).
+# Fires only on railties >= 6.0, which the fixture Gemfile.lock provides.
+def build_index_with(list)
+  list.each_with_object({}) { |el, h| h[el] = compute(el) }
+end
 FIXTURE
 # Rails/HttpPositionalArguments only runs under an `Include: **/spec/**` /
 # `**/test/**` path, so this fixture lives in a spec dir under the linted
@@ -203,6 +214,7 @@ ruby -rjson -e '
     Rails/ApplicationMailer Rails/ApplicationJob
     Rails/UnknownEnv Rails/DynamicFindBy
     Rails/HttpPositionalArguments Rails/DeprecatedActiveModelErrorsMethods
+    Rails/IndexBy Rails/IndexWith
   ]
   d = JSON.parse(File.read(ARGV[0]))
   fired = d["files"].flat_map { |f| f["offenses"].map { |o| o["cop_name"] } }.uniq

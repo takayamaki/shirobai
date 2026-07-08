@@ -76,6 +76,18 @@ RSpec.describe "lint-mode correctable parity with stock rubocop-rails" do
       RuboCop::Cop::Rails::DeprecatedActiveModelErrorsMethods,
       Shirobai::Cop::Rails::DeprecatedActiveModelErrorsMethods,
       "user.errors[:name] = []\n"
+    ],
+    "Rails/IndexBy" => [
+      RuboCop::Cop::Rails::IndexBy,
+      Shirobai::Cop::Rails::IndexBy,
+      "x.map { |el| [el.to_sym, el] }.to_h\n"
+    ],
+    # IndexWith's TargetRailsVersion gate is not applied by the bare
+    # Commissioner used here, so it fires on the default config just like stock.
+    "Rails/IndexWith" => [
+      RuboCop::Cop::Rails::IndexWith,
+      Shirobai::Cop::Rails::IndexWith,
+      "x.map { |el| [el, foo(el)] }.to_h\n"
     ]
   }
 

@@ -34,6 +34,8 @@ require_relative "shirobai/cop/rails/pluck"
 require_relative "shirobai/cop/rails/candidate_support"
 require_relative "shirobai/cop/rails/http_positional_arguments"
 require_relative "shirobai/cop/rails/deprecated_active_model_errors_methods"
+require_relative "shirobai/cop/rails/index_by"
+require_relative "shirobai/cop/rails/index_with"
 
 module Shirobai
   # Glue for the shirobai-rails plugin gem: the packed-config segment (just a
@@ -55,7 +57,9 @@ module Shirobai
       Shirobai::Cop::Rails::DynamicFindBy,
       Shirobai::Cop::Rails::Pluck,
       Shirobai::Cop::Rails::HttpPositionalArguments,
-      Shirobai::Cop::Rails::DeprecatedActiveModelErrorsMethods
+      Shirobai::Cop::Rails::DeprecatedActiveModelErrorsMethods,
+      Shirobai::Cop::Rails::IndexBy,
+      Shirobai::Cop::Rails::IndexWith
     ].freeze
 
     class << self

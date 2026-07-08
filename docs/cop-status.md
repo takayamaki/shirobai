@@ -599,7 +599,7 @@ slots `rails_unknown_env [3,4]`, `rails_dynamic_find_by [3,5]`. Each cop's
 `bundle_args` is the single source of its own config; `Shirobai::Rails.segment`
 assembles the pieces.
 
-## Plugin cops: shirobai-rails (Pluck)
+## Plugin cops: shirobai-rails (Pluck, IndexBy, IndexWith)
 
 - `Rails/Pluck` (slot `[3, 8]`) — **full-Rust** detection and autocorrect.
   Deferred out of the send/block-table cluster, then shipped in its own
@@ -617,17 +617,56 @@ assembles the pieces.
   correctable parity, non-ASCII offset parity through the autocorrect,
   and the rails parity oracle.
 
-### Deferred (same branch family, not in this cluster)
+- `Rails/IndexBy` (slot `[3, 9]`) / `Rails/IndexWith` (slot `[3, 10]`) —
+  **Architecture B**. Deferred out of the send/block-table cluster because
+  both share the `IndexMethod` mixin, whose autocorrect is heavy parser-AST
+  geometry (strip prefix/suffix, rename the method, rewrite block args, replace
+  the body) plus cross-offense `ignore_node` state; reproducing that in Rust
+  would risk byte drift. Instead Rust nominates candidate nodes and the wrapper
+  runs stock's `IndexMethod` VERBATIM.
 
-`Rails/IndexBy` and `Rails/IndexWith` were scoped into the send/block-table
-cluster but deferred rather than rushed, to keep the shipped cluster
-byte-clean:
+  Rust classifier (rides the always-on `RailsAppVisitor` `CallNode` entry, no
+  extra walk): four shapes fed to ONE shared candidate list (both cops read it,
+  slots 9 and 10 hold the same ranges) —
+  (1) `each_with_object` / `to_h` carrying a literal block → the parser
+  `block` / `numblock` / `itblock` node range (`call.location().start` ..
+  `block.location().end`), csend heads included;
+  (2) `map` / `collect` block `.to_h` (send or csend outer) → the outer `to_h`
+  send range (`send_range`, which excludes any block on the `to_h` itself, so
+  `map { }.to_h { |k, v| ... }` still fires on the send);
+  (3) `Hash[map { }]` (nil / cbase `Hash`, exactly one map/collect-block arg) →
+  the `[]` send range. The empty-hash arg, block arity, key-vs-value identity
+  and the Ruby-2.6 `to_h` gate are all re-checked by the stock matcher, so the
+  list is a cheap superset.
 
-- `Rails/IndexBy` / `Rails/IndexWith` share the `IndexMethod` mixin whose
-  autocorrect is heavy parser-AST geometry (strip prefix/suffix, rename method,
-  rewrite block args, replace body) plus cross-offense `ignore_node` state —
-  the Architecture B relocate-and-dispatch pattern (as in the rspec metadata
-  family), a larger harness than this cluster.
+  NodeLocator re-landing: the wrapper (`IndexMethodSupport`) converts each
+  byte range to char via `SourceOffsets`, relocates the parser node with
+  `Shirobai::NodeLocator`, and dispatches by node type to `investigate_block` /
+  `investigate_send` / `investigate_csend` — stock's `on_block` / `on_send` /
+  `on_csend` copied verbatim and renamed (the callbacks are `undef`ed so the
+  Commissioner never dispatches per node). Each cop keeps its own stock
+  `def_node_matcher`s and `new_method_name`, so detection and `-A` bytes are
+  stock's.
+
+  `ignore_node` state: stock's real `ignore_node` / `part_of_ignored_node?`
+  (range/heredoc based, so it needs no parent links) runs on the relocated
+  parser nodes. Candidates arrive in pre-order (an outer node before any it
+  contains, and the block candidate before the map-to-h send candidate for the
+  same `to_h`), so a nested transform's inner offense is reported but suppressed
+  for autocorrect exactly as stock does. IndexBy and IndexWith are separate cop
+  instances with separate `@ignored_nodes`, matching stock's per-cop state.
+  `IndexWith` carries stock's `minimum_target_rails_version 6.0` gate unchanged.
+
+  Verified with the standard bar: vendor specs for both cops (through the
+  `:rails60` / `:ruby26` contexts and the nested-offense case), differential
+  edge specs (nested `ignore_node`, `map { }.to_h { }` double candidate,
+  heredoc-interior NodeLocator phase-2, CRLF standalone fallback, `collect`,
+  `::Hash`, csend, do..end block, the Rails-version gate), lint-mode correctable
+  parity, non-ASCII offset parity through the autocorrect, and the rails parity
+  oracle at zero diff on Mastodon / Redmine (self-test fixture extended so both
+  cops fire on the stock side — the hollow-zero-diff guard). No corpus
+  positives on either corpus (these transform-to-hash idioms are rare in mature
+  code), so coverage rests on the vendor + edge + self-test fixtures.
 
 ## Attempted but reverted
 

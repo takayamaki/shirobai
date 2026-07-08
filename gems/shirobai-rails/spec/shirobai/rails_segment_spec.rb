@@ -47,8 +47,8 @@ RSpec.describe Shirobai::Rails do
       expect(result.length).to eq(Shirobai::Dispatch::ORIGINS.length)
       # rails origin = 3: slots 0..3 Application*, 4..5 send/block-table
       # (UnknownEnv / DynamicFindBy), 6..7 Architecture-B candidates,
-      # 8 Rails/Pluck.
-      expect(result[3].length).to eq(9)
+      # 8 Rails/Pluck, 9..10 Index{By,With} candidates.
+      expect(result[3].length).to eq(11)
       expect(result[3][0]).to eq([[12, 30]]) # ApplicationRecord: `ActiveRecord::Base`
       expect(result[3][1].length).to eq(1)   # ApplicationController
       expect(result[3][2].length).to eq(1)   # ApplicationMailer
@@ -66,11 +66,19 @@ RSpec.describe Shirobai::Rails do
       expect(result[3][7]).to eq([[16, 41]]) # DeprecatedActiveModelErrorsMethods candidate
     end
 
+    it "computes the Index{By,With} candidate slots (same list) on an awake token" do
+      token = Shirobai::Dispatch.bundle_token(config)
+      result = Shirobai.check_all("x.map { |el| [el.to_sym, el] }.to_h\n", token)
+      # One map.to_h candidate (the outer send node), fed to both slots.
+      expect(result[3][9]).to eq([[0, 35]])  # Rails/IndexBy candidate
+      expect(result[3][10]).to eq([[0, 35]]) # Rails/IndexWith candidate (identical)
+    end
+
     it "keeps the rails slots empty on a dormant (forced-inactive) token" do
       token = Shirobai::Dispatch.bundle_token(config, %i[rails].freeze)
       result = Shirobai.check_all("class Foo < ActiveRecord::Base\nend\n", token)
       expect(result.length).to eq(Shirobai::Dispatch::ORIGINS.length)
-      expect(result[3]).to eq([[], [], [], [], [], [], [], [], []])
+      expect(result[3]).to eq([[], [], [], [], [], [], [], [], [], [], []])
     end
   end
 
@@ -96,6 +104,9 @@ RSpec.describe Shirobai::Rails do
       expect(
         Shirobai.check_rails_deprecated_active_model_errors_methods("user.errors.keys\n")
       ).to eq([[0, 16]])
+      # Index{By,With} share one standalone entry (both slots read this list).
+      expect(Shirobai.check_rails_index_method("x.map { |el| [el.to_sym, el] }.to_h\n"))
+        .to eq([[0, 35]])
     end
   end
 end
