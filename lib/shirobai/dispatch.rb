@@ -159,6 +159,8 @@ module Shirobai
       rspec_empty_example_group: [2, 18].freeze,
       rspec_described_class: [2, 19].freeze,
       rspec_scattered_setup: [2, 20].freeze,
+      # slot [2, 21] is reserved for a parallel task and registered there.
+      rspec_dialect: [2, 22].freeze,
       # shirobai-rails plugin slots (origin 3), all filled by the single
       # RailsAppVisitor. The rails origin is NOT per-file gated: the
       # Application* cops run on every Ruby file, so it is always awake once
@@ -200,7 +202,7 @@ module Shirobai
       # AllowConsecutiveOneLiners, EmptyLineAfterHook
       # AllowConsecutiveOneLiners), then the sixteen
       # RSpec/Language role lists.
-      rspec: [[0, 0, 0, 0, 0, 0, 0, 0, 0].freeze, ([[].freeze] * 16).freeze].freeze,
+      rspec: [[0, 0, 0, 0, 0, 0, 0, 0, 0].freeze, ([[].freeze] * 17).freeze].freeze,
       # rails: wake-up flag + UnknownEnv supports_local; four lists
       # (UnknownEnv Environments + DynamicFindBy AllowedMethods /
       # AllowedReceivers / Whitelist).

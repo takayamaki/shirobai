@@ -14,7 +14,7 @@
 //! `HookScopes` = `each/example/context/all/suite`) are compile-time
 //! constants here, not wire data — stock hard-codes them the same way.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// One bit per configurable sub-role, in wire-list order.
 pub mod roles {
@@ -89,6 +89,11 @@ pub struct RSpecConfig {
     /// `RSpec/EmptyLineAfterHook` `AllowConsecutiveOneLiners` (true = adjacent
     /// single-line hooks are not flagged).
     pub hook_allow_consecutive: bool,
+    /// `RSpec/Dialect` `PreferredMethods` keys — the method names the cop
+    /// rewrites. Empty unless the cop is configured (default / disabled), so
+    /// the shared walk emits Dialect candidates only for configured aliases and
+    /// pays nothing otherwise. Arrives as the rspec segment's 17th role list.
+    dialect_keys: HashSet<Box<[u8]>>,
 }
 
 impl RSpecConfig {
@@ -105,7 +110,18 @@ impl RSpecConfig {
         if nums[0] == 0 {
             return Ok(None);
         }
-        let mut cfg = Self::from_role_lists(lists)?;
+        if lists.len() != N_ROLE_LISTS + 1 {
+            return Err(format!(
+                "rspec segment expects {} lists, got {}",
+                N_ROLE_LISTS + 1,
+                lists.len()
+            ));
+        }
+        let mut cfg = Self::from_role_lists(&lists[..N_ROLE_LISTS])?;
+        cfg.dialect_keys = lists[N_ROLE_LISTS]
+            .iter()
+            .map(|s| s.as_bytes().to_vec().into_boxed_slice())
+            .collect();
         cfg.variable_name_style = nums[1] as u8;
         cfg.variable_definition_style = nums[2] as u8;
         cfg.mmh_max = nums[3];
@@ -137,6 +153,7 @@ impl RSpecConfig {
         }
         Ok(RSpecConfig {
             role_of,
+            dialect_keys: HashSet::new(),
             variable_name_style: 0,
             variable_definition_style: 0,
             mmh_max: 5,
@@ -152,6 +169,17 @@ impl RSpecConfig {
     /// configured RSpec language.
     pub fn roles_of(&self, name: &[u8]) -> u32 {
         self.role_of.get(name).copied().unwrap_or(0)
+    }
+
+    /// True when `name` is a configured `RSpec/Dialect` `PreferredMethods` key.
+    pub fn is_dialect_key(&self, name: &[u8]) -> bool {
+        self.dialect_keys.contains(name)
+    }
+
+    /// True when no `RSpec/Dialect` key is configured (fast path: the shared
+    /// walk skips Dialect candidate classification entirely).
+    pub fn dialect_keys_empty(&self) -> bool {
+        self.dialect_keys.is_empty()
     }
 }
 

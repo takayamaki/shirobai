@@ -258,11 +258,12 @@ pub fn check_multiline_bundle(
 /// | 11..12 | Includes Examples / Context |
 /// | 13..14 | SharedGroups Examples / Context |
 /// | 15  | Subjects |
+/// | 16  | RSpec/Dialect PreferredMethods keys (the method names the cop rewrites; empty unless configured) |
 ///
 /// The values come from the resolved `config['RSpec']['Language']` hash
 /// (RuboCop's config layer has already applied `inherit_mode: merge`); the
 /// packer flattens, it never merges. The dormant rspec segment is
-/// `[0, 0, 0, 0, 0, 0, 0, 0, 0]` plus sixteen empty lists.
+/// `[0, 0, 0, 0, 0, 0, 0, 0, 0]` plus seventeen empty lists.
 ///
 /// Rails segment `nums[3]` (the shirobai-rails plugin origin):
 ///
@@ -973,6 +974,10 @@ pub struct BundleResult {
     pub rspec_metadata_anchors: Vec<(usize, usize)>,
     /// `RSpec/DescribedClass` candidate block ranges.
     pub rspec_described_class: Vec<(usize, usize)>,
+    /// `RSpec/Dialect` candidate send ranges (configured `PreferredMethods`
+    /// keys only). The wrapper relocates each parser send node and runs stock's
+    /// `on_send` verbatim.
+    pub rspec_dialect: Vec<(usize, usize)>,
     /// The RSpec empty-line family (`RSpec/EmptyLineAfter{Example,
     /// ExampleGroup,FinalLet,Hook,Subject}`), all from the single
     /// `RSpecEmptyLineRule`; empty when `BundleConfig::rspec` is `None`.
@@ -1614,6 +1619,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         rspec_scattered_setup: rspec_result.scattered_setup,
         rspec_metadata_anchors: rspec_result.metadata_anchors,
         rspec_described_class: rspec_result.described_class,
+        rspec_dialect: rspec_result.dialect,
         rspec_empty_line_after_example: rspec_el_result.example,
         rspec_empty_line_after_example_group: rspec_el_result.example_group,
         rspec_empty_line_after_final_let: rspec_el_result.final_let,
@@ -1788,7 +1794,9 @@ mod tests {
         // NamedSubject always style / IgnoreSharedExamples true, and both
         // empty-line AllowConsecutiveOneLiners true.
         let rspec_nums = vec![1, 0, 0, 5, 1, 0, 1, 1, 1];
-        let rspec_lists = rspec_language::tests::default_role_lists();
+        let mut rspec_lists = rspec_language::tests::default_role_lists();
+        // 17th list: RSpec/Dialect PreferredMethods keys (none by default).
+        rspec_lists.push(Vec::new());
         // Rails segment (origin 3): enabled, supports_local off; the four
         // lists are UnknownEnv Environments + DynamicFindBy AllowedMethods /
         // AllowedReceivers / Whitelist (all empty here).

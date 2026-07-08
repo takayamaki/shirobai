@@ -8,8 +8,7 @@ RSpec.describe Shirobai::RSpec do
   end
 
   describe ".segment" do
-    it "packs the sixteen role lists from the resolved Language hash" do
-      config = config_with(
+    it "packs the sixteen role lists plus the Dialect keys list from the resolved Language hash" do      config = config_with(
         "RSpec" => {
           "Language" => {
             "ExampleGroups" => {
@@ -41,10 +40,12 @@ RSpec.describe Shirobai::RSpec do
       )
       nums, lists = described_class.segment(config)
       expect(nums).to eq([1, 0, 0, 5, 1, 0, 1, 1, 1])
-      expect(lists.length).to eq(16)
+      expect(lists.length).to eq(17)
       expect(lists[0]).to eq(%w[describe context])
       expect(lists[8]).to eq(%w[let let!])
       expect(lists[15]).to eq(%w[subject])
+      # 17th list: RSpec/Dialect PreferredMethods keys (none configured here).
+      expect(lists[16]).to eq([])
     end
 
     it "packs the per-cop nums" do
@@ -102,6 +103,18 @@ RSpec.describe Shirobai::RSpec do
       _nums, lists = described_class.segment(config)
       expect(lists[8]).to eq(%w[let])
       expect(lists[15]).to eq([])
+    end
+
+    it "packs the RSpec/Dialect PreferredMethods keys into the 17th list" do
+      config = config_with(
+        "RSpec" => { "Language" => {} },
+        "RSpec/Dialect" => {
+          "PreferredMethods" => { "context" => "describe", "feature" => "describe" }
+        }
+      )
+      _nums, lists = described_class.segment(config)
+      expect(lists.length).to eq(17)
+      expect(lists[16]).to contain_exactly("context", "feature")
     end
 
     it "keeps the default configuration's Language round-trippable" do

@@ -49,6 +49,7 @@ require_relative "shirobai/cop/rspec/empty_line_after_final_let"
 require_relative "shirobai/cop/rspec/empty_line_after_hook"
 require_relative "shirobai/cop/rspec/empty_line_after_subject"
 require_relative "shirobai/cop/rspec/scattered_setup"
+require_relative "shirobai/cop/rspec/dialect"
 
 module Shirobai
   # Glue for the shirobai-rspec plugin gem: the packed-config segment
@@ -78,7 +79,8 @@ module Shirobai
       Shirobai::Cop::RSpec::EmptyLineAfterFinalLet,
       Shirobai::Cop::RSpec::EmptyLineAfterHook,
       Shirobai::Cop::RSpec::EmptyLineAfterSubject,
-      Shirobai::Cop::RSpec::ScatteredSetup
+      Shirobai::Cop::RSpec::ScatteredSetup,
+      Shirobai::Cop::RSpec::Dialect
     ].freeze
 
     # `config['RSpec']['Language']` sub-role paths in the fixed wire order of
@@ -140,6 +142,9 @@ module Shirobai
           value = lang.dig(*path)
           value.is_a?(Array) ? value.grep(String) : []
         end
+        # 17th list: RSpec/Dialect PreferredMethods keys (empty unless
+        # configured — keeps the shared walk's Dialect classifier dormant).
+        lists << Shirobai::Cop::RSpec::Dialect.bundle_lists(config)
         vn = Shirobai::Cop::RSpec::VariableName.bundle_args(config)
         vd = Shirobai::Cop::RSpec::VariableDefinition.bundle_args(config)
         mmh = Shirobai::Cop::RSpec::MultipleMemoizedHelpers.bundle_args(config)

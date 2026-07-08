@@ -241,6 +241,11 @@ pub struct RSpecResult {
     /// parser block node, wraps it in `RuboCop::RSpec::ExampleGroup`, and runs
     /// stock's `repeated_hooks` / `autocorrect` verbatim.
     pub scattered_setup: Vec<(usize, usize)>,
+    /// `RSpec/Dialect` candidate send ranges (parser send range), document
+    /// order. Emitted only for sends whose method name is a configured
+    /// `PreferredMethods` key (empty key set => no candidates). The wrapper
+    /// relocates each parser send node and runs stock's `on_send` verbatim.
+    pub dialect: Vec<(usize, usize)>,
 }
 
 /// parser block-kind recovery from a prism call (see module doc).
@@ -434,6 +439,9 @@ pub struct RSpecDispatcherRule<'c> {
     focus_candidates: Vec<(usize, usize)>,
     /// `RSpec/PendingWithoutReason` candidate send ranges.
     pending_candidates: Vec<(usize, usize)>,
+    /// `RSpec/Dialect` candidate send ranges (configured `PreferredMethods`
+    /// keys only).
+    dialect_candidates: Vec<(usize, usize)>,
 }
 
 pub fn build_rule<'c>(cfg: &'c RSpecConfig) -> RSpecDispatcherRule<'c> {
@@ -454,6 +462,7 @@ pub fn build_rule<'c>(cfg: &'c RSpecConfig) -> RSpecDispatcherRule<'c> {
         metadata_anchors: Vec::new(),
         focus_candidates: Vec::new(),
         pending_candidates: Vec::new(),
+        dialect_candidates: Vec::new(),
     }
 }
 
@@ -526,6 +535,15 @@ impl RSpecDispatcherRule<'_> {
         {
             let loc = call.location();
             self.metadata_anchors.push((loc.start_offset(), loc.end_offset()));
+        }
+
+        // `RSpec/Dialect` candidate: a send with an rspec receiver whose method
+        // name is a configured `PreferredMethods` key. The key set is empty on
+        // unconfigured / disabled files, so the leading emptiness check keeps
+        // this dormant there; the wrapper runs stock's `on_send`
+        // (`rspec_method?` + `preferred_methods`) verbatim.
+        if !self.cfg.dialect_keys_empty() && rspec_recv && self.cfg.is_dialect_key(name) {
+            self.dialect_candidates.push(parser_send_range(call, kind));
         }
 
         if role_mask == 0 {
@@ -899,6 +917,7 @@ impl RSpecDispatcherRule<'_> {
             empty_example_group,
             described_class,
             scattered_setup,
+            dialect: self.dialect_candidates,
         }
     }
 
@@ -1258,6 +1277,13 @@ pub fn check_rspec_described_class(source: &[u8], cfg: &RSpecConfig) -> Vec<(usi
 /// block ranges).
 pub fn check_rspec_scattered_setup(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
     run(source, cfg).scattered_setup
+}
+
+/// Standalone entry point for `RSpec/Dialect` (candidate send ranges — only the
+/// configured `PreferredMethods` keys). The wrapper relocates each parser send
+/// node and runs stock's `on_send` verbatim.
+pub fn check_rspec_dialect(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
+    run(source, cfg).dialect
 }
 
 fn run(source: &[u8], cfg: &RSpecConfig) -> RSpecResult {
