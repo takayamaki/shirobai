@@ -131,6 +131,17 @@ describe 'oracle self-test' do
   let('badString') { 2 }
   let!(:unused_setup) { 3 }
 
+  subject(:first_subject) { 1 }
+  subject(:second_subject) { 2 }
+
+  it_behaves_like :shared_behavior
+
+  context 'a dialect alias' do
+    it 'passes' do
+      expect(0).to eq(0)
+    end
+  end
+
   it 'repeats' do
     expect(1).to eq(1)
   end
@@ -158,6 +169,16 @@ describe 'oracle self-test' do
 end
 FIXTURE
 write_uniform_config "$selftest_dir"
+# The self-test additionally enables RSpec/Dialect (disabled by default) with a
+# PreferredMethods map so the R4 Dialect drop-in fires HERE. The corpus config
+# leaves Dialect at its default (mastodon disables it), so the corpus alone
+# would never exercise Dialect — the fixture firing is the guarantee.
+cat >> "$selftest_dir/.shirobai_rspec_parity.yml" <<'DIALECT'
+RSpec/Dialect:
+  Enabled: true
+  PreferredMethods:
+    context: describe
+DIALECT
 
 echo "=== oracle self-test (synthetic fixture) ==="
 run_side Gemfile.stock.rspec "" "$selftest_dir" spec "${prefix}_selftest_stock.json"
@@ -168,6 +189,7 @@ ruby -rjson -e '
   cops = %w[
     RSpec/VariableName RSpec/VariableDefinition RSpec/RepeatedDescription
     RSpec/RepeatedExample RSpec/MultipleMemoizedHelpers RSpec/LetSetup
+    RSpec/MultipleSubjects RSpec/SharedExamples RSpec/Dialect
   ]
   d = JSON.parse(File.read(ARGV[0]))
   fired = d["files"].flat_map { |f| f["offenses"].map { |o| o["cop_name"] } }.uniq
@@ -177,7 +199,7 @@ ruby -rjson -e '
     warn "the uniform config is not enabling RSpec cops - the oracle would be empty"
     exit 1
   end
-  puts "self-test: all #{cops.size} R1 cops fired on the stock side"
+  puts "self-test: all #{cops.size} implemented RSpec cops fired on the stock side"
 ' "${prefix}_selftest_stock.json"
 
 diff_jsons "${prefix}_selftest_stock.json" "${prefix}_selftest_shirobai.json" fixture

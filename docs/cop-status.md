@@ -415,6 +415,55 @@ When scoping future Arch-B cops, include relocation frequency (candidate
 density x corpus spec size) in the speed estimate, not just the stock
 cop's standalone cost.
 
+## Plugin cops: shirobai-rspec (R4 batch)
+
+### Implemented (3 cops)
+
+- `RSpec/Dialect` (slot `[2, 22]`)
+- `RSpec/MultipleSubjects` (slot `[2, 23]`)
+- `RSpec/SharedExamples` (slot `[2, 24]`)
+
+Slot `[2, 21]` is left as an empty placeholder for a parallel task; the ext
+pushes an empty list there so slots `[2, 22..24]` stay positionally aligned.
+
+`RSpec/SharedExamples` is a send-candidate cop (the `RSpec/Focus` shape): the
+walk emits every shared-example / `include_*` call whose first argument is a
+plain `str` or `sym` title. That anchor is style-INDEPENDENT — a symbol under
+`EnforcedStyle: string` and a string under `EnforcedStyle: symbol` are both
+potential offenders — so no config crosses the FFI; the wrapper runs stock's
+`on_send` verbatim and `ConfigurableEnforcedStyle` decides `offense?`, the
+message and the titleize / symbolize replacement on the real parser node. Const
+and interpolated (`dstr`/`dsym`) titles never reach the candidate set.
+
+`RSpec/MultipleSubjects` is group-scoped. It reuses the walk's existing
+`subject?` collection (the same barrier semantics that back
+`MultipleMemoizedHelpers`: nested example groups, shared groups and `include_*`
+blocks isolate their own subjects, so `scope.subjects` for a plain-block
+example group equals stock's `ExampleGroup#subjects`). `finish()` emits the
+BLOCK ranges of all but the last definition per group (stock's
+`subjects[0...-1]`) as a flat candidate list; the wrapper relocates each block
+and runs stock's autocorrect verbatim — rename `subject(:x)` to `let(:x)`,
+remove an unnamed `subject`, skip `subject!` (non-correctable).
+
+`RSpec/Dialect` is the batch's highest single-unit value and the only cop here
+that needs per-cop config on the Rust side. Its stock candidate set is
+`(send #rspec? #ALL.all ...)` — the broadest possible (every DSL call) — but
+only the sends whose method name is a configured `PreferredMethods` key can
+become offenses. Rather than classify that broad set on every spec file (an
+always-on cost even where the cop is disabled, e.g. mastodon), the configured
+key set rides the rspec segment as a 17th role list (`Vec<String>` — the same
+channel as the sixteen `RSpec/Language` lists), and the walk emits a candidate
+only for a send whose name is in that set. An empty key set (the default, and
+the disabled state) emits zero candidates: the classifier's whole always-on
+cost is a single "is the key set empty?" check per file. Where the cop IS
+configured (Discourse), candidates narrow to the configured aliases instead of
+the full DSL. The Rust key set carries the RAW `PreferredMethods` keys, a safe
+superset of the effective offenders; the wrapper runs stock's `on_send` plus
+the `MethodPreference` override-cancellation verbatim, so relocation never
+misses an offense and any extra candidate is dropped there. Because Dialect is
+disabled on the mastodon parity corpus, its firing guarantee is the oracle's
+self-test fixture (the fixture config enables it with a `PreferredMethods` map).
+
 ## Plugin cops: shirobai-rails (Phase 0 + Application* cluster)
 
 `gems/shirobai-rails` replaces rubocop-rails (pinned `= 2.35.5`) cops with
