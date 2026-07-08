@@ -1,14 +1,17 @@
 # frozen_string_literal: true
 
-require "rbconfig"
 require "rubygems/package"
+require "rb_sys/extensiontask"
 
-DLEXT = RbConfig::CONFIG["DLEXT"]
+# Drives the native build through rb_sys/rake-compiler so the same
+# `create_rust_makefile` path used by `gem install` (extconf.rb) also runs
+# under `rake compile`. The compiled cdylib lands at lib/shirobai/shirobai.so,
+# which CI's build job uploads and the loader in lib/shirobai.rb requires.
+GEMSPEC = Gem::Specification.load("shirobai.gemspec")
 
-task :compile do
-  sh "cargo build --release -p shirobai"
-  mkdir_p "lib/shirobai"
-  cp "target/release/libshirobai.#{DLEXT}", "lib/shirobai/shirobai.#{DLEXT}"
+RbSys::ExtensionTask.new("shirobai", GEMSPEC) do |ext|
+  ext.lib_dir = "lib/shirobai"
+  ext.cross_compile = true
 end
 
 task default: :compile
