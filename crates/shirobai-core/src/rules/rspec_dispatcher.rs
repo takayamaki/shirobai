@@ -251,6 +251,11 @@ pub struct RSpecResult {
     /// `subjects[0...-1]`), document order. The wrapper relocates each block
     /// and runs stock's autocorrect verbatim.
     pub multiple_subjects: Vec<(usize, usize)>,
+    /// `RSpec/SharedExamples` candidate SEND ranges (parser send range),
+    /// document order: shared-example / include_* calls whose first argument is
+    /// a plain str or sym title (style-independent). The wrapper relocates each
+    /// parser send node and runs stock's `on_send` verbatim.
+    pub shared_examples: Vec<(usize, usize)>,
 }
 
 /// parser block-kind recovery from a prism call (see module doc).
@@ -451,6 +456,8 @@ pub struct RSpecDispatcherRule<'c> {
     /// `RSpec/Dialect` candidate send ranges (configured `PreferredMethods`
     /// keys only).
     dialect_candidates: Vec<(usize, usize)>,
+    /// `RSpec/SharedExamples` candidate send ranges.
+    shared_examples_candidates: Vec<(usize, usize)>,
 }
 
 pub fn build_rule<'c>(cfg: &'c RSpecConfig) -> RSpecDispatcherRule<'c> {
@@ -473,6 +480,7 @@ pub fn build_rule<'c>(cfg: &'c RSpecConfig) -> RSpecDispatcherRule<'c> {
         focus_candidates: Vec::new(),
         pending_candidates: Vec::new(),
         dialect_candidates: Vec::new(),
+        shared_examples_candidates: Vec::new(),
     }
 }
 
@@ -589,6 +597,26 @@ impl RSpecDispatcherRule<'_> {
         if role_mask & SKIP_PENDING != 0 || has_skip_pending_metadata(call) {
             self.pending_candidates
                 .push(parser_send_range(call, kind));
+        }
+
+        // `RSpec/SharedExamples` candidate: a shared-example / include_* send
+        // whose first argument is a plain str or sym title. The anchor set is
+        // style-independent (both a symbol under `string` and a string under
+        // `symbol` can offend); the wrapper filters by EnforcedStyle and runs
+        // stock's `on_send` verbatim.
+        let shared_ex_recv = (rspec_recv && role_mask & roles::SG_ALL != 0)
+            || (recv_none && role_mask & roles::INC_ALL != 0);
+        if shared_ex_recv
+            && let Some(first) = call.arguments().and_then(|a| a.arguments().iter().next())
+        {
+            let is_title = first.as_symbol_node().is_some()
+                || first
+                    .as_string_node()
+                    .is_some_and(|s| !string_is_parser_dstr(&s));
+            if is_title {
+                self.shared_examples_candidates
+                    .push(parser_send_range(call, kind));
+            }
         }
 
         // Top-level `spec_group?` (any_block): the gate for the Variable
@@ -932,6 +960,7 @@ impl RSpecDispatcherRule<'_> {
             scattered_setup,
             dialect: self.dialect_candidates,
             multiple_subjects,
+            shared_examples: self.shared_examples_candidates,
         }
     }
 
@@ -1323,6 +1352,13 @@ pub fn check_rspec_dialect(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usiz
 /// autocorrect verbatim.
 pub fn check_rspec_multiple_subjects(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
     run(source, cfg).multiple_subjects
+}
+
+/// Standalone entry point for `RSpec/SharedExamples` (candidate send ranges).
+/// The wrapper relocates each parser send node and runs stock's `on_send`
+/// verbatim.
+pub fn check_rspec_shared_examples(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
+    run(source, cfg).shared_examples
 }
 
 fn run(source: &[u8], cfg: &RSpecConfig) -> RSpecResult {

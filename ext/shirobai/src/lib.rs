@@ -1648,6 +1648,23 @@ fn check_rspec_multiple_subjects(
     ))
 }
 
+/// Standalone entry point for `RSpec/SharedExamples` (per-cop fallback).
+/// Returns candidate send ranges `[[send_start, send_end], ...]`.
+fn check_rspec_shared_examples(
+    ruby: &Ruby,
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Result<Vec<(usize, usize)>, Error> {
+    let Some(cfg) = rspec_segment_config(ruby, nums, lists)? else {
+        return Ok(Vec::new());
+    };
+    Ok(shirobai_core::rules::rspec_dispatcher::check_rspec_shared_examples(
+        bytes(&source),
+        &cfg,
+    ))
+}
+
 /// `[[final_end_line, method_name], ...]` for one empty-line-family cop.
 fn map_rspec_empty_line(
     v: Vec<shirobai_core::rules::rspec_empty_line::EmptyLineOffense>,
@@ -2004,7 +2021,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         perf.push(map_perf_start_with(r.perf_start_with))?;
         perf.push(map_perf_times_map(r.perf_times_map))?;
         // RSpec origin (result[2]).
-        let rspec = ruby.ary_new_capa(24);
+        let rspec = ruby.ary_new_capa(25);
         rspec.push(map_rspec_variable_name(r.rspec_variable_name))?;
         rspec.push(r.rspec_let_setup)?;
         rspec.push(map_rspec_variable_definition(r.rspec_variable_definition))?;
@@ -2040,6 +2057,8 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         rspec.push(r.rspec_dialect)?;
         // slot 23: RSpec/MultipleSubjects (overwritten-subject block ranges).
         rspec.push(r.rspec_multiple_subjects)?;
+        // slot 24: RSpec/SharedExamples (candidate send ranges).
+        rspec.push(r.rspec_shared_examples)?;
         // Rails origin (result[3]). Slots 0-3 (Application*) are `[[start,
         // end], ...]` byte ranges; slots 4-5 carry the send/block-table cops'
         // richer tuples (see the map functions); slots 6-7 and 9-10 are the
@@ -4447,6 +4466,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_rspec_multiple_subjects",
         function!(check_rspec_multiple_subjects, 3),
+    )?;
+    module.define_module_function(
+        "check_rspec_shared_examples",
+        function!(check_rspec_shared_examples, 3),
     )?;
     module.define_module_function(
         "check_rspec_empty_line_after_example",

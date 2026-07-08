@@ -982,6 +982,10 @@ pub struct BundleResult {
     /// `subjects[0...-1]` per plain-block example group). The wrapper relocates
     /// each block and runs stock's autocorrect verbatim.
     pub rspec_multiple_subjects: Vec<(usize, usize)>,
+    /// `RSpec/SharedExamples` candidate SEND ranges (shared-example / include_*
+    /// calls with a plain str/sym title). The wrapper relocates each parser
+    /// send node and runs stock's `on_send` verbatim.
+    pub rspec_shared_examples: Vec<(usize, usize)>,
     /// The RSpec empty-line family (`RSpec/EmptyLineAfter{Example,
     /// ExampleGroup,FinalLet,Hook,Subject}`), all from the single
     /// `RSpecEmptyLineRule`; empty when `BundleConfig::rspec` is `None`.
@@ -1625,6 +1629,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         rspec_described_class: rspec_result.described_class,
         rspec_dialect: rspec_result.dialect,
         rspec_multiple_subjects: rspec_result.multiple_subjects,
+        rspec_shared_examples: rspec_result.shared_examples,
         rspec_empty_line_after_example: rspec_el_result.example,
         rspec_empty_line_after_example_group: rspec_el_result.example_group,
         rspec_empty_line_after_final_let: rspec_el_result.final_let,
