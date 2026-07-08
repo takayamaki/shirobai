@@ -6,7 +6,7 @@ require "rubygems/package"
 DLEXT = RbConfig::CONFIG["DLEXT"]
 
 task :compile do
-  sh "cargo build --release -p shirobai-ext"
+  sh "cargo build --release -p shirobai"
   mkdir_p "lib/shirobai"
   cp "target/release/libshirobai.#{DLEXT}", "lib/shirobai/shirobai.#{DLEXT}"
 end

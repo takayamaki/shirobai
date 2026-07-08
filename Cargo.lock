@@ -355,6 +355,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc6fe69c597f9c37bfeeeeeb33da3530379845f10be461a66d16d03eca2ded77"
 
 [[package]]
+name = "shirobai"
+version = "0.1.0"
+dependencies = [
+ "magnus",
+ "shirobai-core",
+]
+
+[[package]]
 name = "shirobai-core"
 version = "0.1.0"
 dependencies = [
@@ -362,14 +370,6 @@ dependencies = [
  "ruby-prism",
  "self_cell",
  "unicode-width",
-]
-
-[[package]]
-name = "shirobai-ext"
-version = "0.1.0"
-dependencies = [
- "magnus",
- "shirobai-core",
 ]
 
 [[package]]
