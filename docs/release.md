@@ -61,11 +61,31 @@ plugin gem at the pinned version.
 ## If something goes wrong
 
 - A failed plugin push after a successful core push leaves a partial
-  release. Fix the cause and re-run the failed pushes with
-  `gem push pkg/<gem>` (the version is already burned; do not re-bump
+  release. **Use "Re-run failed jobs" on the release run first**:
+  the tag step skips an existing tag, and `rake release` skips gem
+  versions that are already on RubyGems.org, so a re-run only does
+  the missing pushes (the version is already burned; do not re-bump
   for a partial failure).
+- If the workflow path is broken itself, push the built gems by hand:
+  `gem push pkg/<gem>` from a `rake build` checkout of the release tag.
+  A gem first published by hand has no trusted publisher; add one on
+  the gem's Settings page afterwards or the next workflow push fails.
 - A bad release is yanked per gem (`gem yank <name> -v <version>`);
   yank all 4 so the set stays consistent, then bump again.
+
+## Lessons from the first 4-gem release (2026.0708.2200)
+
+- `gem exec` dies under `bundle exec rake`: Bundler blocks gems that
+  are not in the Gemfile. The await call now runs inside
+  `Bundler.with_unbundled_env`.
+- `gem install shirobai` was broken even though every CI gate was
+  green: the RubyGems Cargo builder derives the dylib name from the
+  **package name** in `ext/shirobai/Cargo.toml`, and ours (`shirobai-ext`)
+  did not match the `[lib]` name (`shirobai`). CI never caught it
+  because every CI path uses the repo checkout, not an installed gem.
+  The package is now named `shirobai`. Keep an install smoke test in
+  the release flow: `gem install <built core gem>` into a scratch
+  `GEM_HOME` exercises the path that CI does not.
 
 ## Future work (deferred on purpose)
 

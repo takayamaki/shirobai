@@ -6,7 +6,7 @@ require "rubygems/package"
 DLEXT = RbConfig::CONFIG["DLEXT"]
 
 task :compile do
-  sh "cargo build --release -p shirobai-ext"
+  sh "cargo build --release -p shirobai"
   mkdir_p "lib/shirobai"
   cp "target/release/libshirobai.#{DLEXT}", "lib/shirobai/shirobai.#{DLEXT}"
 end
@@ -43,13 +43,31 @@ task :build do
   GEMS.each { |g| build_gem(g[:dir], g[:gemspec]) }
 end
 
+# True when this exact version of the gem is already on RubyGems.org.
+# Lets `rake release` re-run after a partial failure: pushes that already
+# went through are skipped instead of failing the whole task.
+def published?(name, version)
+  require "json"
+  require "net/http"
+  res = Net::HTTP.get_response(URI("https://rubygems.org/api/v1/versions/#{name}.json"))
+  return false unless res.is_a?(Net::HTTPSuccess)
+
+  JSON.parse(res.body).any? { |v| v["number"] == version }
+end
+
 desc "Build and push all four gems to RubyGems.org (used by release-gem action)"
 task :release do
-  paths = GEMS.map { |g| build_gem(g[:dir], g[:gemspec]) }
+  require_relative "lib/shirobai/version"
+  version = Shirobai::VERSION
+  pairs = GEMS.map { |g| [g[:name], build_gem(g[:dir], g[:gemspec])] }
   # Push core, wait for it to be indexed, then push the plugins whose
   # `= version` dependency resolves against it.
-  core_path, *plugin_paths = paths
-  sh "gem", "push", core_path
-  sh "gem", "exec", "rubygems-await", core_path
-  plugin_paths.each { |path| sh "gem", "push", path }
+  (core_name, core_path), *plugins = pairs
+  sh "gem", "push", core_path unless published?(core_name, version)
+  # `gem exec` must run outside the bundle: under `bundle exec rake`,
+  # Bundler blocks any gem that is not in the Gemfile.
+  Bundler.with_unbundled_env do
+    sh "gem", "exec", "rubygems-await", core_path
+  end
+  plugins.each { |name, path| sh("gem", "push", path) unless published?(name, version) }
 end

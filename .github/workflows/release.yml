@@ -29,9 +29,15 @@ jobs:
           ver=$(ruby -r ./lib/shirobai/version -e 'puts Shirobai::VERSION')
           echo "version=$ver" >> "$GITHUB_OUTPUT"
           echo "Version: $ver"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "v$ver"
-          git push origin "v$ver"
+          # Skip tagging when the tag is already on origin, so a partly
+          # failed release can be retried with "Re-run failed jobs".
+          if git ls-remote --exit-code --tags origin "v$ver" > /dev/null; then
+            echo "Tag v$ver already exists on origin"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag "v$ver"
+            git push origin "v$ver"
+          fi
 
       - uses: rubygems/release-gem@052cc82692552de3ef2b81fd670e41d13cba8092 # v1.4.0
