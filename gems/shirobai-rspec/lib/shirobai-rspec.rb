@@ -49,6 +49,7 @@ require_relative "shirobai/cop/rspec/empty_line_after_final_let"
 require_relative "shirobai/cop/rspec/empty_line_after_hook"
 require_relative "shirobai/cop/rspec/empty_line_after_subject"
 require_relative "shirobai/cop/rspec/scattered_setup"
+require_relative "shirobai/cop/rspec/subject_stub"
 require_relative "shirobai/cop/rspec/dialect"
 require_relative "shirobai/cop/rspec/multiple_subjects"
 require_relative "shirobai/cop/rspec/shared_examples"
@@ -82,6 +83,7 @@ module Shirobai
       Shirobai::Cop::RSpec::EmptyLineAfterHook,
       Shirobai::Cop::RSpec::EmptyLineAfterSubject,
       Shirobai::Cop::RSpec::ScatteredSetup,
+      Shirobai::Cop::RSpec::SubjectStub,
       Shirobai::Cop::RSpec::Dialect,
       Shirobai::Cop::RSpec::MultipleSubjects,
       Shirobai::Cop::RSpec::SharedExamples

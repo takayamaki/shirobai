@@ -967,6 +967,10 @@ pub struct BundleResult {
     /// parser block node range), document order. The wrapper relocates each
     /// parser block node and runs stock's detection + autocorrect verbatim.
     pub rspec_scattered_setup: Vec<(usize, usize)>,
+    /// `RSpec/SubjectStub` candidate top-level group block ranges. The wrapper
+    /// intersects these with stock's own `top_level_groups` selection and
+    /// replays stock's `on_top_level_group` verbatim on the verified nodes.
+    pub rspec_subject_stub: Vec<(usize, usize)>,
     /// Shared metadata-anchor block ranges feeding the four `Metadata`-mixin
     /// cops (`MetadataStyle` / `DuplicatedMetadata` / `EmptyMetadata` /
     /// `SortMetadata`). Each cop reads the same list from its own slot; the ext
@@ -1625,6 +1629,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         rspec_pending_without_reason: rspec_result.pending_without_reason,
         rspec_empty_example_group: rspec_result.empty_example_group,
         rspec_scattered_setup: rspec_result.scattered_setup,
+        rspec_subject_stub: rspec_result.subject_stub,
         rspec_metadata_anchors: rspec_result.metadata_anchors,
         rspec_described_class: rspec_result.described_class,
         rspec_dialect: rspec_result.dialect,
@@ -2043,6 +2048,10 @@ mod tests {
         assert_eq!(
             bundle.rspec_scattered_setup,
             rspec_dispatcher::check_rspec_scattered_setup(src.as_bytes(), rspec_cfg)
+        );
+        assert_eq!(
+            bundle.rspec_subject_stub,
+            rspec_dispatcher::check_rspec_subject_stub(src.as_bytes(), rspec_cfg)
         );
         // `let!(:unused) { create(:widget) }` is a hook-free helper; the
         // describe/context blocks with a description arg are metadata anchors.

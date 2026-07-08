@@ -1614,6 +1614,21 @@ fn check_rspec_scattered_setup(
     ))
 }
 
+fn check_rspec_subject_stub(
+    ruby: &Ruby,
+    source: RString,
+    nums: Vec<i64>,
+    lists: Vec<Vec<String>>,
+) -> Result<Vec<(usize, usize)>, Error> {
+    let Some(cfg) = rspec_segment_config(ruby, nums, lists)? else {
+        return Ok(Vec::new());
+    };
+    Ok(shirobai_core::rules::rspec_dispatcher::check_rspec_subject_stub(
+        bytes(&source),
+        &cfg,
+    ))
+}
+
 /// Standalone entry point for `RSpec/Dialect` (per-cop fallback). Returns
 /// candidate send ranges `[[send_start, send_end], ...]`.
 fn check_rspec_dialect(
@@ -2051,8 +2066,8 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         rspec.push(r.rspec_described_class)?;
         // slot 20: RSpec/ScatteredSetup (candidate example-group block ranges).
         rspec.push(r.rspec_scattered_setup)?;
-        // slot 21: reserved for a parallel task; kept empty so slots 22+ align.
-        rspec.push(Vec::<(usize, usize)>::new())?;
+        // slot 21: RSpec/SubjectStub (candidate top-level group block ranges).
+        rspec.push(r.rspec_subject_stub)?;
         // slot 22: RSpec/Dialect (candidate send ranges).
         rspec.push(r.rspec_dialect)?;
         // slot 23: RSpec/MultipleSubjects (overwritten-subject block ranges).
@@ -4458,6 +4473,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_rspec_scattered_setup",
         function!(check_rspec_scattered_setup, 3),
+    )?;
+    module.define_module_function(
+        "check_rspec_subject_stub",
+        function!(check_rspec_subject_stub, 3),
     )?;
     module.define_module_function(
         "check_rspec_dialect",

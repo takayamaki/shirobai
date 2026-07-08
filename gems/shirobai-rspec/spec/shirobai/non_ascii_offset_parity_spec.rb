@@ -63,6 +63,11 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rspec" do
       Shirobai::Cop::RSpec::Focus,
       "#{prefix}describe 'テスト', :focus do\n  it 'あ' do\n  end\nend\n"
     ],
+    "RSpec/SubjectStub" => [
+      RuboCop::Cop::RSpec::SubjectStub,
+      Shirobai::Cop::RSpec::SubjectStub,
+      "#{prefix}describe Foo do\n  subject(:対象) { described_class.new }\n  it('検証') { allow(対象).to receive(:値) }\nend\n"
+    ],
     "RSpec/DescribedClass" => [
       RuboCop::Cop::RSpec::DescribedClass,
       Shirobai::Cop::RSpec::DescribedClass,

@@ -118,7 +118,7 @@ use std::collections::{HashMap, HashSet};
 use ruby_prism::{CallNode, Node, StringNode};
 
 use super::dispatch::{Interest, Rule};
-use super::rspec_language::{roles, RSpecConfig};
+use super::rspec_language::{roles, RSpecConfig, RUNNERS};
 
 /// One style-failing `RSpec/VariableName` candidate. `kind`: 0 = symbol,
 /// 1 = string (dstr/dsym candidates are skipped by stock). `value` is the
@@ -241,6 +241,18 @@ pub struct RSpecResult {
     /// parser block node, wraps it in `RuboCop::RSpec::ExampleGroup`, and runs
     /// stock's `repeated_hooks` / `autocorrect` verbatim.
     pub scattered_setup: Vec<(usize, usize)>,
+    /// `RSpec/SubjectStub`: candidate TOP-LEVEL group block ranges (a safe
+    /// superset of the groups where stock's `on_top_level_group` could emit).
+    /// The wrapper intersects these with stock's own `top_level_groups`
+    /// selection (so spine over-approximations here are harmless) and replays
+    /// stock's `find_all_explicit` / `find_subject_expectations` verbatim.
+    /// A group qualifies when its subtree contains a message-expectation send
+    /// (`{allow|expect}(NAME).to{,_not/not_to} <...receive...>` or
+    /// `is_expected.to <...receive...>`) whose target is `subject`,
+    /// `is_expected`, or a sym-named subject defined anywhere in the group
+    /// (ignoring stock's scope/`let`-override precision -- that only removes
+    /// offenses, so the candidate set stays a superset).
+    pub subject_stub: Vec<(usize, usize)>,
     /// `RSpec/Dialect` candidate send ranges (parser send range), document
     /// order. Emitted only for sends whose method name is a configured
     /// `PreferredMethods` key (empty key set => no candidates). The wrapper
@@ -414,6 +426,41 @@ struct Scope {
 struct StackEntry {
     opened_scope: bool,
     top_spec: bool,
+    /// True while this node lies on the top-level-group "spine": the chain of
+    /// `program`/`class`/`module`/`begin` nodes that stock's
+    /// `TopLevelGroup#top_level_nodes` descends through. A spec group reached
+    /// with `on_spine` parent is a top-level group (stock unwraps class/module,
+    /// unlike the `RSpec/VariableName` gate).
+    on_spine: bool,
+    /// This node opened a `RSpec/SubjectStub` top-level-group frame; `leave`
+    /// clears `ss_cur`.
+    opened_tlg: bool,
+}
+
+/// A `RSpec/SubjectStub` message-expectation target.
+enum SsTarget {
+    /// `is_expected` or `subject` -- always in stock's names set.
+    Always,
+    /// `allow(NAME)` / `expect(NAME)` bare-name target; a candidate only when
+    /// `NAME` is a subject defined in the group.
+    Named(Vec<u8>),
+}
+
+/// A deferred `.to` message-expectation whose matcher argument must be
+/// searched for a `receive`-family send (the argument subtree is walked AFTER
+/// this node, so the check runs in `finish`).
+struct SsPending {
+    tlg: usize,
+    matcher: (usize, usize),
+    target: SsTarget,
+}
+
+/// One `RSpec/SubjectStub` top-level group.
+struct SsTlg {
+    range: (usize, usize),
+    /// sym-named subject values plus bare `subject`/`subject!` method names
+    /// defined anywhere in the group (stock's `find_all_explicit`/`subject?`).
+    subject_names: HashSet<Vec<u8>>,
 }
 
 pub struct RSpecDispatcherRule<'c> {
@@ -453,6 +500,15 @@ pub struct RSpecDispatcherRule<'c> {
     focus_candidates: Vec<(usize, usize)>,
     /// `RSpec/PendingWithoutReason` candidate send ranges.
     pending_candidates: Vec<(usize, usize)>,
+    /// `RSpec/SubjectStub` top-level groups, document order.
+    ss_tlgs: Vec<SsTlg>,
+    /// Arena index of the enclosing top-level group, or `None` outside one.
+    ss_cur: Option<usize>,
+    /// Deferred message-expectations (matcher checked against `ss_receive`).
+    ss_pending: Vec<SsPending>,
+    /// Start offsets of every nil-receiver `receive`-family send seen inside a
+    /// top-level group, walk order (ascending start).
+    ss_receive: Vec<usize>,
     /// `RSpec/Dialect` candidate send ranges (configured `PreferredMethods`
     /// keys only).
     dialect_candidates: Vec<(usize, usize)>,
@@ -479,6 +535,10 @@ pub fn build_rule<'c>(cfg: &'c RSpecConfig) -> RSpecDispatcherRule<'c> {
         metadata_anchors: Vec::new(),
         focus_candidates: Vec::new(),
         pending_candidates: Vec::new(),
+        ss_tlgs: Vec::new(),
+        ss_cur: None,
+        ss_pending: Vec::new(),
+        ss_receive: Vec::new(),
         dialect_candidates: Vec::new(),
         shared_examples_candidates: Vec::new(),
     }
@@ -508,10 +568,14 @@ const METADATA_ROLES: u32 =
     roles::EX_ALL | roles::EG_ALL | roles::SG_ALL | roles::HOOKS;
 
 impl RSpecDispatcherRule<'_> {
-    fn handle_call(&mut self, call: &CallNode<'_>) -> StackEntry {
+    fn handle_call(&mut self, call: &CallNode<'_>, parent_on_spine: bool) -> StackEntry {
         let mut entry = StackEntry {
             opened_scope: false,
             top_spec: false,
+            // A call is never itself a spine node (only program/class/module/
+            // begin are); its children never lie on the top-level spine.
+            on_spine: false,
+            opened_tlg: false,
         };
         let name = call.name().as_slice();
         let role_mask = self.cfg.roles_of(name);
@@ -542,6 +606,26 @@ impl RSpecDispatcherRule<'_> {
         }
 
         let rspec_recv = recv_none || recv.as_ref().is_some_and(|r| rspec_const(r));
+
+        // --- RSpec/SubjectStub (before the role gate: `to`/`receive` etc. are
+        // not role names). Both branches only matter inside a top-level group.
+        if let Some(cur) = self.ss_cur {
+            // A nil-receiver `receive`-family send: remember its start so a
+            // deferred `.to` can find it in its matcher subtree (walked later).
+            if recv_none
+                && matches!(
+                    name,
+                    b"receive" | b"receive_messages" | b"receive_message_chain" | b"have_received"
+                )
+            {
+                self.ss_receive.push(call.location().start_offset());
+            }
+            // A `.to`/`.to_not`/`.not_to` message-expectation: record it for the
+            // post-walk matcher check.
+            if let Some((matcher, target)) = ss_message_expectation(call) {
+                self.ss_pending.push(SsPending { tlg: cur, matcher, target });
+            }
+        }
 
         // `RSpec.configure do |c| ... end` metadata-anchor block: the send name
         // is `configure` (not a role name, so role_mask is 0), so probe it
@@ -654,6 +738,13 @@ impl RSpecDispatcherRule<'_> {
             recv_none && role_mask & roles::SUBJECTS != 0 && kind == BlockKind::Plain;
         if is_subject {
             self.collect_subject(call);
+            // RSpec/SubjectStub: record the subject name (sym value, or the
+            // bare `subject`/`subject!` method name) in the enclosing group.
+            if let Some(cur) = self.ss_cur
+                && let Some(sn) = ss_subject_name(call, name)
+            {
+                self.ss_tlgs[cur].subject_names.insert(sn);
+            }
         }
 
         // `example?` collection (plain block only). Feeds
@@ -662,6 +753,26 @@ impl RSpecDispatcherRule<'_> {
             recv_none && role_mask & roles::EX_ALL != 0 && kind == BlockKind::Plain;
         if is_example {
             self.collect_example(call);
+        }
+
+        // RSpec/SubjectStub top-level group: a spec group reached on the
+        // top-level spine (stock `TopLevelGroup`). `spec_group?` is an
+        // any_block matcher, so numblock/itblock groups open a tlg too
+        // (probed: `expect(subject)` inside a numblock top-level group IS a
+        // stock offense) -- only the literal-block kinds qualify (a
+        // `&block_pass` send has no parser block node).
+        if parent_on_spine
+            && rspec_recv
+            && role_mask & (roles::EG_ALL | roles::SG_ALL) != 0
+            && matches!(kind, BlockKind::Plain | BlockKind::Numbered | BlockKind::It)
+        {
+            let loc = call.location();
+            self.ss_tlgs.push(SsTlg {
+                range: (loc.start_offset(), loc.end_offset()),
+                subject_names: HashSet::new(),
+            });
+            self.ss_cur = Some(self.ss_tlgs.len() - 1);
+            entry.opened_tlg = true;
         }
 
         // parser-block frames: barriers + collection roots.
@@ -943,6 +1054,7 @@ impl RSpecDispatcherRule<'_> {
             .filter(|s| s.described_class_candidate)
             .map(|s| s.range)
             .collect();
+        let subject_stub = self.subject_stub_candidates();
         let multiple_subjects = self.multiple_subjects_candidates();
         RSpecResult {
             variable_name: (self.vn_offenses, self.vn_passing),
@@ -958,10 +1070,43 @@ impl RSpecDispatcherRule<'_> {
             empty_example_group,
             described_class,
             scattered_setup,
+            subject_stub,
             dialect: self.dialect_candidates,
             multiple_subjects,
             shared_examples: self.shared_examples_candidates,
         }
+    }
+
+    /// `RSpec/SubjectStub` candidate top-level groups, document order. A group
+    /// qualifies when any of its message-expectations targets `subject` /
+    /// `is_expected` (`SsTarget::Always`) or a subject name defined in the
+    /// group, AND that expectation's matcher subtree holds a `receive`-family
+    /// send (the deferred check against `ss_receive`).
+    fn subject_stub_candidates(&self) -> Vec<(usize, usize)> {
+        let mut starts = self.ss_receive.clone();
+        starts.sort_unstable();
+        let mut hit = vec![false; self.ss_tlgs.len()];
+        for p in &self.ss_pending {
+            // A `receive`-family send inside the matcher's byte range.
+            let from = starts.partition_point(|&s| s < p.matcher.0);
+            let has_receive = starts.get(from).is_some_and(|&s| s < p.matcher.1);
+            if !has_receive {
+                continue;
+            }
+            let qualifies = match &p.target {
+                SsTarget::Always => true,
+                SsTarget::Named(n) => self.ss_tlgs[p.tlg].subject_names.contains(n),
+            };
+            if qualifies {
+                hit[p.tlg] = true;
+            }
+        }
+        self.ss_tlgs
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| hit[*i])
+            .map(|(_, t)| t.range)
+            .collect()
     }
 
     /// For every `example_group?` frame with >= 2 collected examples, the
@@ -1177,6 +1322,102 @@ fn parser_send_range(call: &CallNode<'_>, kind: BlockKind) -> (usize, usize) {
     (start, end)
 }
 
+/// A node on the spine stock's `TopLevelGroup#top_level_nodes` descends
+/// through (program / class / module / the implicit statement sequence).
+/// `SingletonClassNode` (`class << self`) is NOT unwrapped by stock, so it
+/// stays opaque. Prism `BeginNode` = parser `kwbegin`, which stock does NOT
+/// unwrap either -- keeping it transparent is a deliberate over-approximation
+/// (more candidates, never fewer); the wrapper's `top_level_groups`
+/// intersection filters those out.
+fn is_spine_node(node: &Node<'_>) -> bool {
+    node.as_program_node().is_some()
+        || node.as_class_node().is_some()
+        || node.as_module_node().is_some()
+        || node.as_begin_node().is_some()
+        // A body's StatementsNode reaches branch enter when the parent is
+        // visited generically (class/module body), unlike the ProgramNode /
+        // BlockNode bodies that bypass it. Transparent so the statements it
+        // wraps stay on the spine (harmless off-spine: parent gates it).
+        || node.as_statements_node().is_some()
+}
+
+/// `subject?` name capture (stock `{ #Subjects.all (sym $_) | $#Subjects.all }`):
+/// the sym value for `subject(:name)`, or the bare method name for `subject` /
+/// `subject!`. A string/dsym/multi-arg first argument is not a recognized
+/// subject definition and contributes no name.
+fn ss_subject_name(call: &CallNode<'_>, name: &[u8]) -> Option<Vec<u8>> {
+    let args = call.arguments();
+    let count = args
+        .as_ref()
+        .map(|a| a.arguments().iter().count())
+        .unwrap_or(0);
+    match count {
+        0 => Some(name.to_vec()),
+        1 => args
+            .and_then(|a| a.arguments().iter().next())
+            .and_then(|arg| arg.as_symbol_node().map(|s| s.unescaped().to_vec())),
+        _ => None,
+    }
+}
+
+/// A bare name reference: `(send nil? NAME)` with no args/block, or a local
+/// variable read. Stock matches only the send form; the lvar arm is a safe
+/// over-approximation guarding against a prism/parser send-vs-lvar split.
+fn ss_bare_name(node: &Node<'_>) -> Option<Vec<u8>> {
+    if let Some(c) = node.as_call_node() {
+        let n_args = c
+            .arguments()
+            .map(|a| a.arguments().iter().count())
+            .unwrap_or(0);
+        if c.receiver().is_none() && n_args == 0 && c.block().is_none() {
+            return Some(c.name().as_slice().to_vec());
+        }
+    }
+    node.as_local_variable_read_node()
+        .map(|l| l.name().as_slice().to_vec())
+}
+
+/// A `.to`/`.to_not`/`.not_to` message-expectation. Returns the matcher
+/// argument's byte range (searched post-walk for a `receive`-family send) and
+/// the target, or `None`. Mirrors stock's `message_expectation?` receiver arm
+/// -- the hard-coded `expect`/`allow`/`is_expected` (NOT the configurable
+/// Expectations list) and the single-argument `.to` shape.
+fn ss_message_expectation(call: &CallNode<'_>) -> Option<((usize, usize), SsTarget)> {
+    if !RUNNERS.iter().any(|r| *r == call.name().as_slice()) {
+        return None;
+    }
+    let args = call.arguments()?;
+    let mut it = args.arguments().iter();
+    let matcher = it.next()?;
+    if it.next().is_some() {
+        return None; // stock's pattern binds exactly one matcher argument
+    }
+    let mloc = matcher.location();
+    let mrange = (mloc.start_offset(), mloc.end_offset());
+    let recv = call.receiver()?;
+    let recv = recv.as_call_node()?;
+    if recv.receiver().is_some() {
+        return None; // nil receiver required
+    }
+    let rname = recv.name().as_slice();
+    let rcount = recv
+        .arguments()
+        .map(|a| a.arguments().iter().count())
+        .unwrap_or(0);
+    if rname == b"is_expected" && rcount == 0 {
+        return Some((mrange, SsTarget::Always));
+    }
+    if matches!(rname, b"expect" | b"allow") && rcount == 1 {
+        let inner = recv.arguments()?.arguments().iter().next()?;
+        let bn = ss_bare_name(&inner)?;
+        if bn.as_slice() == b"subject" {
+            return Some((mrange, SsTarget::Always));
+        }
+        return Some((mrange, SsTarget::Named(bn)));
+    }
+    None
+}
+
 /// True when any direct argument is a `(sym :name)` for a name in `syms`, or
 /// the LAST argument is a hash-like literal (`{...}` or trailing keyword args)
 /// containing a pair whose key is such a symbol. The pair VALUE is not checked
@@ -1225,12 +1466,17 @@ fn has_skip_pending_metadata(call: &CallNode<'_>) -> bool {
 
 impl Rule for RSpecDispatcherRule<'_> {
     fn enter(&mut self, node: &Node<'_>) {
+        // The parent frame's spine state (root defaults on-spine: `stack` is
+        // empty when the ProgramNode enters).
+        let parent_on_spine = self.stack.last().is_none_or(|e| e.on_spine);
         let entry = if let Some(call) = node.as_call_node() {
-            self.handle_call(&call)
+            self.handle_call(&call, parent_on_spine)
         } else {
             StackEntry {
                 opened_scope: false,
                 top_spec: false,
+                on_spine: parent_on_spine && is_spine_node(node),
+                opened_tlg: false,
             }
         };
         if entry.top_spec {
@@ -1246,6 +1492,10 @@ impl Rule for RSpecDispatcherRule<'_> {
             }
             if entry.top_spec {
                 self.top_spec_depth -= 1;
+            }
+            // Top-level groups never nest, so `ss_cur` returns to `None`.
+            if entry.opened_tlg {
+                self.ss_cur = None;
             }
         }
     }
@@ -1338,6 +1588,13 @@ pub fn check_rspec_described_class(source: &[u8], cfg: &RSpecConfig) -> Vec<(usi
 /// block ranges).
 pub fn check_rspec_scattered_setup(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
     run(source, cfg).scattered_setup
+}
+
+/// Standalone entry point for `RSpec/SubjectStub` (candidate top-level group
+/// block ranges). The wrapper relocates each parser block node and replays
+/// stock's `on_top_level_group` verbatim.
+pub fn check_rspec_subject_stub(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
+    run(source, cfg).subject_stub
 }
 
 /// Standalone entry point for `RSpec/Dialect` (candidate send ranges — only the
@@ -2107,5 +2364,164 @@ mod tests {
     fn described_class_ignores_shared_groups_with_const() {
         let src = "shared_examples MyClass do\n  it { MyClass }\nend\n";
         assert!(dc(src).is_empty());
+    }
+
+    // --- SubjectStub candidate emission (probed against rubocop-rspec 3.10.2) ---
+
+    fn ss(src: &str) -> Vec<String> {
+        slices(src, check_rspec_subject_stub(src.as_bytes(), &cfg()))
+    }
+
+    #[test]
+    fn ss_flags_the_group_of_a_named_subject_stub() {
+        let src = "describe Foo do\n  subject(:foo) { described_class.new }\n  before do\n    allow(foo).to receive(:bar)\n  end\nend\n";
+        let out = ss(src);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].starts_with("describe Foo do"));
+        assert!(out[0].ends_with("end"));
+    }
+
+    #[test]
+    fn ss_flags_implicit_and_is_expected_subjects() {
+        // No subject definition at all: implicit `subject` is always in the set.
+        assert_eq!(
+            ss("describe Foo do\n  it { expect(subject).to receive(:bar) }\nend\n").len(),
+            1
+        );
+        // is_expected always matches.
+        assert_eq!(
+            ss("describe Foo do\n  it { is_expected.to receive(:bar) }\nend\n").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn ss_covers_every_receive_family_and_runner() {
+        for matcher in [
+            "receive(:bar)",
+            "receive(:bar).with(1).and_return(2)",
+            "receive_messages(bar: :baz)",
+            "receive_message_chain(:bar, baz: :baz)",
+            "have_received(:bar)",
+            "all(receive(:baz))", // nested receive (def_node_search)
+        ] {
+            let src = format!(
+                "describe Foo do\n  subject(:foo) {{ x }}\n  it {{ expect(foo).to {matcher} }}\nend\n"
+            );
+            assert_eq!(ss(&src).len(), 1, "matcher {matcher} should qualify");
+        }
+        for runner in ["to", "to_not", "not_to"] {
+            let src = format!(
+                "describe Foo do\n  subject(:foo) {{ x }}\n  it {{ expect(foo).{runner} receive(:bar) }}\nend\n"
+            );
+            assert_eq!(ss(&src).len(), 1, "runner {runner} should qualify");
+        }
+    }
+
+    #[test]
+    fn ss_flags_bang_subject_by_name_and_as_subject() {
+        assert_eq!(
+            ss("describe Foo do\n  subject!(:foo) { x }\n  it { expect(foo).to receive(:bar) }\nend\n").len(),
+            1
+        );
+        assert_eq!(
+            ss("describe Foo do\n  subject! { x }\n  it { expect(subject).to receive(:bar) }\nend\n").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn ss_flags_stub_inside_a_helper_def() {
+        let src = "RSpec.describe Bar do\n  subject(:bar) { x }\n  def helper\n    allow(bar).to receive(:bar)\n  end\nend\n";
+        assert_eq!(ss(src).len(), 1);
+    }
+
+    #[test]
+    fn ss_flags_several_top_level_groups_independently() {
+        // Only the second group has a subject stub (the first uses `eq`).
+        let src = "RSpec.describe Foo do\n  subject(:foo) { x }\n  specify { expect(foo).to eq(foo) }\nend\n\nRSpec.describe Bar do\n  subject(:bar) { x }\n  specify { allow(bar).to receive(:bar) }\nend\n";
+        let out = ss(src);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].starts_with("RSpec.describe Bar do"));
+    }
+
+    #[test]
+    fn ss_unwraps_class_and_module_but_not_arbitrary_blocks() {
+        // A group inside a top-level class/module IS a top-level group.
+        for wrap in ["class W", "module W"] {
+            let src = format!(
+                "{wrap}\n  describe Foo do\n    subject(:foo) {{ x }}\n    it {{ allow(foo).to receive(:bar) }}\n  end\nend\n"
+            );
+            assert_eq!(ss(&src).len(), 1, "{wrap} should be unwrapped");
+        }
+        // A group inside an arbitrary DSL block is NOT visited by stock.
+        let src = "weird_dsl do\n  describe Foo do\n    subject(:foo) { x }\n    it { allow(foo).to receive(:bar) }\n  end\nend\n";
+        assert_eq!(ss(src), Vec::<String>::new());
+    }
+
+    #[test]
+    fn ss_over_approximates_sibling_and_let_shadowed_subjects() {
+        // Sibling subject: stock emits no offense (scope precision), but the
+        // Rust superset flags the group; the wrapper's replay filters it.
+        let sibling = "RSpec.describe Foo do\n  describe '#bar' do\n    subject(:bar) { :bar }\n    it { }\n  end\n  describe '#baz' do\n    specify { allow(bar).to receive(:bar) }\n  end\nend\n";
+        assert_eq!(ss(sibling).len(), 1);
+        // let-shadowed subject: same -- candidate here, filtered on replay.
+        let shadow = "RSpec.describe Foo do\n  subject(:foo) { x }\n  context 'c' do\n    subject(:bar) { foo.bar }\n    let(:foo) { x }\n    before { allow(foo).to receive(:active?) }\n  end\nend\n";
+        assert_eq!(ss(shadow).len(), 1);
+    }
+
+    #[test]
+    fn ss_ignores_non_subject_stubs_and_bare_matchers() {
+        // A double that is not a subject name.
+        assert_eq!(
+            ss("describe Foo do\n  it { allow(some_double).to receive(:x) }\nend\n"),
+            Vec::<String>::new()
+        );
+        // No receive-family matcher.
+        assert_eq!(
+            ss("describe Foo do\n  subject(:foo) { x }\n  it { expect(foo.bar).to eq(baz) }\nend\n"),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            ss("describe Foo do\n  subject(:foo) { x }\n  it { allow(foo).to some_matcher }\nend\n"),
+            Vec::<String>::new()
+        );
+        // expect_any_instance_of is NOT one of stock's hard-coded receivers.
+        assert_eq!(
+            ss("describe Foo do\n  subject(:foo) { x }\n  it { expect_any_instance_of(Foo).to receive(:bar) }\nend\n"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn ss_ignores_string_named_subject_when_stubbed_by_name() {
+        // A string-named subject is not recognized by stock's subject? capture,
+        // so `s` is not a subject name and the stub is not a candidate.
+        let src = "describe Foo do\n  subject('s') { x }\n  it { allow(s).to receive(:bar) }\nend\n";
+        assert_eq!(ss(src), Vec::<String>::new());
+    }
+
+    #[test]
+    fn ss_numblock_top_level_groups_are_candidates() {
+        // `spec_group?` is any_block: a numblock top-level group is a stock
+        // top-level group, and `expect(subject)` / `is_expected` inside it CAN
+        // fire (probed). Named-subject stubs inside also stay candidates (the
+        // superset ignores stock's `each_ancestor(:block)` keying).
+        let m1 = "RSpec.describe('x') {\n  _1\n  specify do\n    expect(subject).to receive(:bar)\n  end\n}\n";
+        assert_eq!(ss(m1).len(), 1);
+        let m2 = "RSpec.describe('x') {\n  _1\n  is_expected.to receive(:bar)\n}\n";
+        assert_eq!(ss(m2).len(), 1);
+        let m3 = "RSpec.describe('x') {\n  _1\n  context 'c' do\n    subject(:foo) { y }\n    specify { allow(foo).to receive(:bar) }\n  end\n}\n";
+        assert_eq!(ss(m3).len(), 1);
+        // A numblock group NOT on the spine opens nothing.
+        let wrapped = "weird_dsl do\n  RSpec.describe('x') {\n    _1\n    specify { expect(subject).to receive(:bar) }\n  }\nend\n";
+        assert_eq!(ss(wrapped), Vec::<String>::new());
+    }
+
+    #[test]
+    fn ss_flags_a_subject_defined_after_the_stub() {
+        // Names are collected over the whole group, order-independent.
+        let src = "describe Foo do\n  before { allow(foo).to receive(:bar) }\n  subject(:foo) { x }\nend\n";
+        assert_eq!(ss(src).len(), 1);
     }
 }

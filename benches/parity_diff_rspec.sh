@@ -150,6 +150,15 @@ describe 'oracle self-test' do
     expect(2).to eq(2)
   end
 
+  context 'with a stubbed subject' do
+    subject(:stubbed_thing) { described_class.new }
+
+    it 'stubs the subject' do
+      allow(stubbed_thing).to receive(:frobnicate).and_return(1)
+      expect(subject).to receive(:defrobnicate)
+    end
+  end
+
   context 'with too many helpers' do
     let(:a) { 1 }
     let(:b) { 2 }
@@ -189,7 +198,7 @@ ruby -rjson -e '
   cops = %w[
     RSpec/VariableName RSpec/VariableDefinition RSpec/RepeatedDescription
     RSpec/RepeatedExample RSpec/MultipleMemoizedHelpers RSpec/LetSetup
-    RSpec/MultipleSubjects RSpec/SharedExamples RSpec/Dialect
+    RSpec/MultipleSubjects RSpec/SharedExamples RSpec/Dialect RSpec/SubjectStub
   ]
   d = JSON.parse(File.read(ARGV[0]))
   fired = d["files"].flat_map { |f| f["offenses"].map { |o| o["cop_name"] } }.uniq

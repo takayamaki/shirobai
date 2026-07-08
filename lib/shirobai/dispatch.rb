@@ -159,7 +159,7 @@ module Shirobai
       rspec_empty_example_group: [2, 18].freeze,
       rspec_described_class: [2, 19].freeze,
       rspec_scattered_setup: [2, 20].freeze,
-      # slot [2, 21] is reserved for a parallel task and registered there.
+      rspec_subject_stub: [2, 21].freeze,
       rspec_dialect: [2, 22].freeze,
       rspec_multiple_subjects: [2, 23].freeze,
       rspec_shared_examples: [2, 24].freeze,

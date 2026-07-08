@@ -415,6 +415,62 @@ When scoping future Arch-B cops, include relocation frequency (candidate
 density x corpus spec size) in the speed estimate, not just the stock
 cop's standalone cost.
 
+## Plugin cops: shirobai-rspec (RSpec/SubjectStub)
+
+Twice deferred as "complexity HIGH, ROI low", revived when per-cop
+department measurements put it at the top of the unimplemented rspec
+list (Mastodon +0.54s, Discourse full-run equivalent +2.64s). Detection
+only — stock has no autocorrect.
+
+### Implemented (1 cop)
+
+- `RSpec/SubjectStub` (slot `[2, 21]`)
+
+**Architecture B with Rust candidate narrowing as the whole play.** The
+stock cost lives in `TopLevelGroup`: for EVERY top-level group of every
+spec file it collects all subject/let definitions (`find_all_explicit`,
+two full subtree walks) and recurses a third time for message
+expectations. Replaying that per group would win nothing, so the Rust
+side decides per group whether an offense is POSSIBLE: on the shared
+walk it tracks (a) the top-level spine (program / class / module /
+implicit-begin — recovered via prism `StatementsNode`; prism `BeginNode`
+= parser `kwbegin` is a deliberate over-approximation), (b) sym-named
+`subject` definitions per top-level group, and (c)
+`{allow|expect}(name).to/to_not/not_to <matcher>` / `is_expected.to
+<matcher>` sends whose matcher subtree contains a `receive`-family send
+(deferred position check, same pattern as the LetSetup usage index). A
+group is a candidate only when an expectation targets `subject`,
+`is_expected`, or a name defined in the group — a safe superset of
+stock (scope precision and `let` shadowing only remove offenses).
+
+Measured candidate density: Mastodon 3/1070 spec files (0.28%, all three
+real subject stubs suppressed inline with `rubocop:disable`), Discourse
+0/1558, Redmine no spec/ tree. The expensive two-phase walk is skipped
+on ~99.7% of files.
+
+The wrapper intersects candidate ranges with stock's OWN
+`top_level_groups` selection (copied verbatim; cheap — root statements
+only) instead of NodeLocator relocation, so top-level semantics stay
+byte-for-byte stock wherever the Rust spine over-approximates, then
+replays stock's `on_top_level_group` verbatim on the verified nodes.
+
+Probed quirks pinned as differential edge specs: `top_level_nodes`
+unwraps `class`/`module`/parser-`begin` but NOT `kwbegin` or `class <<
+self`; `spec_group?` is any_block so numblock top-level groups fire for
+`subject`/`is_expected` targets (but their directly-defined names never
+activate — `each_ancestor(:block)` skips numblock); expectation descent
+is `send`/`def`/`block`/`begin` children only (nested numblocks and
+lvasgn-wrapped lambdas are invisible, csend-receiver blocks are not);
+`message_expectation?` binds exactly one matcher argument
+(`.to(matcher, extra)` never matches, `.to(matcher) { blk }` does);
+target must be a bare zero-arg send; string-named subjects are invisible
+to `subject?`. Verified with the vendor spec suite, non-ASCII offset
+parity, CRLF fallback parity, and the rspec parity oracle at zero diff
+on Mastodon spec/, Redmine test/ and Discourse spec/ (self-test fixture
+extended with a SubjectStub firing case; Mastodon's three real subject
+stubs are inline-disabled, and the zero diff proves shirobai still
+DETECTS them -- otherwise `Lint/RedundantCopDisableDirective` would have
+fired on the shirobai side only).
 ## Plugin cops: shirobai-rspec (R4 batch)
 
 ### Implemented (3 cops)
