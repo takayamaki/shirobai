@@ -246,6 +246,11 @@ pub struct RSpecResult {
     /// `PreferredMethods` key (empty key set => no candidates). The wrapper
     /// relocates each parser send node and runs stock's `on_send` verbatim.
     pub dialect: Vec<(usize, usize)>,
+    /// `RSpec/MultipleSubjects`: per plain-block example group with > 1
+    /// `subject?`, the BLOCK ranges of all but the last (stock's
+    /// `subjects[0...-1]`), document order. The wrapper relocates each block
+    /// and runs stock's autocorrect verbatim.
+    pub multiple_subjects: Vec<(usize, usize)>,
 }
 
 /// parser block-kind recovery from a prism call (see module doc).
@@ -418,6 +423,10 @@ pub struct RSpecDispatcherRule<'c> {
     /// Collected `subject?` items' `variable_definition?` identities
     /// (indexed by `Scope::subjects`).
     subject_items: Vec<VarDef>,
+    /// Collected `subject?` items' BLOCK node ranges (prism call range ==
+    /// parser block node range), indexed by `Scope::subjects`. Feeds
+    /// `RSpec/MultipleSubjects`.
+    subject_ranges: Vec<(usize, usize)>,
     /// Collected `example?` items' BLOCK node ranges (prism call range ==
     /// parser block node range), indexed by `Scope::examples`.
     example_items: Vec<(usize, usize)>,
@@ -452,6 +461,7 @@ pub fn build_rule<'c>(cfg: &'c RSpecConfig) -> RSpecDispatcherRule<'c> {
         scopes: Vec::new(),
         let_items: Vec::new(),
         subject_items: Vec::new(),
+        subject_ranges: Vec::new(),
         example_items: Vec::new(),
         top_spec_depth: 0,
         zero_arg_calls: HashMap::new(),
@@ -841,6 +851,8 @@ impl RSpecDispatcherRule<'_> {
     fn collect_subject(&mut self, call: &CallNode<'_>) {
         let idx = u32::try_from(self.subject_items.len()).expect("more subjects than u32");
         self.subject_items.push(classify_var_def(call));
+        let loc = call.location();
+        self.subject_ranges.push((loc.start_offset(), loc.end_offset()));
         for &s in self.scope_stack.iter().rev() {
             self.scopes[s].subjects.push(idx);
             let sc = &self.scopes[s];
@@ -903,6 +915,7 @@ impl RSpecDispatcherRule<'_> {
             .filter(|s| s.described_class_candidate)
             .map(|s| s.range)
             .collect();
+        let multiple_subjects = self.multiple_subjects_candidates();
         RSpecResult {
             variable_name: (self.vn_offenses, self.vn_passing),
             let_setup,
@@ -918,6 +931,7 @@ impl RSpecDispatcherRule<'_> {
             described_class,
             scattered_setup,
             dialect: self.dialect_candidates,
+            multiple_subjects,
         }
     }
 
@@ -953,6 +967,24 @@ impl RSpecDispatcherRule<'_> {
             .filter(|s| s.example_group)
             .map(|s| s.range)
             .collect()
+    }
+
+    /// `RSpec/MultipleSubjects`: for every plain-block example group whose own
+    /// scope defines more than one `subject?`, the BLOCK ranges of all but the
+    /// last definition (stock flags `subjects[0...-1]`; document order). The
+    /// wrapper relocates each block and runs stock's autocorrect verbatim
+    /// (rename to `let` / remove / skip `subject!`).
+    fn multiple_subjects_candidates(&self) -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        for scope in &self.scopes {
+            if !scope.example_group || scope.subjects.len() < 2 {
+                continue;
+            }
+            for &si in &scope.subjects[..scope.subjects.len() - 1] {
+                out.push(self.subject_ranges[si as usize]);
+            }
+        }
+        out
     }
 
     /// `MultipleMemoizedHelpers`: for every plain-block spec group, union the
@@ -1284,6 +1316,13 @@ pub fn check_rspec_scattered_setup(source: &[u8], cfg: &RSpecConfig) -> Vec<(usi
 /// node and runs stock's `on_send` verbatim.
 pub fn check_rspec_dialect(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
     run(source, cfg).dialect
+}
+
+/// Standalone entry point for `RSpec/MultipleSubjects` (overwritten-subject
+/// BLOCK ranges). The wrapper relocates each parser block node and runs stock's
+/// autocorrect verbatim.
+pub fn check_rspec_multiple_subjects(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
+    run(source, cfg).multiple_subjects
 }
 
 fn run(source: &[u8], cfg: &RSpecConfig) -> RSpecResult {

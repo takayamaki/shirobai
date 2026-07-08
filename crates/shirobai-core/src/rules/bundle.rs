@@ -978,6 +978,10 @@ pub struct BundleResult {
     /// keys only). The wrapper relocates each parser send node and runs stock's
     /// `on_send` verbatim.
     pub rspec_dialect: Vec<(usize, usize)>,
+    /// `RSpec/MultipleSubjects`: overwritten-subject BLOCK ranges (stock's
+    /// `subjects[0...-1]` per plain-block example group). The wrapper relocates
+    /// each block and runs stock's autocorrect verbatim.
+    pub rspec_multiple_subjects: Vec<(usize, usize)>,
     /// The RSpec empty-line family (`RSpec/EmptyLineAfter{Example,
     /// ExampleGroup,FinalLet,Hook,Subject}`), all from the single
     /// `RSpecEmptyLineRule`; empty when `BundleConfig::rspec` is `None`.
@@ -1620,6 +1624,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         rspec_metadata_anchors: rspec_result.metadata_anchors,
         rspec_described_class: rspec_result.described_class,
         rspec_dialect: rspec_result.dialect,
+        rspec_multiple_subjects: rspec_result.multiple_subjects,
         rspec_empty_line_after_example: rspec_el_result.example,
         rspec_empty_line_after_example_group: rspec_el_result.example_group,
         rspec_empty_line_after_final_let: rspec_el_result.final_let,

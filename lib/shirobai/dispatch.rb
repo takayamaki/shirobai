@@ -161,6 +161,7 @@ module Shirobai
       rspec_scattered_setup: [2, 20].freeze,
       # slot [2, 21] is reserved for a parallel task and registered there.
       rspec_dialect: [2, 22].freeze,
+      rspec_multiple_subjects: [2, 23].freeze,
       # shirobai-rails plugin slots (origin 3), all filled by the single
       # RailsAppVisitor. The rails origin is NOT per-file gated: the
       # Application* cops run on every Ruby file, so it is always awake once
