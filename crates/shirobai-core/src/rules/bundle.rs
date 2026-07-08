@@ -1000,6 +1000,11 @@ pub struct BundleResult {
     /// `RailsAppVisitor`; empty when `BundleConfig::rails` is `None`.
     pub rails_http_positional_arguments: Vec<(usize, usize)>,
     pub rails_deprecated_active_model_errors_methods: Vec<(usize, usize)>,
+    /// `Rails/IndexBy` (slot 9) and `Rails/IndexWith` (slot 10) candidate node
+    /// ranges. Both hold the SAME list — the four shapes are shared and each
+    /// cop's stock matcher decides key-vs-value on the relocated parser node.
+    pub rails_index_by: Vec<(usize, usize)>,
+    pub rails_index_with: Vec<(usize, usize)>,
 }
 
 /// Run every cop over one source in a single call, sharing one parse *and*
@@ -1624,6 +1629,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         rails_http_positional_arguments: rails_result.http_positional_arguments,
         rails_deprecated_active_model_errors_methods: rails_result
             .deprecated_active_model_errors_methods,
+        rails_index_by: rails_result.index_method.clone(),
+        rails_index_with: rails_result.index_method,
     }
 }
 

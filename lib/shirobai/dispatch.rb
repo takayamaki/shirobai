@@ -178,7 +178,12 @@ module Shirobai
       # `check_all` push order) moves together.
       rails_http_positional_arguments: [3, 6].freeze,
       rails_deprecated_active_model_errors_methods: [3, 7].freeze,
-      rails_pluck: [3, 8].freeze
+      rails_pluck: [3, 8].freeze,
+      # `Rails/IndexBy` (slot 9) and `Rails/IndexWith` (slot 10) share one
+      # Rust candidate list (the four transform-to-hash shapes); each wrapper
+      # relocates the parser node and runs its own stock matcher + autocorrect.
+      rails_index_by: [3, 9].freeze,
+      rails_index_with: [3, 10].freeze
     }.freeze
 
     # Dormant packed-config segment per plugin origin: the enable flag (first

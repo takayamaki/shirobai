@@ -86,6 +86,16 @@ pub struct RailsAppResult {
     /// errors-chain matchers, the model-file receiver rule and the version
     /// gate.
     pub deprecated_active_model_errors_methods: Vec<(usize, usize)>,
+    /// `Rails/IndexBy` / `Rails/IndexWith` candidate node ranges (parser
+    /// block/send node range, document order). ONE list feeds both cops: the
+    /// four shapes (`each_with_object`, `to_h { }`, `map { }.to_h`,
+    /// `Hash[map { }]`) are identical for IndexBy and IndexWith — only which of
+    /// key/value is the identity element differs, and that is decided by each
+    /// cop's own stock matcher on the relocated parser node. Emitted in
+    /// pre-order so the wrapper's per-cop `ignore_node` (nested transforms)
+    /// sees an outer node before any node it contains. See
+    /// `collect_index_method`.
+    pub index_method: Vec<(usize, usize)>,
 }
 
 impl RailsAppResult {
@@ -121,6 +131,15 @@ pub fn check_rails_deprecated_active_model_errors_methods(source: &[u8]) -> Vec<
     let mut visitor = build_rule();
     super::parse_cache::with_parsed(source, |_source, node| visitor.visit(node));
     visitor.finish().deprecated_active_model_errors_methods
+}
+
+/// Standalone entry point for the `Rails/IndexBy` / `Rails/IndexWith` candidate
+/// prefilter (non-bundle-eligible files). Both cops read the same candidate
+/// list; the wrapper picks its own offenses with the stock matcher.
+pub fn check_rails_index_method(source: &[u8]) -> Vec<(usize, usize)> {
+    let mut visitor = build_rule();
+    super::parse_cache::with_parsed(source, |_source, node| visitor.visit(node));
+    visitor.finish().index_method
 }
 
 /// Build the rule for use standalone or in the shared-walk bundle.
@@ -175,6 +194,36 @@ impl RailsAppVisitor {
             self.result
                 .deprecated_active_model_errors_methods
                 .push(send_range(node));
+        }
+        self.collect_index_method(node);
+    }
+
+    /// `Rails/IndexBy` / `Rails/IndexWith` candidate prefilter (shared list).
+    ///
+    /// Emits the parser node range for each of stock's four shapes so the
+    /// wrapper can relocate the real parser node and run stock's matcher +
+    /// autocorrect verbatim:
+    ///
+    /// - `each_with_object` / `to_h` WITH a literal block -> the parser
+    ///   `block`/`numblock`/`itblock` node (receiver start .. block close).
+    ///   Covers csend heads too (`x&.to_h { }`); stock's `on_bad_*` matchers
+    ///   accept a csend via `call`.
+    /// - `map { } .to_h` (send or csend outer) -> the outer `to_h` send node.
+    /// - `Hash[map { }]` (send only) -> the `[]` send node.
+    ///
+    /// The block candidate is pushed before the map-to-h candidate for the same
+    /// `to_h` node, mirroring stock's `on_block`-before-`on_send` visit order
+    /// (the block node contains the send node), so per-cop `ignore_node` on a
+    /// nested transform sees the container first.
+    fn collect_index_method(&mut self, node: &CallNode<'_>) {
+        if let Some(range) = index_block_candidate(node) {
+            self.result.index_method.push(range);
+        }
+        if index_map_to_h_candidate(node) {
+            self.result.index_method.push(send_range(node));
+        }
+        if index_hash_brackets_candidate(node) {
+            self.result.index_method.push(send_range(node));
         }
     }
 
@@ -441,6 +490,85 @@ fn deprecated_errors_candidate(node: &CallNode<'_>) -> bool {
             .is_some_and(|r| is_errors_call(&r) || is_messages_details_on_errors(&r));
     }
     false
+}
+
+// --- Rails/IndexBy + Rails/IndexWith candidate prefilters ----------------
+
+/// The literal block (`{ }` / `do..end`) of `node`, if any. A block-pass
+/// (`&blk`) is NOT a literal block (it lives in `block()` as a
+/// `BlockArgumentNode`), so it is excluded.
+fn literal_block<'a>(node: &CallNode<'a>) -> Option<ruby_prism::BlockNode<'a>> {
+    node.block()?.as_block_node()
+}
+
+/// A `map` / `collect` call carrying a literal block (any head — send or
+/// csend), i.e. the receiver shape of `map { }.to_h` / `Hash[map { }]`. Stock's
+/// `on_bad_map_to_h` / `on_bad_hash_brackets_map` accept `block` / `numblock`
+/// / `itblock` here, all of which are a call-with-literal-block in prism.
+fn is_map_collect_block(node: &CallNode<'_>) -> bool {
+    let name = node.name().as_slice();
+    (name == b"map" || name == b"collect") && literal_block(node).is_some()
+}
+
+/// Block-shaped candidate: `each_with_object` / `to_h` carrying a literal
+/// block. Returns the parser block-node range: receiver start
+/// (`node.location().start`) to block close (`block.location().end`). This is
+/// the expression range of the `block` / `numblock` / `itblock` parser node the
+/// wrapper relocates. The empty-hash arg, block arity and body shape are all
+/// re-checked by the stock matcher, so this is a cheap superset.
+fn index_block_candidate(node: &CallNode<'_>) -> Option<(usize, usize)> {
+    let block = literal_block(node)?;
+    let name = node.name().as_slice();
+    if name == b"each_with_object" || name == b"to_h" {
+        Some((node.location().start_offset(), block.location().end_offset()))
+    } else {
+        None
+    }
+}
+
+/// `map { }.to_h` candidate: the outer `to_h` (send OR csend) whose receiver is
+/// a `map` / `collect` call with a literal block. The candidate node is the
+/// outer send; `send_range` excludes any literal block on the `to_h` itself
+/// (the `map { }.to_h { |k, v| ... }` form still fires here — stock's `on_send`
+/// matches the `to_h` send regardless of its own block).
+fn index_map_to_h_candidate(node: &CallNode<'_>) -> bool {
+    if node.name().as_slice() != b"to_h" {
+        return false;
+    }
+    let Some(recv) = node.receiver() else {
+        return false;
+    };
+    recv.as_call_node()
+        .is_some_and(|r| is_map_collect_block(&r))
+}
+
+/// `Hash[map { }]` candidate: a send `[]` on a top-level `Hash` (nil / cbase
+/// scope, never csend, never `Foo::Hash`), with exactly one argument that is a
+/// `map` / `collect` call with a literal block. The candidate node is the `[]`
+/// send (range ends at `]`).
+fn index_hash_brackets_candidate(node: &CallNode<'_>) -> bool {
+    if is_csend(node) || node.name().as_slice() != b"[]" {
+        return false;
+    }
+    let Some(recv) = node.receiver() else {
+        return false;
+    };
+    if top_level_const_name(&recv) != Some(b"Hash") {
+        return false;
+    }
+    let Some(args) = node.arguments() else {
+        return false;
+    };
+    let mut it = args.arguments().iter();
+    let Some(first) = it.next() else {
+        return false;
+    };
+    if it.next().is_some() {
+        return false; // more than one argument
+    }
+    first
+        .as_call_node()
+        .is_some_and(|c| is_map_collect_block(&c))
 }
 
 /// Parser send-node range for `node` (the range `NodeLocator` matches on the
@@ -761,5 +889,83 @@ mod tests {
         );
         assert_eq!(bundled.http_positional_arguments.len(), 1);
         assert_eq!(bundled.deprecated_active_model_errors_methods.len(), 1);
+    }
+
+    // --- Rails/IndexBy + Rails/IndexWith candidate prefilter ---
+
+    fn idx(src: &str) -> Vec<(usize, usize)> {
+        check_rails_index_method(src.as_bytes())
+    }
+
+    #[test]
+    fn index_each_with_object_block_candidate() {
+        // Block node range: receiver start through the closing brace.
+        assert_eq!(idx("x.each_with_object({}) { |el, h| h[foo(el)] = el }\n"), vec![(0, 50)]);
+        // do..end block: through `end`.
+        let src = "x.each_with_object({}) do |el, memo|\n  memo[el] = el\nend\n";
+        let off = idx(src);
+        assert_eq!(off.len(), 1);
+        assert_eq!(off[0].0, 0);
+        assert_eq!(&src.as_bytes()[off[0].1 - 3..off[0].1], b"end");
+        // Safe-navigation head is still a candidate (stock fires on it).
+        assert_eq!(idx("x&.each_with_object({}) { |el, h| h[foo(el)] = el }\n").len(), 1);
+    }
+
+    #[test]
+    fn index_to_h_block_candidate() {
+        // `to_h { ... }` -> block node range (whole call + block).
+        assert_eq!(idx("x.to_h { |el| [el.to_sym, el] }\n"), vec![(0, 31)]);
+        // numbered / it params still carry a literal block.
+        assert_eq!(idx("x.to_h { [_1.to_sym, _1] }\n").len(), 1);
+    }
+
+    #[test]
+    fn index_map_to_h_candidate_shapes() {
+        // `map { }.to_h` -> outer send node (ends at `to_h`, excludes any
+        // trailing block on to_h).
+        assert_eq!(idx("x.map { |el| [el.to_sym, el] }.to_h\n"), vec![(0, 35)]);
+        assert_eq!(idx("x.collect { |el| [el.to_sym, el] }.to_h\n").len(), 1);
+        // `map { }.to_h { |k, v| ... }` -> BOTH the to_h block candidate and
+        // the map-to-h send candidate (the send is where stock fires).
+        let off = idx("x.map { |el| [el.to_sym, el] }.to_h { |k, v| [v, k] }\n");
+        assert_eq!(off.len(), 2);
+        // Block candidate (container) first, send candidate second.
+        assert!(off[0].1 > off[1].1);
+        // csend outer to_h is a candidate.
+        assert_eq!(idx("x.map { |el| [el, el] }&.to_h\n").len(), 1);
+    }
+
+    #[test]
+    fn index_hash_brackets_candidate_shapes() {
+        assert_eq!(idx("Hash[x.map { |el| [el.to_sym, el] }]\n"), vec![(0, 36)]);
+        assert_eq!(idx("::Hash[x.map { |el| [el.to_sym, el] }]\n").len(), 1);
+        // Namespaced Hash is not a candidate.
+        assert!(idx("Foo::Hash[x.map { |el| [el.to_sym, el] }]\n").is_empty());
+        // Hash[collect { }] too.
+        assert_eq!(idx("Hash[x.collect { [_1.to_sym, _1] }]\n").len(), 1);
+    }
+
+    #[test]
+    fn index_non_candidates() {
+        // to_h / map without a literal block.
+        assert!(idx("x.to_h\n").is_empty());
+        assert!(idx("x.map { |el| el }.to_h\n").len() == 1); // map.to_h IS a candidate shape (wrapper filters body)
+        assert!(idx("x.map(&:to_s).to_h\n").is_empty()); // map has no literal block
+        // each_with_object without a block.
+        assert!(idx("x.each_with_object({})\n").is_empty());
+        // Hash[...] whose arg is not a map/collect block.
+        assert!(idx("Hash[pairs]\n").is_empty());
+        assert!(idx("Hash[x.map { |el| [el, el] }, y]\n").is_empty()); // two args
+    }
+
+    #[test]
+    fn index_candidates_ride_the_shared_walk() {
+        let src = "x.each_with_object({}) { |el, h| h[foo(el)] = el }\n\
+                   Hash[y.map { |el| [el.to_sym, el] }]\n";
+        let mut rule = build_rule();
+        super::super::dispatch::run(src.as_bytes(), &mut [&mut rule]);
+        let bundled = rule.finish();
+        assert_eq!(bundled.index_method, check_rails_index_method(src.as_bytes()));
+        assert_eq!(bundled.index_method.len(), 2);
     }
 }

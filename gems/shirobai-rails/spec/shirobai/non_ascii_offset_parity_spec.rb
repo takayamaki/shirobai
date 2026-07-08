@@ -96,6 +96,17 @@ RSpec.describe "non-ASCII source offset parity with stock rubocop-rails" do
       RuboCop::Cop::Rails::DeprecatedActiveModelErrorsMethods,
       Shirobai::Cop::Rails::DeprecatedActiveModelErrorsMethods,
       "#{prefix}user.errors[:name] << 'msg'\n"
+    ],
+    # IndexBy: the block/send candidate byte range is ahead of its char range
+    # behind the multibyte prefix, so it must round-trip through
+    # `SourceOffsets` before `NodeLocator` can relocate the parser node. The
+    # autocorrect (strip/rename/rewrite) then runs on the real parser node.
+    # (IndexWith needs the railties gate, so its non-ASCII parity lives in its
+    # own edge spec.)
+    "Rails/IndexBy" => [
+      RuboCop::Cop::Rails::IndexBy,
+      Shirobai::Cop::Rails::IndexBy,
+      "#{prefix}x.map { |el| [el.to_sym, el] }.to_h\n"
     ]
   }
 

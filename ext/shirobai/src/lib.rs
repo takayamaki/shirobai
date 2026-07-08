@@ -1812,7 +1812,8 @@ fn register_bundle_config(
 /// 4 rails_unknown_env / 5 rails_dynamic_find_by /
 /// 6 rails_http_positional_arguments (candidates) /
 /// 7 rails_deprecated_active_model_errors_methods (candidates) /
-/// 8 rails_pluck
+/// 8 rails_pluck /
+/// 9 rails_index_by (candidates) / 10 rails_index_with (candidates)
 fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error> {
     BUNDLE_CONFIGS.with(|cell| {
         let configs = cell.borrow();
@@ -2001,10 +2002,10 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         rspec.push(r.rspec_scattered_setup)?;
         // Rails origin (result[3]). Slots 0-3 (Application*) are `[[start,
         // end], ...]` byte ranges; slots 4-5 carry the send/block-table cops'
-        // richer tuples (see the map functions); slots 6-7 are the two
-        // Architecture-B cops' candidate send ranges (the wrapper relocates
-        // and runs stock detection + autocorrect verbatim).
-        let rails = ruby.ary_new_capa(9);
+        // richer tuples (see the map functions); slots 6-7 and 9-10 are the
+        // Architecture-B cops' candidate node ranges (the wrapper relocates and
+        // runs stock detection + autocorrect verbatim).
+        let rails = ruby.ary_new_capa(11);
         rails.push(r.rails_application_record)?;
         rails.push(r.rails_application_controller)?;
         rails.push(r.rails_application_mailer)?;
@@ -2014,6 +2015,8 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         rails.push(r.rails_http_positional_arguments)?;
         rails.push(r.rails_deprecated_active_model_errors_methods)?;
         rails.push(map_rails_pluck(r.rails_pluck))?;
+        rails.push(r.rails_index_by)?;
+        rails.push(r.rails_index_with)?;
         // The nested result is N_ORIGINS + 1 arrays per file (the outer
         // one plus one per origin), nothing per cop.
         let out = ruby.ary_new_capa(4);
@@ -3857,6 +3860,12 @@ fn check_rails_deprecated_active_model_errors_methods(source: RString) -> Vec<(u
     ))
 }
 
+/// Standalone candidate prefilter for `Rails/IndexBy` and `Rails/IndexWith`
+/// (both cops share the one candidate list).
+fn check_rails_index_method(source: RString) -> Vec<(usize, usize)> {
+    shirobai_core::rules::rails_app::check_rails_index_method(bytes(&source))
+}
+
 /// Ruby entry point for `Lint/UnreachableCode`. Config-less. Returns
 /// `[[start, end], ...]` — the byte range of each unreachable expression.
 fn check_unreachable_code(source: RString) -> Vec<(usize, usize)> {
@@ -4337,6 +4346,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_rails_deprecated_active_model_errors_methods",
         function!(check_rails_deprecated_active_model_errors_methods, 1),
+    )?;
+    module.define_module_function(
+        "check_rails_index_method",
+        function!(check_rails_index_method, 1),
     )?;
     module.define_module_function(
         "check_rspec_variable_name",
