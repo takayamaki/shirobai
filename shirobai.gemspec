@@ -11,9 +11,12 @@ Gem::Specification.new do |spec|
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.1"
 
-  spec.files = Dir["lib/**/*.rb", "ext/**/*.{rs,toml}", "crates/**/*.{rs,toml}", "Cargo.*", "LICENSE.txt"]
+  # `.rb` under ext/ must be shipped too: extconf.rb is the build entry point,
+  # so omitting it makes `gem install` fail with no extension to compile.
+  spec.files = Dir["lib/**/*.rb", "ext/**/*.{rs,toml,rb}", "crates/**/*.{rs,toml}", "Cargo.*", "LICENSE.txt"]
   spec.require_paths = ["lib"]
-  spec.extensions = ["ext/shirobai/Cargo.toml"]
+  spec.extensions = ["ext/shirobai/extconf.rb"]
 
+  spec.add_dependency "rb_sys", "~> 0.9"
   spec.add_dependency "rubocop", "= 1.88.0"
 end
