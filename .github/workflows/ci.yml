@@ -130,6 +130,35 @@ jobs:
         working-directory: gems/shirobai-rspec
         run: bundle exec rspec
 
+  # Same separate-bundle reasoning as the performance job: rubocop-rails in
+  # the root bundle would leak into the core suite's default config.
+  test-shirobai-rails:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: true
+
+      - uses: ruby/setup-ruby@89f90524b88a01fe6e0b732220432cc6142926af # v1.313.0
+        with:
+          ruby-version: "4.0"
+          bundler-cache: true
+
+      - name: Download native extension
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: shirobai-so
+          path: lib/shirobai/
+
+      - name: Install the plugin bundle
+        working-directory: gems/shirobai-rails
+        run: bundle install --jobs 4
+
+      - name: RSpec (shirobai-rails)
+        working-directory: gems/shirobai-rails
+        run: bundle exec rspec
+
   # Parity oracle: corpus x mode matrix.
   # Stock jobs skip the Rust build entirely; shirobai jobs download the
   # pre-built .so. A merge job diffs each corpus's stock vs shirobai JSON.
