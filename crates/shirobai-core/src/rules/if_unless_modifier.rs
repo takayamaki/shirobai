@@ -1302,7 +1302,8 @@ fn heredoc_ranges(node: &Node<'_>) -> Option<((usize, usize), (usize, usize))> {
             _ => None,
         };
         (s.opening_loc()?, content, s.closing_loc()?)
-    } else if let Some(s) = node.as_interpolated_x_string_node() {
+    } else {
+        let s = node.as_interpolated_x_string_node()?;
         let parts: Vec<Node<'_>> = s.parts().iter().collect();
         let content = match (parts.first(), parts.last()) {
             (Some(f), Some(l)) => Some((
@@ -1312,8 +1313,6 @@ fn heredoc_ranges(node: &Node<'_>) -> Option<((usize, usize), (usize, usize))> {
             _ => None,
         };
         (s.opening_loc(), content, s.closing_loc())
-    } else {
-        return None;
     };
     if !opening.as_slice().starts_with(b"<<") {
         return None;

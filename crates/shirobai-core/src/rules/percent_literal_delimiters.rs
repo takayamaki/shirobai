@@ -522,10 +522,10 @@ impl<'s> Visitor<'s> {
 /// `include_same_character_as_used_for_delimiter?` for `%w` / `%i`.
 fn matchpairs(begin: u8) -> [u8; 2] {
     match begin {
-        b'(' => [b'(', b')'],
-        b'[' => [b'[', b']'],
-        b'{' => [b'{', b'}'],
-        b'<' => [b'<', b'>'],
+        b'(' => *b"()",
+        b'[' => *b"[]",
+        b'{' => *b"{}",
+        b'<' => *b"<>",
         c => [c, c],
     }
 }

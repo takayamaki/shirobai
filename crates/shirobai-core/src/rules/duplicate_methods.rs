@@ -1230,10 +1230,9 @@ fn delegate_names(args: &[Node<'_>]) -> Option<(Vec<String>, Option<String>)> {
     // Last arg: a hash containing `(pair (sym :to) {sym str})`.
     let elements: Vec<Node<'_>> = if let Some(h) = hash.as_hash_node() {
         h.elements().iter().collect()
-    } else if let Some(h) = hash.as_keyword_hash_node() {
-        h.elements().iter().collect()
     } else {
-        return None;
+        let h = hash.as_keyword_hash_node()?;
+        h.elements().iter().collect()
     };
     let to_ok = elements.iter().any(|e| {
         e.as_assoc_node().is_some_and(|p| {

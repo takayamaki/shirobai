@@ -242,14 +242,7 @@ impl<'a> Visitor<'a> {
             if !self.begin_in_macro_scope() {
                 return None;
             }
-            let block = call.block().and_then(|b| {
-                // Only a real do/end or `{}` block (BlockNode), not `&blk`.
-                if b.as_block_node().is_some() {
-                    Some(b)
-                } else {
-                    None
-                }
-            });
+            let block = call.block().filter(|b| b.as_block_node().is_some());
             let (ns, ne) = loc(&node.location());
             if block.is_some() {
                 // any_block_type: location = source_range.join(send.source_range)

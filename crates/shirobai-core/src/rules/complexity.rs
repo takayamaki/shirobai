@@ -186,10 +186,9 @@ pub(crate) fn define_method_info<'a>(
     let first = call.arguments()?.arguments().iter().next()?;
     let name = if let Some(sym) = first.as_symbol_node() {
         String::from_utf8_lossy(sym.unescaped()).into_owned()
-    } else if let Some(str_node) = first.as_string_node() {
-        String::from_utf8_lossy(str_node.unescaped()).into_owned()
     } else {
-        return None;
+        let str_node = first.as_string_node()?;
+        String::from_utf8_lossy(str_node.unescaped()).into_owned()
     };
     let body = block.body()?;
     Some((name, body, block.opening_loc().end_offset()))
