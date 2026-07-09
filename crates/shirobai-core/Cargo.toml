@@ -5,6 +5,10 @@ edition = "2024"
 
 [dependencies]
 ruby-prism = "1.9.0"
+# SPIKE: direct dep on the -sys crate to reach pm_parser_init / pm_parse /
+# lex_callback. ruby-prism 1.9.0 already depends on this exact version, so cargo
+# unifies it into a single build (no second prism compile).
+ruby-prism-sys = "=1.9.0"
 self_cell = "1"
 unicode-width = "0.2"
 
@@ -18,3 +22,8 @@ path = "src/bin/walk_profile.rs"
 [[bin]]
 name = "analysis_profile"
 path = "src/bin/analysis_profile.rs"
+
+# SPIKE harness: token dump / canary / 3-way profile.
+[[bin]]
+name = "pm_lex_spike"
+path = "src/bin/pm_lex_spike.rs"

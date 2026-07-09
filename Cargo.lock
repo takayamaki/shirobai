@@ -368,6 +368,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "ruby-prism",
+ "ruby-prism-sys",
  "self_cell",
  "unicode-width",
 ]
