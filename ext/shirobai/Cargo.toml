@@ -3,7 +3,7 @@
 # for the dylib named after the package (not the [lib] name), so a
 # mismatch breaks `gem install` with "Dynamic library not found".
 name = "shirobai"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 publish = false
 

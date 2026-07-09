@@ -31,6 +31,18 @@ jobs:
             sed -i "s/VERSION = .*/VERSION = \"$ver\"/" "$f"
           done
 
+      # The crate version follows the gem version in its semver form: cargo
+      # rejects leading zeros in numeric segments, and Gem::Version already
+      # normalizes to the same integers (gem 2026.0709.0000 == crate
+      # 2026.709.0). 10# forces base-10 so "0709" is not read as octal.
+      - name: Update crate version (workspace.package)
+        run: |
+          ver="${{ steps.version.outputs.version }}"
+          IFS=. read -r y md hm <<< "$ver"
+          cargo_ver="$((10#$y)).$((10#$md)).$((10#$hm))"
+          sed -i "s/^version = \".*\"/version = \"$cargo_ver\"/" Cargo.toml
+          cargo update --workspace --offline
+
       - name: Create PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -44,7 +56,8 @@ jobs:
             lib/shirobai/version.rb \
             gems/shirobai-performance/lib/shirobai/performance/version.rb \
             gems/shirobai-rspec/lib/shirobai/rspec/version.rb \
-            gems/shirobai-rails/lib/shirobai/rails/version.rb
+            gems/shirobai-rails/lib/shirobai/rails/version.rb \
+            Cargo.toml Cargo.lock
           git commit -m "Bump version to $ver"
           git push origin "$branch"
           gh pr create \
