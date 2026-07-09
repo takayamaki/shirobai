@@ -533,10 +533,9 @@ fn asgn_target_kind(node: &Node<'_>) -> Option<FrameKind> {
         )
     } else if let Some(n) = node.as_index_and_write_node() {
         (n.is_safe_navigation(), n.operator_loc().start_offset())
-    } else if let Some(n) = node.as_index_or_write_node() {
-        (n.is_safe_navigation(), n.operator_loc().start_offset())
     } else {
-        return None;
+        let n = node.as_index_or_write_node()?;
+        (n.is_safe_navigation(), n.operator_loc().start_offset())
     };
     (!safe).then_some(FrameKind::AsgnTarget {
         block_end: op_start,

@@ -158,10 +158,9 @@ impl<'a> Visitor<'a> {
             (s.opening_loc(), s.closing_loc())
         } else if let Some(s) = node.as_x_string_node() {
             (Some(s.opening_loc()), Some(s.closing_loc()))
-        } else if let Some(s) = node.as_interpolated_x_string_node() {
-            (Some(s.opening_loc()), Some(s.closing_loc()))
         } else {
-            return None;
+            let s = node.as_interpolated_x_string_node()?;
+            (Some(s.opening_loc()), Some(s.closing_loc()))
         };
         let opening = opening?;
         let closing = closing?;

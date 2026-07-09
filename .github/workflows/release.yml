@@ -41,3 +41,136 @@ jobs:
           fi
 
       - uses: rubygems/release-gem@052cc82692552de3ef2b81fd670e41d13cba8092 # v1.4.0
+
+  # Prebuilt platform gems for the core gem only (the 3 plugin gems are pure
+  # Ruby). Runs after `release` so the source gems are already on the index;
+  # then a user on arm64-darwin / x86_64-linux installs a precompiled gem and
+  # needs no Rust toolchain. Each platform gem is a fat gem carrying a .so per
+  # Ruby ABI; lib/shirobai.rb loads the versioned path first, source .so second.
+  #
+  # Three jobs on purpose: build, install smoke, push. The v2026.0709.0000
+  # incident showed a gem can pass every repo-checkout CI job and still be
+  # uninstallable (docs/release.md), so nothing reaches `gem push` before a
+  # scratch-GEM_HOME install of the exact built artifact has passed on the
+  # target platform.
+  cross-gem:
+    needs: release
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [arm64-darwin, x86_64-linux]
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: ruby/setup-ruby@89f90524b88a01fe6e0b732220432cc6142926af # v1.313.0
+        with:
+          ruby-version: "4.0"
+          bundler-cache: true
+
+      # Cross-compiles in rb-sys-dock (Docker). The container ships the Rust
+      # toolchain and every cross Ruby, so the resolver=3 / edition2024
+      # workspace builds there without a host toolchain. Output `gem-path` is
+      # the built platform gem.
+      - name: Cross-compile the platform gem
+        id: cross-gem
+        uses: oxidize-rb/actions/cross-gem@e5f9a49a7812a078584072f6e3f657ad247c8771 # v1
+        with:
+          platform: ${{ matrix.platform }}
+          ruby-versions: "3.1,3.2,3.3,3.4,4.0"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cross-gem-${{ matrix.platform }}
+          path: ${{ steps.cross-gem.outputs.gem-path }}
+          if-no-files-found: error
+
+  # Install smoke on the real target platform (ubuntu-latest is x86_64-linux,
+  # macos-14 is arm64-darwin): scratch GEM_HOME, install of the exact built
+  # artifact, then a require + wrapper-enlist check. This applies the
+  # runbook's install-smoke rule to platform gems, and is the only stage that
+  # exercises the fat gem's versioned .so load path end to end.
+  cross-gem-smoke:
+    needs: cross-gem
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: x86_64-linux
+            runner: ubuntu-latest
+          - platform: arm64-darwin
+            runner: macos-14
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: ruby/setup-ruby@89f90524b88a01fe6e0b732220432cc6142926af # v1.313.0
+        with:
+          ruby-version: "4.0"
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cross-gem-${{ matrix.platform }}
+          path: smoke-gem
+
+      # No --local: the platform gem installs from the downloaded file while
+      # its dependencies (rubocop) resolve from the index. rubocop is required
+      # first because inject assumes the host loaded it, exactly like the real
+      # `rubocop --require shirobai` entry point.
+      - name: Install smoke in a scratch GEM_HOME
+        run: |
+          export GEM_HOME="$(mktemp -d)"
+          export GEM_PATH="$GEM_HOME"
+          gem install smoke-gem/*.gem
+          ruby -e '
+            require "rubocop"
+            require "shirobai"
+            klass = RuboCop::Cop::Registry.global.find_by_cop_name("Layout/LineLength")
+            abort "shirobai wrapper not enlisted: #{klass}" unless klass.name.include?("Shirobai")
+            puts "install smoke OK: native ext loaded, wrappers enlisted"
+          '
+
+  cross-gem-push:
+    needs: cross-gem-smoke
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    # Same environment as `release`: the core gem's trusted publisher on
+    # rubygems.org is keyed to this workflow file and this environment, so the
+    # raw `gem push` below matches the same OIDC identity as `release-gem`.
+    environment: release
+
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [arm64-darwin, x86_64-linux]
+
+    steps:
+      - uses: ruby/setup-ruby@89f90524b88a01fe6e0b732220432cc6142926af # v1.313.0
+        with:
+          ruby-version: "4.0"
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cross-gem-${{ matrix.platform }}
+          path: push-gem
+
+      # Trusted publishing for a plain `gem push` (release-gem only runs
+      # `rake release`, which builds source gems). This exchanges the GitHub
+      # OIDC token for a short-lived RubyGems key; no stored secret.
+      - uses: rubygems/configure-rubygems-credentials@dc5a8d8553e6ee01fc26761a49e99e733d17954a # v2.1.0
+
+      # Push stays in its own final job so a build or smoke failure never
+      # leaves a pushed gem, and "Re-run failed jobs" retries a platform leg
+      # cleanly (matches the retry-safe design of the source-gem release job).
+      - name: Push the platform gem
+        run: gem push push-gem/*.gem
