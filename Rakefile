@@ -9,9 +9,15 @@ require "rb_sys/extensiontask"
 # which CI's build job uploads and the loader in lib/shirobai.rb requires.
 GEMSPEC = Gem::Specification.load("shirobai.gemspec")
 
+# cross_platform lists the prebuilt targets. rb-sys-dock cross-compiles each
+# one in Docker (see .github/workflows/release.yml). arm64-darwin is Apple
+# Silicon; x86_64-linux is glibc Linux (gnu is the default id; musl is a
+# separate x86_64-linux-musl target left out of scope). Naming them here makes
+# the "rake native:<platform>" tasks appear and pins what the release matrix builds.
 RbSys::ExtensionTask.new("shirobai", GEMSPEC) do |ext|
   ext.lib_dir = "lib/shirobai"
   ext.cross_compile = true
+  ext.cross_platform = %w[arm64-darwin x86_64-linux]
 end
 
 task default: :compile
