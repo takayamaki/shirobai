@@ -330,10 +330,9 @@ impl Visitor<'_> {
     fn hash_frame(&self, node: &Node<'_>) -> Option<FrameKind> {
         let (elements, braces): (Vec<Node<'_>>, bool) = if let Some(h) = node.as_hash_node() {
             (h.elements().iter().collect(), true)
-        } else if let Some(h) = node.as_keyword_hash_node() {
-            (h.elements().iter().collect(), false)
         } else {
-            return None;
+            let h = node.as_keyword_hash_node()?;
+            (h.elements().iter().collect(), false)
         };
         let last_pair = elements.iter().filter_map(|e| e.as_assoc_node()).next_back().map(|a| {
             let p = pair_from_assoc(self.source, &a);
@@ -360,10 +359,9 @@ impl Visitor<'_> {
             } else if let Some(s) = node.as_super_node() {
                 let bp = s.block().map(|b| b.as_block_argument_node().is_some()).unwrap_or(false);
                 (s.arguments(), Some(loc(&s.keyword_loc())), false, false, s.lparen_loc().is_some(), bp)
-            } else if let Some(y) = node.as_yield_node() {
-                (y.arguments(), Some(loc(&y.keyword_loc())), false, false, y.lparen_loc().is_some(), false)
             } else {
-                return None;
+                let y = node.as_yield_node()?;
+                (y.arguments(), Some(loc(&y.keyword_loc())), false, false, y.lparen_loc().is_some(), false)
             };
         let arg_nodes: Vec<Node<'_>> = args
             .as_ref()

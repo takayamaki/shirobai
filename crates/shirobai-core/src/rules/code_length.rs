@@ -433,10 +433,9 @@ impl<'a> CodeLength<'a> {
     fn heredoc_body_span(&self, node: &Node<'_>) -> Option<(usize, usize)> {
         let (opening, closing) = if let Some(s) = node.as_string_node() {
             (s.opening_loc(), s.closing_loc())
-        } else if let Some(s) = node.as_interpolated_string_node() {
-            (s.opening_loc(), s.closing_loc())
         } else {
-            return None;
+            let s = node.as_interpolated_string_node()?;
+            (s.opening_loc(), s.closing_loc())
         };
         let opening = opening?;
         let is_heredoc = self
