@@ -1231,11 +1231,12 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // rspec_dispatcher.rs). Built only when the segment is awake; dormant
     // segments (core-only installs, or non-spec files under the per-file
     // gate) pay nothing here.
-    let mut rspec_rule = cfg.rspec.as_ref().map(rspec_dispatcher::build_rule);
-    let mut rspec_el_rule = cfg
+    // ONE dispatcher rule now feeds every RSpec cop, including the empty-line
+    // family (`EmptyLineAfter*`), which was formerly a second rule.
+    let mut rspec_rule = cfg
         .rspec
         .as_ref()
-        .map(|c| rspec_empty_line::build_rule(source, c));
+        .map(|c| rspec_dispatcher::build_rule(source, c));
     // shirobai-rails: ONE rule feeds all four Application* cops (see
     // rails_app.rs). Built only when the segment is awake (the plugin gem is
     // loaded); a core-only install pays nothing here. No per-file gate — the
@@ -1355,9 +1356,6 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     if let Some(rule) = rspec_rule.as_mut() {
         rules.push(rule);
     }
-    if let Some(rule) = rspec_el_rule.as_mut() {
-        rules.push(rule);
-    }
     if let Some(rule) = rails_rule.as_mut() {
         rules.push(rule);
     }
@@ -1371,8 +1369,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         rules.push(rule);
     }
     super::dispatch::run(source, &mut rules);
-    let rspec_result = rspec_rule.map(|r| r.finish()).unwrap_or_default();
-    let rspec_el_result = rspec_el_rule.map(|r| r.finish()).unwrap_or_default();
+    let (rspec_result, rspec_el_result) = rspec_rule.map(|r| r.finish()).unwrap_or_default();
     let rails_result = rails_rule.map(|r| r.finish()).unwrap_or_default();
     let rails_unknown_env = rails_ue_rule.map(|r| r.finish()).unwrap_or_default();
     let rails_dynamic_find_by = rails_dfb_rule.map(|r| r.finish()).unwrap_or_default();
