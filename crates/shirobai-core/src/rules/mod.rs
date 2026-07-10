@@ -93,6 +93,7 @@ pub mod space_scan;
 pub mod stabby_lambda_parentheses;
 pub mod string_literals;
 pub mod string_literals_in_interpolation;
+pub mod tokens;
 pub mod trailing_comma;
 pub mod trailing_comma_in_arguments;
 pub mod trailing_comma_in_array_literal;
