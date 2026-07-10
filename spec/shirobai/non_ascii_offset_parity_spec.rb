@@ -426,6 +426,11 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # character.
     "Style/RedundantFreeze" =>
       "(あ > い).freeze\n",
+    # The operator offense range (and its `range_with_surrounding_space` replace
+    # anchor) sits right after a multibyte string literal, so the `+` byte offset
+    # must map to the right char column.
+    "Layout/SpaceAroundOperators" =>
+      "x = \"あ\"+\"い\"\n",
   }
 
   cases.each do |cop_name, body|

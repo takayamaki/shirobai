@@ -42,7 +42,8 @@ use super::{
     require_parentheses, rspec_dispatcher, rspec_empty_line, rspec_language, safe_navigation_chain,
     self_assignment,
     semicolon,
-    space_around_keyword, space_around_method_call_operator, space_before_block_braces,
+    space_around_keyword, space_around_method_call_operator, space_around_operators,
+    space_before_block_braces,
     space_before_first_arg,
     space_inside_array_literal_brackets, space_inside_block_braces,
     space_inside_hash_literal_braces, space_inside_parens, space_inside_reference_brackets,
@@ -177,6 +178,12 @@ pub fn check_multiline_bundle(
 /// | 118 | arguments_forwarding allow_only_rest (`AllowOnlyRestArgument`) |
 /// | 119 | arguments_forwarding use_anonymous (`UseAnonymousForwarding`) |
 /// | 120 | arguments_forwarding explicit_block (`Naming/BlockForwarding` `EnforcedStyle == 'explicit'`) |
+/// | 121 | space_around_operators enabled — the token-cop gate. `1` makes the bundle collect the parser-gem token stream (one `with_parsed_and_tokens` pass) and run the hybrid cop; `0` skips both, so a run with no token cop keeps the token-free parse path. `Layout/SpaceAroundOperators` `Enabled` is not literally `false` |
+/// | 122 | space_around_operators exponent_style (`EnforcedStyleForExponentOperator`: 0 = no_space, 1 = space) |
+/// | 123 | space_around_operators rational_style (`EnforcedStyleForRationalLiterals`: 0 = no_space, 1 = space) |
+/// | 124 | space_around_operators allow_for_alignment (`AllowForAlignment`) |
+/// | 125 | space_around_operators hash_table_style (`Layout/HashAlignment` `EnforcedHashRocketStyle` includes `table`) |
+/// | 126 | space_around_operators force_equal_sign_alignment (`Layout/ExtraSpacing` `ForceEqualSignAlignment`) |
 ///
 /// Core segment `lists[0]` (`Vec<String>`):
 ///
@@ -384,6 +391,16 @@ pub struct BundleConfig {
     /// 2 always_true.
     pub frozen_string_literal_comment_style: u8,
     pub arguments_forwarding: arguments_forwarding::Config,
+    /// `Layout/SpaceAroundOperators` config (only consulted when
+    /// `space_around_operators_enabled`).
+    pub space_around_operators: space_around_operators::Config,
+    /// The token-cop gate: `true` when `Layout/SpaceAroundOperators` is enabled
+    /// in the config. It is the sole trigger for collecting the parser-gem token
+    /// stream in [`check_all_bundle`]; when no token cop is active the bundle
+    /// keeps the token-free parse path (no `with_parsed_and_tokens` pass). The
+    /// next token cop (`Layout/ExtraSpacing`) will OR its own enable flag into
+    /// the same gate.
+    pub space_around_operators_enabled: bool,
     /// `Some` only when the shirobai-performance plugin gem is loaded on the
     /// Ruby side (`performance_enabled` num is 1). `None` keeps the
     /// Performance rules out of the shared walk entirely — their slots are
@@ -430,7 +447,7 @@ pub const ORIGIN_RSPEC: usize = 2;
 pub const ORIGIN_RAILS: usize = 3;
 pub const N_ORIGINS: usize = 4;
 
-const CORE_NUMS_LEN: usize = 121;
+const CORE_NUMS_LEN: usize = 127;
 const CORE_LISTS_LEN: usize = 28;
 const PERF_NUMS_LEN: usize = 3;
 const PERF_LISTS_LEN: usize = 1;
@@ -741,6 +758,14 @@ impl BundleConfig {
                 redundant_kwrest: next_list(),
                 redundant_block: next_list(),
             },
+            space_around_operators: space_around_operators::Config {
+                exponent_style: nums[122] as u8,
+                rational_style: nums[123] as u8,
+                allow_for_alignment: nums[124] != 0,
+                hash_table_style: nums[125] != 0,
+                force_equal_sign_alignment: nums[126] != 0,
+            },
+            space_around_operators_enabled: nums[121] != 0,
             // The shirobai-performance origin, read from its own segment —
             // core growth can never shift these offsets again.
             performance: {
@@ -930,6 +955,9 @@ pub struct BundleResult {
     /// `(kind, start, fin, line, insert_line, is_emacs)`.
     pub frozen_string_literal_comment: Vec<frozen_string_literal_comment::FslResult>,
     pub arguments_forwarding: Vec<arguments_forwarding::AfOffense>,
+    /// `Layout/SpaceAroundOperators`: one record per offense (the hybrid AST +
+    /// token-alignment cop). Empty when the token-cop gate is off.
+    pub space_around_operators: Vec<space_around_operators::SpaceAroundOperatorsOffense>,
     /// shirobai-performance plugin slots. Always present in the wire format;
     /// empty when `BundleConfig::performance` is `None` (plugin not loaded).
     pub perf_detect: Vec<perf_detect::PerfDetectOffense>,
@@ -1027,6 +1055,25 @@ pub struct BundleResult {
 /// breakables are derived from the `LineLength` candidates (the `line_index`
 /// of every candidate), exactly like the Ruby wrapper does on the direct path.
 pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
+    // --- Token-cop gate. ---
+    // The token-stream cops (`Layout/SpaceAroundOperators`, and later
+    // `Layout/ExtraSpacing`) consume the parser-gem token stream. Collect it
+    // once, up front, so the token consumer is the *first* toucher of the shared
+    // parse cache: `with_parsed_and_tokens` builds the cache entry with tokens,
+    // and every later `with_parsed` on this file (the shared `dispatch::run`
+    // below, the walk-outer cops, the hybrid cop's own `run_walk`) reuses it
+    // with no re-parse. The gate keeps this off entirely when no token cop is
+    // active, so a token-free run never pays the collection pass. A future token
+    // cop ORs its enable flag into `collect_tokens`.
+    let collect_tokens = cfg.space_around_operators_enabled;
+    let bundle_tokens: Option<Vec<super::tokens::Token>> = if collect_tokens {
+        Some(super::parse_cache::with_parsed_and_tokens(source, |owner, _root, raw| {
+            super::tokens::translate_tokens(owner, raw)
+        }))
+    } else {
+        None
+    };
+
     // --- Shared-walk rules, one per merged cop. ---
     let (op_cfg, mc_cfg) = (cfg.multiline_operation, cfg.multiline_method_call);
     let mut op_rule = op::build_rule(source, op_cfg.0, op_cfg.1, op_cfg.2);
@@ -1380,6 +1427,19 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let argument_alignment = aa_rule.map(|r| r.offenses).unwrap_or_default();
     let array_alignment = ara_rule.offenses;
     let arguments_forwarding = af_rule.take_offenses();
+    // `Layout/SpaceAroundOperators` is a hybrid: an AST walk (its own
+    // `with_parsed`, sharing the cached parse — the shared `dispatch::run` above
+    // has already released the parse-cache borrow) collects operator offense
+    // candidates, then the token-based `AllowForAlignment` filter resolves the
+    // excess-space ones against the token stream collected up front. Both are
+    // skipped when the token-cop gate is off.
+    let space_around_operators = match &bundle_tokens {
+        Some(tokens) => {
+            let walk = space_around_operators::run_walk(source, cfg.space_around_operators);
+            space_around_operators::resolve(source, cfg.space_around_operators, walk, tokens)
+        }
+        None => Vec::new(),
+    };
     let first_argument_indentation = fa_rule.map(|r| r.offenses).unwrap_or_default();
     let perf_detect = pd_rule.map(|r| r.offenses).unwrap_or_default();
     let perf_string_include = psi_rule.map(|r| r.offenses).unwrap_or_default();
@@ -1593,6 +1653,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         redundant_freeze,
         frozen_string_literal_comment,
         arguments_forwarding,
+        space_around_operators,
         perf_detect,
         perf_string_include,
         perf_end_with,
@@ -1722,6 +1783,7 @@ mod tests {
             1, 0, // redundant_freeze: target_ruby_30_plus / string_literals_frozen_by_default
             0, // frozen_string_literal_comment: style(always)
             34, 1, 1, 0, // arguments_forwarding: target_ruby / allow_only_rest / use_anon / explicit_block
+            1, 0, 0, 1, 0, 0, // space_around_operators: enabled / exponent / rational / allow_for_alignment(true) / hash_table / force_equal
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -4321,6 +4383,43 @@ mod tests {
                 assert_eq!((x.kind, x.start, x.end, &x.text), (y.kind, y.start, y.end, &y.text));
             }
         }
+    }
+
+    /// `Layout/SpaceAroundOperators` (the hybrid AST + token-alignment cop in
+    /// the walk-outer phase) must report through the bundle exactly what its
+    /// standalone entry reports. The source exercises a missing-space binary, an
+    /// excess-space aligned hash (AllowForAlignment), and an exponent. Both
+    /// paths translate the same pm_lex token stream, so this pins the token-cop
+    /// wiring (the gate, the up-front collection, `resolve`) to the fallback.
+    #[test]
+    fn check_all_bundle_matches_standalone_space_around_operators() {
+        let src = "a+b\n{\n  1 =>  2,\n  11 => 3\n}\nx = c ** d\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone = space_around_operators::check_space_around_operators(
+            src.as_bytes(),
+            cfg.space_around_operators,
+        );
+        assert!(!alone.is_empty());
+        assert_eq!(bundle.space_around_operators.len(), alone.len());
+        for (a, b) in bundle.space_around_operators.iter().zip(&alone) {
+            assert_eq!(a, b);
+        }
+    }
+
+    /// With the token-cop gate off, the bundle skips token collection and the
+    /// hybrid cop entirely: its slot is empty even on a source that would
+    /// otherwise fire it.
+    #[test]
+    fn check_all_bundle_skips_space_around_operators_when_gate_off() {
+        let src = "a+b\n";
+        let (mut nums, lists) = default_packed();
+        // core-origin num 121 is the space_around_operators enable gate.
+        nums[0][121] = 0;
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        assert!(bundle.space_around_operators.is_empty());
     }
 
     #[test]

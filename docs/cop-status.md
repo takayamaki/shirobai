@@ -4,14 +4,14 @@ This document tracks which RuboCop cops shirobai has reimplemented in Rust,
 and which cops were attempted but reverted because they did not meet the
 project's drop-in compatibility and speed requirements together.
 
-## Implemented (93 cops)
+## Implemented (94 cops)
 
 shirobai replaces these cops with Rust implementations.
 Every offense position, message, and autocorrected byte matches stock RuboCop
 on all five verification corpora (Mastodon, Discourse, Redmine, fluentd,
 and RuboCop itself).
 
-### Layout (49)
+### Layout (50)
 
 - `Layout/AccessModifierIndentation`
 - `Layout/ArgumentAlignment`
@@ -51,6 +51,7 @@ and RuboCop itself).
 - `Layout/SpaceAfterSemicolon`
 - `Layout/SpaceAroundKeyword`
 - `Layout/SpaceAroundMethodCallOperator`
+- `Layout/SpaceAroundOperators`
 - `Layout/SpaceBeforeBlockBraces`
 - `Layout/SpaceBeforeComma`
 - `Layout/SpaceBeforeComment`
@@ -759,7 +760,20 @@ path), `Layout/SpaceBeforeFirstArg`.
   nearby line), reconstructed with a longest-match operator scan over
   unmasked bytes. Only `Layout/ExtraSpacing` and
   `Layout/SpaceAroundOperators` still iterate the whole token stream and
-  stay reverted.
+  stayed reverted.
+- **Re-landed later (2026-07, pm_lex overhaul)**: `Layout/SpaceAroundOperators`
+  shipped as the first consumer of the single-pass parse+lex module
+  (`crates/shirobai-core/src/pm_lex.rs`), which is exactly the parse-and-lex
+  overhaul the revert note above asked for. The token stream is now a
+  by-product of the same prism parse (`parse_cache::with_parsed_and_tokens`),
+  translated to the parser-gem shape by `rules::tokens`, so there is no
+  separate lex pass — the "lex tax" is gone. The cop's detection / autocorrect
+  logic is the original token-cluster port, unchanged; only the token input
+  was reconnected to `translate_tokens`. Collection is gated: the bundle only
+  builds the token stream when a token cop (currently just this one) is
+  enabled, so a run without token cops keeps the token-free parse path. Only
+  `Layout/ExtraSpacing` still iterates the whole token stream and stays
+  reverted; it re-lands next on the same pm_lex base.
 
 ### `Style/RedundantBegin`
 
