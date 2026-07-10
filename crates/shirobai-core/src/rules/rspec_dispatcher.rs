@@ -114,10 +114,13 @@
 //! decided bytewise here. Both cops read identical group data.
 
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
-use ruby_prism::{CallNode, Node, StringNode};
+use ruby_prism::{CallNode, Node, StatementsNode, StringNode};
 
 use super::dispatch::{Interest, Rule};
+use super::line_index::{with_line_index, LineIndex};
+use super::rspec_empty_line::{EmptyLineOffense, RSpecEmptyLineResult};
 use super::rspec_language::{roles, RSpecConfig};
 
 /// One style-failing `RSpec/VariableName` candidate. `kind`: 0 = symbol,
@@ -399,10 +402,47 @@ struct Scope {
 struct StackEntry {
     opened_scope: bool,
     top_spec: bool,
+    /// The branch (or rescue) node this entry frames, byte-copied to `'static`
+    /// (see [`copy_to_static`]). Read by [`RSpecDispatcherRule::resolve`] to
+    /// recover an empty-line concept's parser-`:begin` parent.
+    node: Node<'static>,
+}
+
+/// One RSpec empty-line-family offense (`EmptyLineAfter{Example,ExampleGroup,
+/// FinalLet,Hook,Subject}`), collected during the walk and finalized in
+/// [`RSpecDispatcherRule::finish`]. See [`rspec_empty_line`](super::rspec_empty_line)
+/// for the family's byte-level semantics.
+#[derive(Clone, Copy, PartialEq)]
+enum Cop {
+    Example,
+    ExampleGroup,
+    FinalLet,
+    Hook,
+    Subject,
+}
+
+/// A pending empty-line candidate found during the walk; `final_end_line` is
+/// finalized against the collected heredocs in [`RSpecDispatcherRule::finish`].
+struct Pending {
+    cop: Cop,
+    node_start: usize,
+    node_end: usize,
+    node_end_line: usize,
+    method_name: String,
 }
 
 pub struct RSpecDispatcherRule<'c> {
     cfg: &'c RSpecConfig,
+    /// Source bytes (for the empty-line family's heredoc / line work).
+    source: &'c [u8],
+    /// Line index for the empty-line family's `final_end_line` lookups.
+    li: Rc<LineIndex>,
+    /// `(heredoc node start_offset, closing terminator 1-based line)` for the
+    /// empty-line family (a heredoc terminator below a concept's own end line
+    /// wins its `final_end_line`).
+    heredocs: Vec<(usize, usize)>,
+    /// Pending empty-line candidates, finalized in [`Self::finish`].
+    pending: Vec<Pending>,
     /// One entry per branch node currently open (aligned enter/leave).
     stack: Vec<StackEntry>,
     /// Arena indexes of the currently open parser-block frames.
@@ -436,9 +476,14 @@ pub struct RSpecDispatcherRule<'c> {
     pending_candidates: Vec<(usize, usize)>,
 }
 
-pub fn build_rule<'c>(cfg: &'c RSpecConfig) -> RSpecDispatcherRule<'c> {
+pub fn build_rule<'c>(source: &'c [u8], cfg: &'c RSpecConfig) -> RSpecDispatcherRule<'c> {
+    let li = with_line_index(source, |li| li.clone());
     RSpecDispatcherRule {
         cfg,
+        source,
+        li,
+        heredocs: Vec::new(),
+        pending: Vec::new(),
         stack: Vec::with_capacity(64),
         scope_stack: Vec::with_capacity(16),
         scopes: Vec::new(),
@@ -481,11 +526,9 @@ const METADATA_ROLES: u32 =
     roles::EX_ALL | roles::EG_ALL | roles::SG_ALL | roles::HOOKS;
 
 impl RSpecDispatcherRule<'_> {
-    fn handle_call(&mut self, call: &CallNode<'_>) -> StackEntry {
-        let mut entry = StackEntry {
-            opened_scope: false,
-            top_spec: false,
-        };
+    fn handle_call(&mut self, call: &CallNode<'_>) -> (bool, bool) {
+        let mut opened_scope = false;
+        let mut top_spec = false;
         let name = call.name().as_slice();
         let role_mask = self.cfg.roles_of(name);
         let kind = block_kind(call);
@@ -529,7 +572,7 @@ impl RSpecDispatcherRule<'_> {
         }
 
         if role_mask == 0 {
-            return entry;
+            return (opened_scope, top_spec);
         }
 
         // Direct metadata anchor: an example/group/shared-group/hook block with
@@ -571,7 +614,7 @@ impl RSpecDispatcherRule<'_> {
             && rspec_recv
             && role_mask & (roles::EG_ALL | roles::SG_ALL) != 0
         {
-            entry.top_spec = true;
+            top_spec = true;
         }
 
         // Variable-definition candidates (send-shaped: any block kind).
@@ -644,9 +687,325 @@ impl RSpecDispatcherRule<'_> {
                 examples: Vec::new(),
             });
             self.scope_stack.push(self.scopes.len() - 1);
-            entry.opened_scope = true;
+            opened_scope = true;
         }
-        entry
+
+        // The RSpec empty-line family (`EmptyLineAfter*`) reuses the same
+        // per-call facts. Reached only for `role_mask != 0` (every concept
+        // needs a non-zero role), matching the standalone rule's own gating.
+        self.empty_line_concepts(call, name, role_mask, kind, recv_none, rspec_recv);
+
+        (opened_scope, top_spec)
+    }
+
+    /// The five empty-line-family concept detections (`EmptyLineAfter*`),
+    /// reusing the per-call facts computed in [`Self::handle_call`]. Each
+    /// concept needs a non-zero role, so this runs only past the
+    /// `role_mask == 0` gate — exactly the standalone rule's own gating.
+    fn empty_line_concepts(
+        &mut self,
+        call: &CallNode<'_>,
+        name: &[u8],
+        role_mask: u32,
+        kind: BlockKind,
+        recv_none: bool,
+        rspec_recv: bool,
+    ) {
+        let loc = call.location();
+        let (start, end) = (loc.start_offset(), loc.end_offset());
+
+        // --- final_let: detected at the GROUP; find the last let in its body.
+        // example_group_or_include? = plain block, rspec receiver, EG|SG|Includes.
+        if kind == BlockKind::Plain
+            && rspec_recv
+            && role_mask & (roles::EG_ALL | roles::SG_ALL | roles::INC_ALL) != 0
+        {
+            self.handle_final_let(call);
+        }
+
+        // --- example (plain block, nil receiver, Examples.all).
+        if kind == BlockKind::Plain
+            && recv_none
+            && role_mask & roles::EX_ALL != 0
+            && let Some((true, sibling)) = self.resolve(start)
+            && !self.example_one_liner_allowed(start, end, sibling.as_ref())
+        {
+            self.push_pending(Cop::Example, name, start, end);
+        }
+
+        // --- example_group (spec_group?: plain block, rspec receiver, EG|SG).
+        if kind == BlockKind::Plain
+            && rspec_recv
+            && role_mask & (roles::EG_ALL | roles::SG_ALL) != 0
+            && matches!(self.resolve(start), Some((true, _)))
+        {
+            self.push_pending(Cop::ExampleGroup, name, start, end);
+        }
+
+        // --- hook (any block kind, nil receiver, Hooks.all).
+        if matches!(kind, BlockKind::Plain | BlockKind::Numbered | BlockKind::It)
+            && recv_none
+            && role_mask & roles::HOOKS != 0
+            && let Some((true, sibling)) = self.resolve(start)
+            && !self.hook_one_liner_allowed(start, end, sibling.as_ref())
+        {
+            self.push_pending(Cop::Hook, name, start, end);
+        }
+
+        // --- subject (plain block, nil receiver, Subjects.all, inside group).
+        if kind == BlockKind::Plain
+            && recv_none
+            && role_mask & roles::SUBJECTS != 0
+            && self.top_spec_depth > 0
+            && matches!(self.resolve(start), Some((true, _)))
+        {
+            self.push_pending(Cop::Subject, name, start, end);
+        }
+    }
+
+    /// Resolve an empty-line concept's parser-`:begin` context (keyed by
+    /// `node_start`) from the current frame stack. `Some((eligible, sibling))`
+    /// where `eligible` is true when the node's parser parent is `:begin` and
+    /// the node is not its last child; the sibling (the parser right sibling)
+    /// is returned for the one-liner checks. `None` when the node is not found
+    /// or has no `:begin` parent. See [`rspec_empty_line`](super::rspec_empty_line)
+    /// for the `:begin` recovery table.
+    fn resolve(&self, node_start: usize) -> Option<(bool, Option<Node<'static>>)> {
+        // The current concept node is NOT pushed onto `stack` until after
+        // handling, so its immediate parent is the current top frame.
+        let plen = self.stack.len();
+        if plen < 1 {
+            return None;
+        }
+        let parent = &self.stack[plen - 1].node;
+        if let Some(s) = parent.as_program_node().map(|p| p.statements()) {
+            return search_statements(&s, node_start);
+        }
+        if let Some(s) = parent.as_statements_node() {
+            return search_statements(&s, node_start);
+        }
+        if let Some(s) = parent.as_rescue_node().and_then(|r| r.statements()) {
+            return search_statements(&s, node_start);
+        }
+        // Branch-body containers: the then-branch of if/unless, an else body,
+        // and loop / case-clause bodies. Each exposes one `statements()`.
+        for stmts in [
+            parent.as_if_node().and_then(|n| n.statements()),
+            parent.as_unless_node().and_then(|n| n.statements()),
+            parent.as_else_node().and_then(|n| n.statements()),
+            parent.as_while_node().and_then(|n| n.statements()),
+            parent.as_until_node().and_then(|n| n.statements()),
+            parent.as_for_node().and_then(|n| n.statements()),
+            parent.as_when_node().and_then(|n| n.statements()),
+            parent.as_in_node().and_then(|n| n.statements()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if let Some(r) = search_statements(&stmts, node_start) {
+                return Some(r);
+            }
+        }
+        if let Some(b) = parent.as_begin_node() {
+            // The begin's main statements, ensure body and else body are all
+            // visited FRAMELESS (via `visit_statements_node` directly), so the
+            // top frame for a concept in any of them is the `BeginNode`.
+            // - main body: `:begin` only when a rescue/ensure clause is present
+            //   (a bare `begin a; b end` keeps `a`,`b` as `:kwbegin` children).
+            // - ensure / else body: `:begin` when multi-statement.
+            let has_handler = b.rescue_clause().is_some() || b.ensure_clause().is_some();
+            if let Some(stmts) = b.statements() {
+                let len = stmts.body().iter().count();
+                if let Some(r) =
+                    classify_children(stmts.body().iter(), node_start, has_handler && len >= 2)
+                {
+                    return Some(r);
+                }
+            }
+            for stmts in [
+                b.ensure_clause().and_then(|e| e.statements()),
+                b.else_clause().and_then(|e| e.statements()),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if let Some(r) = search_statements(&stmts, node_start) {
+                    return Some(r);
+                }
+            }
+        }
+        None
+    }
+
+    /// `EmptyLineAfterFinalLet` at a qualifying group `call`: the last `let?`
+    /// among the group body's direct children, when it is not the body's last
+    /// child (and the body has `>= 2` children).
+    fn handle_final_let(&mut self, group: &CallNode<'_>) {
+        let Some(block) = group.block().and_then(|b| b.as_block_node()) else {
+            return;
+        };
+        let Some(stmts) = block.body().and_then(|b| b.as_statements_node()) else {
+            return;
+        };
+        let children: Vec<Node<'_>> = stmts.body().iter().collect();
+        let len = children.len();
+        if len < 2 {
+            return;
+        }
+        // Find the LAST `let?` child (block form or `let(:x, &blk)` send form).
+        let mut last_let: Option<(usize, &Node<'_>)> = None;
+        for (i, child) in children.iter().enumerate() {
+            if self.is_let(child) {
+                last_let = Some((i, child));
+            }
+        }
+        let Some((i, let_node)) = last_let else {
+            return;
+        };
+        if i == len - 1 {
+            return; // last child of the body: no offense.
+        }
+        let Some(call) = let_node.as_call_node() else {
+            return;
+        };
+        let loc = let_node.location();
+        self.push_pending(
+            Cop::FinalLet,
+            call.name().as_slice(),
+            loc.start_offset(),
+            loc.end_offset(),
+        );
+    }
+
+    /// `let?`: `(block (send nil? #Helpers.all ...) ...)` OR
+    /// `(send nil? #Helpers.all _ block_pass)`.
+    fn is_let(&self, node: &Node<'_>) -> bool {
+        let Some(call) = node.as_call_node() else {
+            return false;
+        };
+        if call.receiver().is_some() {
+            return false;
+        }
+        if self.cfg.roles_of(call.name().as_slice()) & roles::HELPERS == 0 {
+            return false;
+        }
+        match block_kind(&call) {
+            BlockKind::Plain | BlockKind::Numbered | BlockKind::It => true,
+            // send form `(send nil? #Helpers.all _ block_pass)`: the block-pass
+            // is prism's `call.block()` (a `BlockArgumentNode`), and there must
+            // be exactly one positional argument (`_`).
+            BlockKind::BlockArg => {
+                call.arguments().map(|a| a.arguments().iter().count()) == Some(1)
+            }
+            BlockKind::None => false,
+        }
+    }
+
+    fn example_one_liner_allowed(
+        &self,
+        start: usize,
+        end: usize,
+        sibling: Option<&Node<'_>>,
+    ) -> bool {
+        if !self.cfg.example_allow_consecutive {
+            return false;
+        }
+        if !self.single_line(start, end) {
+            return false;
+        }
+        // next sibling is a single-line example (plain block, nil recv,
+        // Examples.all).
+        let Some(sib) = sibling else { return false };
+        let Some(call) = sib.as_call_node() else {
+            return false;
+        };
+        if call.receiver().is_some() || block_kind(&call) != BlockKind::Plain {
+            return false;
+        }
+        if self.cfg.roles_of(call.name().as_slice()) & roles::EX_ALL == 0 {
+            return false;
+        }
+        let sl = sib.location();
+        self.single_line(sl.start_offset(), sl.end_offset())
+    }
+
+    fn hook_one_liner_allowed(
+        &self,
+        start: usize,
+        end: usize,
+        sibling: Option<&Node<'_>>,
+    ) -> bool {
+        if !self.cfg.hook_allow_consecutive {
+            return false;
+        }
+        if !self.single_line(start, end) {
+            return false;
+        }
+        // next sibling is a single-line hook (any block kind, nil recv,
+        // Hooks.all).
+        let Some(sib) = sibling else { return false };
+        let Some(call) = sib.as_call_node() else {
+            return false;
+        };
+        if call.receiver().is_some() {
+            return false;
+        }
+        if !matches!(
+            block_kind(&call),
+            BlockKind::Plain | BlockKind::Numbered | BlockKind::It
+        ) {
+            return false;
+        }
+        if self.cfg.roles_of(call.name().as_slice()) & roles::HOOKS == 0 {
+            return false;
+        }
+        let sl = sib.location();
+        self.single_line(sl.start_offset(), sl.end_offset())
+    }
+
+    fn push_pending(&mut self, cop: Cop, name: &[u8], start: usize, end: usize) {
+        self.pending.push(Pending {
+            cop,
+            node_start: start,
+            node_end: end,
+            node_end_line: self.node_last_line(end),
+            method_name: String::from_utf8_lossy(name).into_owned(),
+        });
+    }
+
+    fn line_of(&self, off: usize) -> usize {
+        self.li.line_of(off)
+    }
+
+    fn node_last_line(&self, node_end: usize) -> usize {
+        self.line_of(node_end.saturating_sub(1))
+    }
+
+    /// `single_line?`: the node's own start and end fall on one line.
+    fn single_line(&self, start: usize, end: usize) -> bool {
+        self.line_of(start) == self.node_last_line(end)
+    }
+
+    /// Record a heredoc string node (`<<...`), if this node is one.
+    fn maybe_heredoc(&mut self, node: &Node<'_>) {
+        let (opening, closing) = if let Some(s) = node.as_string_node() {
+            (s.opening_loc(), s.closing_loc())
+        } else if let Some(s) = node.as_x_string_node() {
+            (Some(s.opening_loc()), Some(s.closing_loc()))
+        } else if let Some(s) = node.as_interpolated_string_node() {
+            (s.opening_loc(), s.closing_loc())
+        } else if let Some(s) = node.as_interpolated_x_string_node() {
+            (Some(s.opening_loc()), Some(s.closing_loc()))
+        } else {
+            return;
+        };
+        let (Some(open), Some(close)) = (opening, closing) else {
+            return;
+        };
+        if self.source.get(open.start_offset()) == Some(&b'<') {
+            let start = node.location().start_offset();
+            self.heredocs.push((start, self.line_of(close.start_offset())));
+        }
     }
 
     /// `RSpec/NamedSubject`: verdict for a bare `subject` reference against the
@@ -851,8 +1210,33 @@ impl RSpecDispatcherRule<'_> {
         }
     }
 
-    /// Post-walk verdicts.
-    pub fn finish(self) -> RSpecResult {
+    /// Post-walk verdicts. Returns the dispatcher's cop results plus the
+    /// empty-line family's (both are computed by this one rule).
+    pub fn finish(self) -> (RSpecResult, RSpecEmptyLineResult) {
+        // Empty-line family: finalize each candidate's `final_end_line`
+        // against the collected heredocs (a heredoc terminator below the
+        // node's own end line wins) and route each offense to its cop's slot.
+        let mut empty_line = RSpecEmptyLineResult::default();
+        for p in &self.pending {
+            let mut final_line = p.node_end_line;
+            for &(hd_start, hd_line) in &self.heredocs {
+                if hd_start >= p.node_start && hd_start < p.node_end && hd_line > final_line {
+                    final_line = hd_line;
+                }
+            }
+            let off = EmptyLineOffense {
+                final_end_line: final_line,
+                method_name: p.method_name.clone(),
+            };
+            match p.cop {
+                Cop::Example => empty_line.example.push(off),
+                Cop::ExampleGroup => empty_line.example_group.push(off),
+                Cop::FinalLet => empty_line.final_let.push(off),
+                Cop::Hook => empty_line.hook.push(off),
+                Cop::Subject => empty_line.subject.push(off),
+            }
+        }
+
         let mut let_setup = Vec::new();
         for scope in &self.scopes {
             if !scope.scope_change {
@@ -885,7 +1269,7 @@ impl RSpecDispatcherRule<'_> {
             .filter(|s| s.described_class_candidate)
             .map(|s| s.range)
             .collect();
-        RSpecResult {
+        let rspec_result = RSpecResult {
             variable_name: (self.vn_offenses, self.vn_passing),
             let_setup,
             variable_definition: self.vd_offenses,
@@ -899,7 +1283,8 @@ impl RSpecDispatcherRule<'_> {
             empty_example_group,
             described_class,
             scattered_setup,
-        }
+        };
+        (rspec_result, empty_line)
     }
 
     /// For every `example_group?` frame with >= 2 collected examples, the
@@ -1143,20 +1528,71 @@ fn has_skip_pending_metadata(call: &CallNode<'_>) -> bool {
     has_symbol_metadata(call, &[b"skip", b"pending"])
 }
 
+/// Search a statement sequence for `node_start`; the sequence is parser
+/// `:begin` (offense eligible) when it has `>= 2` children.
+fn search_statements<'p>(
+    s: &StatementsNode<'p>,
+    node_start: usize,
+) -> Option<(bool, Option<Node<'p>>)> {
+    let len = s.body().iter().count();
+    classify_children(s.body().iter(), node_start, len >= 2)
+}
+
+/// Find `node_start` among `children` (by start offset); return
+/// `(eligible && not-last, right_sibling)`.
+fn classify_children<'p>(
+    children: impl Iterator<Item = Node<'p>>,
+    node_start: usize,
+    eligible: bool,
+) -> Option<(bool, Option<Node<'p>>)> {
+    let list: Vec<Node<'p>> = children.collect();
+    let idx = list
+        .iter()
+        .position(|c| c.location().start_offset() == node_start)?;
+    let not_last = idx + 1 < list.len();
+    let sibling = if not_last {
+        // Clone the sibling node (Copy-by-bytes) so it outlives `list`.
+        let sib = &list[idx + 1];
+        Some(unsafe { copy_node(sib) })
+    } else {
+        None
+    };
+    Some((eligible && not_last, sibling))
+}
+
+/// Byte-copy a `Node` preserving its lifetime (prism `Node` is not `Clone`).
+#[allow(clippy::missing_safety_doc)]
+unsafe fn copy_node<'a>(node: &Node<'a>) -> Node<'a> {
+    unsafe { std::mem::transmute_copy::<Node<'a>, Node<'a>>(node) }
+}
+
+/// Byte-copy a `Node` into a `Node<'static>`. Safe as long as every stashed
+/// copy is popped within the same `dispatch::run` call (the parse is held by
+/// `parse_cache`) — see the same pattern in `empty_line_after_guard_clause`.
+#[allow(clippy::missing_safety_doc)]
+unsafe fn copy_to_static<'a>(node: &Node<'a>) -> Node<'static> {
+    unsafe { std::mem::transmute_copy::<Node<'a>, Node<'static>>(node) }
+}
+
 impl Rule for RSpecDispatcherRule<'_> {
     fn enter(&mut self, node: &Node<'_>) {
-        let entry = if let Some(call) = node.as_call_node() {
+        self.maybe_heredoc(node);
+        let (opened_scope, top_spec) = if let Some(call) = node.as_call_node() {
             self.handle_call(&call)
         } else {
-            StackEntry {
-                opened_scope: false,
-                top_spec: false,
-            }
+            (false, false)
         };
-        if entry.top_spec {
+        if top_spec {
             self.top_spec_depth += 1;
         }
-        self.stack.push(entry);
+        // Stash the node so `resolve` can recover an empty-line concept's
+        // parser-`:begin` parent from the immediate top frame.
+        let node_static = unsafe { copy_to_static(node) };
+        self.stack.push(StackEntry {
+            opened_scope,
+            top_spec,
+            node: node_static,
+        });
     }
 
     fn leave(&mut self) {
@@ -1170,8 +1606,31 @@ impl Rule for RSpecDispatcherRule<'_> {
         }
     }
 
+    fn enter_leaf(&mut self, node: &Node<'_>) {
+        self.maybe_heredoc(node);
+    }
+
+    fn enter_rescue(&mut self, node: &Node<'_>) {
+        // A `RescueNode` frame (its own body's statements are visited under it)
+        // — the empty-line family needs it as the parent of a concept in a
+        // `rescue`-body sequence. It opens no scope and no top-spec.
+        let node_static = unsafe { copy_to_static(node) };
+        self.stack.push(StackEntry {
+            opened_scope: false,
+            top_spec: false,
+            node: node_static,
+        });
+    }
+
+    fn leave_rescue(&mut self) {
+        self.stack.pop();
+    }
+
     fn interest(&self) -> Interest {
-        Interest(Interest::LEAVE | Interest::ENTER_ALL)
+        // Union of the two former rules: the dispatcher's `LEAVE | ENTER_ALL`
+        // plus the empty-line family's `LEAF` (heredoc probe) and `RESCUE`
+        // (rescue-body frames) — i.e. everything.
+        Interest::ALL
     }
 }
 
@@ -1181,23 +1640,23 @@ pub fn check_rspec_variable_name(
     source: &[u8],
     cfg: &RSpecConfig,
 ) -> (Vec<VarNameOffense>, Vec<(String, u8)>) {
-    run(source, cfg).variable_name
+    run(source, cfg).0.variable_name
 }
 
 /// Standalone entry point for `RSpec/LetSetup`.
 pub fn check_rspec_let_setup(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
-    run(source, cfg).let_setup
+    run(source, cfg).0.let_setup
 }
 
 /// Standalone entry point for `RSpec/VariableDefinition` (the wrapper's
 /// fallback path).
 pub fn check_rspec_variable_definition(source: &[u8], cfg: &RSpecConfig) -> Vec<VarDefOffense> {
-    run(source, cfg).variable_definition
+    run(source, cfg).0.variable_definition
 }
 
 /// Standalone entry point for `RSpec/MultipleMemoizedHelpers`.
 pub fn check_rspec_multiple_memoized_helpers(source: &[u8], cfg: &RSpecConfig) -> Vec<MmhGroup> {
-    run(source, cfg).multiple_memoized_helpers
+    run(source, cfg).0.multiple_memoized_helpers
 }
 
 /// Standalone entry point for `RSpec/RepeatedDescription` (the wrapper's
@@ -1206,19 +1665,19 @@ pub fn check_rspec_repeated_description(
     source: &[u8],
     cfg: &RSpecConfig,
 ) -> Vec<Vec<(usize, usize)>> {
-    run(source, cfg).repeated_description
+    run(source, cfg).0.repeated_description
 }
 
 /// Standalone entry point for `RSpec/RepeatedExample` (same group data as
 /// `check_rspec_repeated_description`).
 pub fn check_rspec_repeated_example(source: &[u8], cfg: &RSpecConfig) -> Vec<Vec<(usize, usize)>> {
-    run(source, cfg).repeated_example
+    run(source, cfg).0.repeated_example
 }
 
 /// Standalone entry point for `RSpec/NamedSubject` (the wrapper's fallback
 /// path). The `subject` selector ranges to report.
 pub fn check_rspec_named_subject(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
-    run(source, cfg).named_subject
+    run(source, cfg).0.named_subject
 }
 
 /// Standalone entry point for the four `Metadata`-mixin cops
@@ -1226,42 +1685,49 @@ pub fn check_rspec_named_subject(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize
 /// the shared metadata-anchor block ranges. Each cop's wrapper relocates these
 /// parser block nodes and runs stock's `Metadata#on_block` verbatim.
 pub fn check_rspec_metadata_anchors(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
-    run(source, cfg).metadata_anchors
+    run(source, cfg).0.metadata_anchors
 }
 
 /// Standalone entry point for `RSpec/Focus` (candidate send ranges).
 pub fn check_rspec_focus(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
-    run(source, cfg).focus
+    run(source, cfg).0.focus
 }
 
 /// Standalone entry point for `RSpec/PendingWithoutReason` (candidate send
 /// ranges).
 pub fn check_rspec_pending_without_reason(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
-    run(source, cfg).pending_without_reason
+    run(source, cfg).0.pending_without_reason
 }
 
 /// Standalone entry point for `RSpec/EmptyExampleGroup` (candidate
 /// example-group block ranges). The wrapper locates each parser block node
 /// and runs stock's `on_block` detection verbatim.
 pub fn check_rspec_empty_example_group(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
-    run(source, cfg).empty_example_group
+    run(source, cfg).0.empty_example_group
 }
 
 /// Standalone entry point for `RSpec/DescribedClass` (candidate block
 /// ranges). The wrapper relocates the parser block node and runs stock's
 /// full detection + autocorrect verbatim.
 pub fn check_rspec_described_class(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
-    run(source, cfg).described_class
+    run(source, cfg).0.described_class
 }
 
 /// Standalone entry point for `RSpec/ScatteredSetup` (candidate example-group
 /// block ranges).
 pub fn check_rspec_scattered_setup(source: &[u8], cfg: &RSpecConfig) -> Vec<(usize, usize)> {
-    run(source, cfg).scattered_setup
+    run(source, cfg).0.scattered_setup
 }
 
-fn run(source: &[u8], cfg: &RSpecConfig) -> RSpecResult {
-    let mut rule = build_rule(cfg);
+/// Standalone entry point for the RSpec empty-line family (the wrappers'
+/// fallback path). Runs the merged dispatcher rule and keeps the empty-line
+/// portion; re-exported as [`rspec_empty_line::check_rspec_empty_line`](super::rspec_empty_line::check_rspec_empty_line).
+pub fn check_rspec_empty_line(source: &[u8], cfg: &RSpecConfig) -> RSpecEmptyLineResult {
+    run(source, cfg).1
+}
+
+fn run(source: &[u8], cfg: &RSpecConfig) -> (RSpecResult, RSpecEmptyLineResult) {
+    let mut rule = build_rule(source, cfg);
     super::dispatch::run(source, &mut [&mut rule]);
     rule.finish()
 }
