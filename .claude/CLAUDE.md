@@ -79,10 +79,16 @@ The branch must have one commit where all of these pass:
 
 ## Speed criteria for merging
 
-Merge in units where **at least 4 out of 5 corpora** show a clear speedup
+Merge in units where **at least one corpus suggests a speedup**
+and **every other corpus stays neutral within 1%**,
 in real-config end-to-end benchmarks (each corpus's own `.rubocop.yml`).
+"Suggests" includes a weak signal:
+a paired improvement with a consistent sign across rounds,
+even when it is below the noise line on its own.
+Cop enablement varies a lot between corpus configs,
+so most units can only win on the corpora that enable them.
 This can be a single cop or a group of cops —
-what matters is that the merged unit produces a measurable improvement.
+what matters is that the merged unit helps somewhere and hurts nowhere.
 
 ## The truth oracle is benches/parity_diff.sh
 
