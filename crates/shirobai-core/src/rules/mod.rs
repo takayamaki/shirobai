@@ -56,6 +56,7 @@ pub mod multiline_method_call_indentation;
 pub mod multiline_operation_indentation;
 pub mod nested_parenthesized_calls;
 pub mod opaque_mask;
+pub mod ordered_magic_comments;
 pub mod parentheses_as_grouped_expression;
 pub mod parse_cache;
 pub mod percent_literal_delimiters;

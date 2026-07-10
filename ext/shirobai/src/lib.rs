@@ -1811,7 +1811,8 @@ fn register_bundle_config(
 /// 85 duplicate_magic_comment / 86 duplicate_methods /
 /// 87 array_alignment / 88 file_null / 89 semicolon /
 /// 90 redundant_freeze / 91 frozen_string_literal_comment /
-/// 92 arguments_forwarding / 93 space_around_operators
+/// 92 arguments_forwarding / 93 space_around_operators /
+/// 94 ordered_magic_comments
 ///
 /// Performance slots (origin 1; every slot empty unless the plugin gem
 /// registered its packed segment):
@@ -1996,6 +1997,9 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(r.frozen_string_literal_comment)?;
         ary.push(map_arguments_forwarding(r.arguments_forwarding))?;
         ary.push(map_space_around_operators(r.space_around_operators))?;
+        // toucher-batch-1 core slots (94-96); ExtraSpacing lands on the next
+        // free slot separately, so a merge reconciles the numbering.
+        ary.push(map_ordered_magic_comments(r.ordered_magic_comments))?;
         // Performance origin (result[1]).
         let perf = ruby.ary_new_capa(5);
         perf.push(map_perf_detect(r.perf_detect))?;
@@ -2131,6 +2135,14 @@ fn map_leading_empty_lines(
     v.into_iter()
         .map(|o| (o.start, o.end, o.ac_start, o.ac_end))
         .collect()
+}
+
+/// `Lint/OrderedMagicComments`: the 0-or-1 `(encoding_line, other_line)` pair
+/// (1-based buffer lines) the wrapper swaps.
+fn map_ordered_magic_comments(
+    v: Option<shirobai_core::rules::ordered_magic_comments::OrderedOffense>,
+) -> Vec<(usize, usize)> {
+    v.into_iter().collect()
 }
 
 type IfUnlessModifierOps = Vec<(u8, usize, usize, String)>;
@@ -3219,6 +3231,14 @@ fn check_duplicate_magic_comment(source: RString) -> Vec<usize> {
     shirobai_core::rules::duplicate_magic_comment::check_duplicate_magic_comment(bytes(&source))
 }
 
+/// Ruby entry point for `Lint/OrderedMagicComments` (standalone fallback,
+/// config-less). Returns the 0-or-1 `(encoding_line, other_line)` pair.
+fn check_ordered_magic_comments(source: RString) -> Vec<(usize, usize)> {
+    map_ordered_magic_comments(
+        shirobai_core::rules::ordered_magic_comments::check_ordered_magic_comments(bytes(&source)),
+    )
+}
+
 /// Ruby entry point for `Style/FrozenStringLiteralComment` (standalone
 /// fallback). `style`: 0 always, 1 never, 2 always_true. Returns at most one
 /// packed offense `(kind, start, fin, line, insert_line, is_emacs)`; byte
@@ -4224,6 +4244,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_duplicate_magic_comment",
         function!(check_duplicate_magic_comment, 1),
+    )?;
+    module.define_module_function(
+        "check_ordered_magic_comments",
+        function!(check_ordered_magic_comments, 1),
     )?;
     module.define_module_function(
         "check_frozen_string_literal_comment",

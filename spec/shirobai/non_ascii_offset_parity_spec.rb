@@ -431,6 +431,12 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # must map to the right char column.
     "Layout/SpaceAroundOperators" =>
       "x = \"あ\"+\"い\"\n",
+    # The wrapper builds the offense range and the line swap from 1-based LINE
+    # numbers via stock's own `buffer.line_range` (no Rust byte offset), so the
+    # multibyte prefix line must not perturb the line indexing: fsl then
+    # encoding after the prefix comment still pairs lines 3 and 2.
+    "Lint/OrderedMagicComments" =>
+      "# frozen_string_literal: true\n# encoding: ascii\nx = \"あ\"\n",
   }
 
   cases.each do |cop_name, body|

@@ -32,6 +32,7 @@ use super::{
     line_end_concatenation, line_length,
     line_length_breakable, method_length, method_name, module_length,
     multiline_method_call_brace_layout, nested_parenthesized_calls,
+    ordered_magic_comments,
     parentheses_as_grouped_expression,
     percent_literal_delimiters,
     perf_detect, perf_end_with, perf_start_with, perf_string_include, perf_times_map,
@@ -941,6 +942,9 @@ pub struct BundleResult {
     /// 1-based lines of duplicate magic comments (encoding bucket then
     /// frozen-string-literal bucket, document order within each).
     pub duplicate_magic_comment: Vec<duplicate_magic_comment::DuplicateLine>,
+    /// `Lint/OrderedMagicComments`: at most one offense, the two 1-based line
+    /// numbers `(encoding_line, other_line)` that must be swapped.
+    pub ordered_magic_comments: Option<ordered_magic_comments::OrderedOffense>,
     /// Per-file `found_method` event stream in stock callback order (the
     /// Ruby wrapper replays the cross-file bookkeeping).
     pub duplicate_methods: Vec<duplicate_methods::DupMethodEvent>,
@@ -1530,6 +1534,10 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // first non-comment token position from the cached parse), no AST walk.
     let duplicate_magic_comment =
         duplicate_magic_comment::check_duplicate_magic_comment(source);
+    // `Lint/OrderedMagicComments` shares that same leading-line scan (no AST
+    // walk); it reports at most one offense (the encoding/other line pair).
+    let ordered_magic_comments =
+        ordered_magic_comments::check_ordered_magic_comments(source);
     // `Style/RedundantFreeze`: string-receiver offenses are conditional on the
     // once-per-file `frozen_string_literals_enabled?` decision, folded in here.
     let redundant_freeze =
@@ -1647,6 +1655,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         space_inside_reference_brackets,
         space_before_first_arg,
         duplicate_magic_comment,
+        ordered_magic_comments,
         duplicate_methods: dm_rule.events,
         file_null,
         semicolon: semicolon_rule.into_offenses(),
@@ -4298,6 +4307,18 @@ mod tests {
             super::duplicate_magic_comment::check_duplicate_magic_comment(src.as_bytes());
         assert!(!alone.is_empty());
         assert_eq!(bundle.duplicate_magic_comment, alone);
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_ordered_magic_comments() {
+        let src = "# frozen_string_literal: true\n# encoding: ascii\nx = 1\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone =
+            super::ordered_magic_comments::check_ordered_magic_comments(src.as_bytes());
+        assert!(alone.is_some());
+        assert_eq!(bundle.ordered_magic_comments, alone);
     }
 
     #[test]

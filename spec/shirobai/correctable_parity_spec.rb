@@ -587,6 +587,12 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Lint::DuplicateMagicComment,
       "# encoding: utf-8\n# encoding: ascii\nx = 1\n"
     ],
+    # Line-swap corrector; the offense must stay correctable on both sides.
+    "Lint/OrderedMagicComments" => [
+      RuboCop::Cop::Lint::OrderedMagicComments,
+      Shirobai::Cop::Lint::OrderedMagicComments,
+      "# frozen_string_literal: true\n# encoding: ascii\nx = 1\n"
+    ],
     # No autocorrect at all: the offense must stay non-correctable
     # (:unsupported) on both sides.
     "Lint/DuplicateMethods" => [

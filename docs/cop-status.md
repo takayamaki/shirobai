@@ -4,7 +4,7 @@ This document tracks which RuboCop cops shirobai has reimplemented in Rust,
 and which cops were attempted but reverted because they did not meet the
 project's drop-in compatibility and speed requirements together.
 
-## Implemented (94 cops)
+## Implemented (95 cops)
 
 shirobai replaces these cops with Rust implementations.
 Every offense position, message, and autocorrected byte matches stock RuboCop
@@ -64,12 +64,13 @@ and RuboCop itself).
 - `Layout/SpaceInsideReferenceBrackets`
 - `Layout/TrailingEmptyLines`
 
-### Lint (11)
+### Lint (12)
 
 - `Lint/AmbiguousBlockAssociation`
 - `Lint/Debugger`
 - `Lint/DuplicateMagicComment`
 - `Lint/DuplicateMethods`
+- `Lint/OrderedMagicComments`
 - `Lint/ParenthesesAsGroupedExpression`
 - `Lint/RequireParentheses`
 - `Lint/SafeNavigationChain`

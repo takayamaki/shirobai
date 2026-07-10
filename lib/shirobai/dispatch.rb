@@ -123,6 +123,9 @@ module Shirobai
       frozen_string_literal_comment: [0, 91].freeze,
       arguments_forwarding: [0, 92].freeze,
       space_around_operators: [0, 93].freeze,
+      # toucher-batch-1 core slots (94-96). ExtraSpacing takes the next free
+      # slot on its own branch; a merge reconciles any overlap.
+      ordered_magic_comments: [0, 94].freeze,
       # shirobai-performance plugin slots (origin 1). Always present in the
       # wire format; the Rust side leaves them empty unless the plugin gem
       # registered its packed segment (`Dispatch.register_plugin_packer`).
@@ -389,6 +392,8 @@ module Shirobai
         # Lint/DuplicateMagicComment is config-less; its `bundle_args` returns
         # `[]` and contributes nothing to `nums` / `lists`.
         _ = Cop::Lint::DuplicateMagicComment.bundle_args(config)
+        # Lint/OrderedMagicComments is config-less too.
+        _ = Cop::Lint::OrderedMagicComments.bundle_args(config)
         dm = Cop::Lint::DuplicateMethods.bundle_args(config)
         # Style/Semicolon is config-less (path (a) needs no config; path (b)'s
         # AllowAsExpressionSeparator is handled in the wrapper); its
