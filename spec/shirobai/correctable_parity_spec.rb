@@ -630,6 +630,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Style::ArgumentsForwarding,
       "def foo(*args, **kwargs, &block)\n  bar(*args, **kwargs, &block)\nend\n"
     ],
+    # A binary operator without spaces: the offense carries a `replace`
+    # corrector (correctable). Guards that the hybrid wrapper attaches the
+    # corrector block in lint mode like stock.
+    "Layout/SpaceAroundOperators" => [
+      RuboCop::Cop::Layout::SpaceAroundOperators,
+      Shirobai::Cop::Layout::SpaceAroundOperators,
+      "x=1+2\n"
+    ],
   }
 
   cases.each do |name, (stock_klass, shirobai_klass, source)|

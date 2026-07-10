@@ -327,6 +327,39 @@ fn map_arguments_forwarding(
         .collect()
 }
 
+/// `Layout/SpaceAroundOperators`:
+/// `[[op_start, op_end, ws_start, ws_end, kind, operator, replacement], ...]`.
+/// `[op_start, op_end)` is the operator range (the offense highlight); `kind`
+/// selects the message (`0` = "Space around operator `op` detected.", `1` =
+/// "Surrounding space missing for operator `op`.", `2` = "Operator `op` should be
+/// surrounded by a single space."); `operator` is the operator text for the
+/// message; the autocorrect replaces `[ws_start, ws_end)` (the
+/// `range_with_surrounding_space` range) with `replacement`.
+#[allow(clippy::type_complexity)]
+fn map_space_around_operators(
+    v: Vec<shirobai_core::rules::space_around_operators::SpaceAroundOperatorsOffense>,
+) -> Vec<(usize, usize, usize, usize, u8, String, String)> {
+    use shirobai_core::rules::space_around_operators::MessageKind;
+    v.into_iter()
+        .map(|o| {
+            let kind = match o.kind {
+                MessageKind::Detected => 0u8,
+                MessageKind::Missing => 1u8,
+                MessageKind::SingleSpace => 2u8,
+            };
+            (
+                o.op_start,
+                o.op_end,
+                o.ws_start,
+                o.ws_end,
+                kind,
+                String::from_utf8_lossy(&o.operator).into_owned(),
+                String::from_utf8_lossy(&o.replacement).into_owned(),
+            )
+        })
+        .collect()
+}
+
 #[allow(clippy::type_complexity)]
 fn map_first_argument_indentation(
     v: Vec<shirobai_core::rules::first_argument_indentation::FirstArgIndentOffense>,
@@ -1778,7 +1811,7 @@ fn register_bundle_config(
 /// 85 duplicate_magic_comment / 86 duplicate_methods /
 /// 87 array_alignment / 88 file_null / 89 semicolon /
 /// 90 redundant_freeze / 91 frozen_string_literal_comment /
-/// 92 arguments_forwarding
+/// 92 arguments_forwarding / 93 space_around_operators
 ///
 /// Performance slots (origin 1; every slot empty unless the plugin gem
 /// registered its packed segment):
@@ -1825,7 +1858,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
         // Core origin (result[0]).
-        let ary = ruby.ary_new_capa(93);
+        let ary = ruby.ary_new_capa(94);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -1962,6 +1995,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_redundant_freeze(r.redundant_freeze))?;
         ary.push(r.frozen_string_literal_comment)?;
         ary.push(map_arguments_forwarding(r.arguments_forwarding))?;
+        ary.push(map_space_around_operators(r.space_around_operators))?;
         // Performance origin (result[1]).
         let perf = ruby.ary_new_capa(5);
         perf.push(map_perf_detect(r.perf_detect))?;
@@ -2567,6 +2601,29 @@ fn check_arguments_forwarding(
             },
         ),
     )
+}
+
+/// Ruby entry point for `Layout/SpaceAroundOperators` (fallback path; the bundle
+/// is the usual path). The five flags pack the cop config; the shape is
+/// documented on `map_space_around_operators`.
+#[allow(clippy::too_many_arguments)]
+fn check_space_around_operators(
+    source: RString,
+    exponent_style: u8,
+    rational_style: u8,
+    allow_for_alignment: bool,
+    hash_table_style: bool,
+    force_equal_sign_alignment: bool,
+) -> Vec<(usize, usize, usize, usize, u8, String, String)> {
+    use shirobai_core::rules::space_around_operators as sao;
+    let cfg = sao::Config {
+        exponent_style,
+        rational_style,
+        allow_for_alignment,
+        hash_table_style,
+        force_equal_sign_alignment,
+    };
+    map_space_around_operators(sao::check_space_around_operators(bytes(&source), cfg))
 }
 
 /// Ruby entry point for `Layout/FirstArgumentIndentation`. Takes the source,
@@ -4122,6 +4179,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_arguments_forwarding",
         function!(check_arguments_forwarding, 8),
+    )?;
+    module.define_module_function(
+        "check_space_around_operators",
+        function!(check_space_around_operators, 6),
     )?;
     module.define_module_function("check_redundant_self", function!(check_redundant_self, 2))?;
     module.define_module_function(

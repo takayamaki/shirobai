@@ -1,5 +1,6 @@
 pub mod abc_size;
 pub mod access_modifier_indentation;
+pub mod aligner;
 pub mod ambiguous_block_association;
 pub mod argument_alignment;
 pub mod arguments_forwarding;
@@ -82,6 +83,7 @@ pub mod self_assignment;
 pub mod semicolon;
 pub mod space_around_keyword;
 pub mod space_around_method_call_operator;
+pub mod space_around_operators;
 pub mod space_before_block_braces;
 pub mod space_before_first_arg;
 pub mod space_inside_parens;
