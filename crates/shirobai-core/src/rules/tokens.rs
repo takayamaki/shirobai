@@ -429,6 +429,36 @@ fn convert(raws: &[RawTok], source: &[u8]) -> Vec<Token> {
             }
         }
 
+        // A non-interpolated string literal is one `tSTRING` token in the
+        // parser-gem stream, but prism splits every string into `STRING_BEGIN` /
+        // `STRING_CONTENT`* / `STRING_END`. whitequark's translator merges the
+        // parts back into a single `tSTRING` when there is no interpolation, and
+        // keeps them split (`tSTRING_BEG` / content / `tSTRING_END`) when there
+        // is. Reproduce the merge: scan forward from `STRING_BEGIN` over
+        // `STRING_CONTENT` runs; if the next token is `STRING_END` the string is
+        // plain, so emit one token spanning both delimiters. An interpolation
+        // part (`EMBEXPR_BEGIN` / `EMBVAR` / ...) stops the scan and the
+        // `STRING_BEGIN` falls through to a lone `tSTRING_BEG`-shaped token, as
+        // before. This matters for `Layout/ExtraSpacing`, which walks the whole
+        // token stream as adjacent pairs: without the merge a bare opening `"`
+        // would spuriously align (via `aligned_words?`) with a `"` one line away.
+        if prism_name == "STRING_BEGIN" {
+            let mut j = i; // `i` already points past this STRING_BEGIN.
+            while j < n && prism_token_name(raws[j].type_id) == "STRING_CONTENT" {
+                j += 1;
+            }
+            if j < n && prism_token_name(raws[j].type_id) == "STRING_END" {
+                let merged_end = raws[j].start + raws[j].len;
+                out.push(Token {
+                    kind: ParserTokenType::Other,
+                    begin_pos: b,
+                    end_pos: merged_end,
+                });
+                i = j + 1;
+                continue;
+            }
+        }
+
         let mut kind = classify(prism_name);
 
         // A `{` in the EXPR_BEG|EXPR_LABEL lex state opens a hash literal / block
@@ -861,3 +891,4 @@ mod tests {
         s[start..i].parse().ok()
     }
 }
+

@@ -431,6 +431,11 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # must map to the right char column.
     "Layout/SpaceAroundOperators" =>
       "x = \"あ\"+\"い\"\n",
+    # The extra-space gap and its removal range sit right after a multibyte
+    # string literal, so the whitespace byte offsets must map to the right char
+    # columns.
+    "Layout/ExtraSpacing" =>
+      "x = \"あ\"  + \"い\"\n",
   }
 
   cases.each do |cop_name, body|

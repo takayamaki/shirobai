@@ -123,6 +123,7 @@ module Shirobai
       frozen_string_literal_comment: [0, 91].freeze,
       arguments_forwarding: [0, 92].freeze,
       space_around_operators: [0, 93].freeze,
+      extra_spacing: [0, 94].freeze,
       # shirobai-performance plugin slots (origin 1). Always present in the
       # wire format; the Rust side leaves them empty unless the plugin gem
       # registered its packed segment (`Dispatch.register_plugin_packer`).
@@ -398,6 +399,7 @@ module Shirobai
         fslc = Cop::Style::FrozenStringLiteralComment.bundle_args(config)
         af = Cop::Style::ArgumentsForwarding.bundle_args(config)
         sao = Cop::Layout::SpaceAroundOperators.bundle_args(config)
+        es = Cop::Layout::ExtraSpacing.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -459,7 +461,11 @@ module Shirobai
           *rf[0], # RedundantFreeze target_ruby_30_plus / string_literals_frozen_by_default (2 nums)
           *fslc[0], # FrozenStringLiteralComment style (1 num)
           *af[0], # ArgumentsForwarding target_ruby / allow_only_rest / use_anon / explicit_block (4 nums)
-          *sao[0] # SpaceAroundOperators enabled / exponent / rational / allow / table / force (6 nums)
+          *sao[0], # SpaceAroundOperators enabled / exponent / rational / allow / table / force (6 nums)
+          # ExtraSpacing enabled / allow_for_alignment / allow_before_trailing_comments (3 nums).
+          # Its `ForceEqualSignAlignment` is NOT re-packed here: SpaceAroundOperators
+          # already packs that flag at num 126, the single wire source both cops read.
+          es[0][0], es[0][1], es[0][2]
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0], aba[0],
