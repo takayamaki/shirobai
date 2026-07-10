@@ -673,4 +673,191 @@ mod tests {
             .unwrap(); // tSTRING_BEG `<<~HEREDOC`
         assert!(rp == beg + 1, "the close paren follows the heredoc opener");
     }
+
+    // Corpus parity regression for the promoted token translation. Compares the
+    // module's predicate true-sets (begin_pos, end_pos) against the whitequark
+    // parser-gem oracle (the stream RuboCop actually consumes), reproducing the
+    // Stage 0 spike numbers. Ignored by default — it needs the corpus oracle
+    // dump; run with the path in `SHIROBAI_TOKEN_ORACLE`:
+    //
+    //   SHIROBAI_TOKEN_ORACLE=.tmp/2026-06-14/pm-lex-spike/oracle_all.jsonl \
+    //     SHIROBAI_CORPUS_BASE=<repo root that .tmp/mastodon lives under> \
+    //     cargo test -p shirobai-core --release token_oracle_corpus_parity -- --ignored --nocapture
+    //
+    // The oracle JSONL is one record per file: {"path","tokens":[{"t","b","e"}],
+    // "valid_syntax":bool|"error":...}. Offsets are byte offsets.
+    #[test]
+    #[ignore = "needs corpus oracle dump (SHIROBAI_TOKEN_ORACLE)"]
+    fn token_oracle_corpus_parity() {
+        use std::collections::BTreeSet;
+
+        let oracle_path = match std::env::var("SHIROBAI_TOKEN_ORACLE") {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        let data = std::fs::read_to_string(&oracle_path).expect("read oracle dump");
+
+        // Predicate -> the parser-gem type names that satisfy it (oracle side).
+        // Every predicate the cops on this token base consume is asserted to
+        // match the whitequark oracle on every effective file, `new_line?`
+        // included (the `Layout/ExtraSpacing` `tNL` rules; see `TnlPlan`).
+        #[allow(clippy::type_complexity)]
+        let predicates: &[(&str, &[&str], fn(&Token) -> bool)] = &[
+            ("left_parens?", &["tLPAREN", "tLPAREN2"], Token::left_parens),
+            ("right_parens?", &["tRPAREN"], Token::right_parens),
+            ("comment?", &["tCOMMENT"], Token::comment),
+            (
+                "left_curly_brace?",
+                &["tLCURLY", "tLAMBEG"],
+                Token::left_curly_brace,
+            ),
+            ("comma?", &["tCOMMA"], Token::comma),
+            ("semicolon?", &["tSEMI"], Token::semicolon),
+            ("equal_sign?", &["tEQL", "tOP_ASGN"], Token::equal_sign),
+            ("right_curly_brace?", &["tRCURLY"], Token::right_curly_brace),
+            ("right_bracket?", &["tRBRACK"], Token::right_bracket),
+            ("pipe", &["tPIPE"], Token::pipe),
+            ("string_dend", &["tSTRING_DEND"], Token::string_dend),
+            ("new_line?", &["tNL"], Token::new_line),
+        ];
+
+        let mut effective = 0usize;
+        let mut match_counts = vec![0usize; predicates.len()];
+        let mut mismatches: Vec<(String, &str)> = Vec::new();
+
+        for line in data.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let rec = parse_oracle_record(line);
+            let Some(rec) = rec else { continue };
+            if rec.error || !rec.valid_syntax {
+                continue;
+            }
+            // Oracle paths are relative to the repo root; resolve against
+            // SHIROBAI_CORPUS_BASE when set (cargo test's cwd is the crate dir).
+            let full = match std::env::var("SHIROBAI_CORPUS_BASE") {
+                Ok(base) => std::path::Path::new(&base).join(&rec.path),
+                Err(_) => std::path::PathBuf::from(&rec.path),
+            };
+            let source = match std::fs::read(&full) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            effective += 1;
+            let (_result, raw) = parse_with_lex(&source);
+            let toks = translate_tokens(&source, &raw);
+
+            for (idx, (name, oracle_types, pred)) in predicates.iter().enumerate() {
+                let oracle_set: BTreeSet<(usize, usize)> = rec
+                    .tokens
+                    .iter()
+                    .filter(|(t, _, _)| oracle_types.contains(&t.as_str()))
+                    .map(|&(_, b, e)| (b, e))
+                    .collect();
+                let mine: BTreeSet<(usize, usize)> = toks
+                    .iter()
+                    .filter(|t| pred(t))
+                    .map(|t| (t.begin_pos, t.end_pos))
+                    .collect();
+                if oracle_set == mine {
+                    match_counts[idx] += 1;
+                } else if mismatches.len() < 20 {
+                    mismatches.push((rec.path.clone(), name));
+                }
+            }
+        }
+
+        eprintln!("effective files: {effective}");
+        for (idx, (name, _, _)) in predicates.iter().enumerate() {
+            eprintln!("  {name}: {}/{}", match_counts[idx], effective);
+        }
+        if !mismatches.is_empty() {
+            eprintln!("first mismatches: {mismatches:?}");
+        }
+        assert!(effective > 2000, "expected a real corpus, got {effective}");
+        for (idx, (name, _, _)) in predicates.iter().enumerate() {
+            assert_eq!(
+                match_counts[idx], effective,
+                "predicate {name} diverged on {} files",
+                effective - match_counts[idx]
+            );
+        }
+    }
+
+    struct OracleRecord {
+        path: String,
+        tokens: Vec<(String, usize, usize)>,
+        valid_syntax: bool,
+        error: bool,
+    }
+
+    /// Minimal hand parser for the oracle JSONL records (avoids a serde dep).
+    fn parse_oracle_record(line: &str) -> Option<OracleRecord> {
+        let path = json_string_field(line, "\"path\":")?;
+        let error = line.contains("\"error\":");
+        let valid_syntax = !line.contains("\"valid_syntax\":false");
+        let mut tokens = Vec::new();
+        // Each token object: {"t":"tX","b":N,"e":M}
+        let mut rest = line;
+        while let Some(tpos) = rest.find("{\"t\":") {
+            rest = &rest[tpos..];
+            let t = json_string_field(rest, "\"t\":")?;
+            let b = json_uint_field(rest, "\"b\":")?;
+            let e = json_uint_field(rest, "\"e\":")?;
+            tokens.push((t, b, e));
+            rest = &rest[5..];
+        }
+        Some(OracleRecord {
+            path,
+            tokens,
+            valid_syntax,
+            error,
+        })
+    }
+
+    fn json_string_field(s: &str, key: &str) -> Option<String> {
+        let pos = s.find(key)? + key.len();
+        let bytes = s.as_bytes();
+        let mut i = pos;
+        while i < bytes.len() && bytes[i] != b'"' {
+            i += 1;
+        }
+        i += 1; // opening quote
+        let start = i;
+        let mut val = String::new();
+        while i < bytes.len() && bytes[i] != b'"' {
+            if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                i += 1;
+                val.push(match bytes[i] {
+                    b'n' => '\n',
+                    b't' => '\t',
+                    b'\\' => '\\',
+                    b'/' => '/',
+                    b'"' => '"',
+                    other => other as char,
+                });
+            } else {
+                val.push(bytes[i] as char);
+            }
+            i += 1;
+        }
+        let _ = start;
+        Some(val)
+    }
+
+    fn json_uint_field(s: &str, key: &str) -> Option<usize> {
+        let pos = s.find(key)? + key.len();
+        let bytes = s.as_bytes();
+        let mut i = pos;
+        while i < bytes.len() && !bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        let start = i;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        s[start..i].parse().ok()
+    }
 }
