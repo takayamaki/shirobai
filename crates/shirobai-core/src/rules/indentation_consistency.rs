@@ -407,6 +407,11 @@ impl<'a> Visitor<'a> {
         } else if let Some(n) = node.as_begin_node() {
             push_opt(n.statements());
             push_opt(n.else_clause().and_then(|e| e.statements()));
+            // `EnsureNode` hangs off the concretely-typed `ensure_clause`
+            // field, which the generated walker visits directly — the branch
+            // hooks never fire for it (same family as `RescueNode`). Pull the
+            // ensure body in from the owning begin.
+            push_opt(n.ensure_clause().and_then(|e| e.statements()));
         } else if let Some(n) = node.as_if_node() {
             push_opt(n.statements());
         } else if let Some(n) = node.as_unless_node() {
@@ -427,8 +432,6 @@ impl<'a> Visitor<'a> {
         } else if let Some(n) = node.as_when_node() {
             push_opt(n.statements());
         } else if let Some(n) = node.as_in_node() {
-            push_opt(n.statements());
-        } else if let Some(n) = node.as_ensure_node() {
             push_opt(n.statements());
         } else if let Some(n) = node.as_embedded_statements_node() {
             push_opt(n.statements());
@@ -526,6 +529,20 @@ mod tests {
     #[test]
     fn single_statement_body_not_checked() {
         assert!(run("def test\n  a\nend\n").is_empty());
+    }
+
+    #[test]
+    fn ensure_body_inconsistent() {
+        // The EnsureNode never fires branch hooks (concretely-typed field);
+        // the ensure body is pulled in from the owning BeginNode.
+        let got = run("def test\n  a\nensure\n  b\n c\nend\n");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].column_delta, 1);
+    }
+
+    #[test]
+    fn ensure_body_consistent_no_offense() {
+        assert!(run("def test\n  a\nensure\n  b\n  c\nend\n").is_empty());
     }
 
     #[test]
