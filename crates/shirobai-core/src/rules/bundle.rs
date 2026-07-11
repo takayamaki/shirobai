@@ -28,10 +28,12 @@ use super::{
     hash_alignment, hash_each_methods, hash_syntax, hash_transform_keys,
     if_unless_modifier,
     indentation_consistency, indentation_width,
+    initial_indentation,
     leading_empty_lines,
     line_end_concatenation, line_length,
     line_length_breakable, method_length, method_name, module_length,
     multiline_method_call_brace_layout, nested_parenthesized_calls,
+    ordered_magic_comments,
     parentheses_as_grouped_expression,
     percent_literal_delimiters,
     perf_detect, perf_end_with, perf_start_with, perf_string_include, perf_times_map,
@@ -42,6 +44,7 @@ use super::{
     require_parentheses, rspec_dispatcher, rspec_empty_line, rspec_language, safe_navigation_chain,
     self_assignment,
     semicolon,
+    space_around_equals_in_parameter_default,
     space_around_keyword, space_around_method_call_operator, space_around_operators,
     space_before_block_braces,
     space_before_first_arg,
@@ -184,9 +187,11 @@ pub fn check_multiline_bundle(
 /// | 124 | space_around_operators allow_for_alignment (`AllowForAlignment`) |
 /// | 125 | space_around_operators hash_table_style (`Layout/HashAlignment` `EnforcedHashRocketStyle` includes `table`) |
 /// | 126 | force_equal_sign_alignment (`Layout/ExtraSpacing` `ForceEqualSignAlignment`) — the single wire source for this flag, read by BOTH `Layout/SpaceAroundOperators` (its autocorrect collision avoidance) and `Layout/ExtraSpacing` (its own `ForceEqualSignAlignment` check). `Layout/ExtraSpacing` does not re-pack it |
-/// | 127 | extra_spacing enabled — ORed into the token-cop gate above (`1` also makes the bundle collect the token stream). `Layout/ExtraSpacing` `Enabled` is not literally `false` |
-/// | 128 | extra_spacing allow_for_alignment (`AllowForAlignment`, default true) |
-/// | 129 | extra_spacing allow_before_trailing_comments (`AllowBeforeTrailingComments`, default false) |
+/// | 127 | space_around_equals_in_parameter_default style (`Layout/SpaceAroundEqualsInParameterDefault` `EnforcedStyle`: 0 = space, 1 = no_space) — toucher-batch-1's core index |
+/// | 128 | extra_spacing enabled — ORed into the token-cop gate above (`1` also makes the bundle collect the token stream). `Layout/ExtraSpacing` `Enabled` is not literally `false` |
+/// | 129 | extra_spacing allow_for_alignment (`AllowForAlignment`, default true) |
+/// | 130 | extra_spacing allow_before_trailing_comments (`AllowBeforeTrailingComments`, default false) |
+/// | 131+ | reserved for `feat/toucher-batch-2` (its cops append after ExtraSpacing) |
 ///
 /// Core segment `lists[0]` (`Vec<String>`):
 ///
@@ -384,6 +389,10 @@ pub struct BundleConfig {
     pub space_inside_parens: space_inside_parens::Config,
     pub space_inside_reference_brackets: space_inside_reference_brackets::Config,
     pub space_before_first_arg: space_before_first_arg::Config,
+    /// `Layout/SpaceAroundEqualsInParameterDefault` `EnforcedStyle`
+    /// (0 = space, 1 = no_space).
+    pub space_around_equals_in_parameter_default:
+        space_around_equals_in_parameter_default::Config,
     pub duplicate_methods: duplicate_methods::Config,
     /// `Style/RedundantFreeze`: `AllCops/TargetRubyVersion >= 3.0`.
     pub redundant_freeze_target_30_plus: bool,
@@ -457,7 +466,7 @@ pub const ORIGIN_RSPEC: usize = 2;
 pub const ORIGIN_RAILS: usize = 3;
 pub const N_ORIGINS: usize = 4;
 
-const CORE_NUMS_LEN: usize = 130;
+const CORE_NUMS_LEN: usize = 131;
 const CORE_LISTS_LEN: usize = 28;
 const PERF_NUMS_LEN: usize = 3;
 const PERF_LISTS_LEN: usize = 1;
@@ -685,6 +694,12 @@ impl BundleConfig {
             stabby_lambda_parentheses: stabby_lambda_parentheses::Config {
                 style: nums[85] as u8,
             },
+            // toucher-batch-1: nums[127] is its core index; ExtraSpacing appends
+            // its own nums at 128-130 right after it.
+            space_around_equals_in_parameter_default:
+                space_around_equals_in_parameter_default::Config {
+                    style: nums[127] as u8,
+                },
             ambiguous_block_association: ambiguous_block_association::Config {
                 allowed_methods: next_list(),
             },
@@ -769,12 +784,12 @@ impl BundleConfig {
                 redundant_block: next_list(),
             },
             extra_spacing: extra_spacing::Config {
-                allow_for_alignment: nums[128] != 0,
-                allow_before_trailing_comments: nums[129] != 0,
+                allow_for_alignment: nums[129] != 0,
+                allow_before_trailing_comments: nums[130] != 0,
                 // Shared with `space_around_operators` (num 126), a single source.
                 force_equal_sign_alignment: nums[126] != 0,
             },
-            extra_spacing_enabled: nums[127] != 0,
+            extra_spacing_enabled: nums[128] != 0,
             space_around_operators: space_around_operators::Config {
                 exponent_style: nums[122] as u8,
                 rational_style: nums[123] as u8,
@@ -932,6 +947,10 @@ pub struct BundleResult {
     pub colon_method_call: Vec<colon_method_call::ColonMethodCallOffense>,
     pub stabby_lambda_parentheses:
         Vec<stabby_lambda_parentheses::StabbyLambdaParenthesesOffense>,
+    /// `Layout/SpaceAroundEqualsInParameterDefault`: one `[start, end]` range
+    /// per offending optarg (the `=` and its surrounding space).
+    pub space_around_equals_in_parameter_default:
+        Vec<space_around_equals_in_parameter_default::SpaceAroundEqualsOffense>,
     pub unreachable_code: Vec<unreachable_code::UnreachableCodeOffense>,
     pub hash_transform_keys: Vec<hash_transform_keys::HashTransformKeysOffense>,
     pub ambiguous_block_association:
@@ -945,6 +964,9 @@ pub struct BundleResult {
     pub empty_lines: Vec<empty_lines::EmptyLinesOffense>,
     /// At most one offense per file (the leading-blank-line offense).
     pub leading_empty_lines: Option<leading_empty_lines::LeadingEmptyLinesOffense>,
+    /// `Layout/InitialIndentation`: true iff the first non-comment token is
+    /// indented (a cheap gate; the wrapper runs stock's exact construction).
+    pub initial_indentation: bool,
     pub space_inside_hash_literal_braces:
         Vec<space_inside_hash_literal_braces::SpaceInsideHashLiteralBracesOffense>,
     pub space_inside_array_literal_brackets:
@@ -958,6 +980,9 @@ pub struct BundleResult {
     /// 1-based lines of duplicate magic comments (encoding bucket then
     /// frozen-string-literal bucket, document order within each).
     pub duplicate_magic_comment: Vec<duplicate_magic_comment::DuplicateLine>,
+    /// `Lint/OrderedMagicComments`: at most one offense, the two 1-based line
+    /// numbers `(encoding_line, other_line)` that must be swapped.
+    pub ordered_magic_comments: Option<ordered_magic_comments::OrderedOffense>,
     /// Per-file `found_method` event stream in stock callback order (the
     /// Ruby wrapper replays the cross-file bookkeeping).
     pub duplicate_methods: Vec<duplicate_methods::DupMethodEvent>,
@@ -1256,6 +1281,10 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let mut cmc_rule = colon_method_call::build_rule();
     let mut slp_rule =
         stabby_lambda_parentheses::build_rule(source, cfg.stabby_lambda_parentheses);
+    let mut saepd_rule = space_around_equals_in_parameter_default::build_rule(
+        source,
+        cfg.space_around_equals_in_parameter_default,
+    );
     let mut uc_rule = unreachable_code::build_rule();
     let mut htk_rule = hash_transform_keys::build_rule(source);
     let mut aba_rule =
@@ -1383,6 +1412,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut rsa_rule,
         &mut cmc_rule,
         &mut slp_rule,
+        &mut saepd_rule,
         &mut uc_rule,
         &mut htk_rule,
         &mut aba_rule,
@@ -1538,6 +1568,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let redundant_self_assignment = rsa_rule.offenses;
     let colon_method_call = cmc_rule.offenses;
     let stabby_lambda_parentheses = slp_rule.offenses;
+    let space_around_equals_in_parameter_default = saepd_rule.offenses;
     let unreachable_code = uc_rule.offenses;
     let hash_transform_keys = htk_rule.offenses;
     let ambiguous_block_association = aba_rule.offenses;
@@ -1558,10 +1589,19 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // from the cached parse, no AST walk.
     let leading_empty_lines =
         leading_empty_lines::check_leading_empty_lines(source);
+    // `Layout/InitialIndentation`: a cheap leading-byte scan (no AST walk, no
+    // token materialization) answering "is the first non-comment token
+    // indented?". The wrapper turns a `true` into stock's exact offense.
+    let initial_indentation =
+        initial_indentation::check_initial_indentation(source);
     // `Lint/DuplicateMagicComment` is a leading-line scan (comments + the
     // first non-comment token position from the cached parse), no AST walk.
     let duplicate_magic_comment =
         duplicate_magic_comment::check_duplicate_magic_comment(source);
+    // `Lint/OrderedMagicComments` shares that same leading-line scan (no AST
+    // walk); it reports at most one offense (the encoding/other line pair).
+    let ordered_magic_comments =
+        ordered_magic_comments::check_ordered_magic_comments(source);
     // `Style/RedundantFreeze`: string-receiver offenses are conditional on the
     // once-per-file `frozen_string_literals_enabled?` decision, folded in here.
     let redundant_freeze =
@@ -1662,6 +1702,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         redundant_self_assignment,
         colon_method_call,
         stabby_lambda_parentheses,
+        space_around_equals_in_parameter_default,
         unreachable_code,
         hash_transform_keys,
         ambiguous_block_association,
@@ -1671,6 +1712,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         empty_line_after_magic_comment,
         empty_lines,
         leading_empty_lines,
+        initial_indentation,
         space_inside_hash_literal_braces,
         space_inside_array_literal_brackets,
         space_before_block_braces,
@@ -1679,6 +1721,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         space_inside_reference_brackets,
         space_before_first_arg,
         duplicate_magic_comment,
+        ordered_magic_comments,
         duplicate_methods: dm_rule.events,
         file_null,
         semicolon: semicolon_rule.into_offenses(),
@@ -1817,7 +1860,8 @@ mod tests {
             0, // frozen_string_literal_comment: style(always)
             34, 1, 1, 0, // arguments_forwarding: target_ruby / allow_only_rest / use_anon / explicit_block
             1, 0, 0, 1, 0, 0, // space_around_operators: enabled / exponent / rational / allow_for_alignment(true) / hash_table / force_equal
-            1, 1, 0, // extra_spacing: enabled / allow_for_alignment(true) / allow_before_trailing_comments(false)
+            0, // space_around_equals_in_parameter_default: style (space) — index 127
+            1, 1, 0, // extra_spacing: enabled(128) / allow_for_alignment(129, true) / allow_before_trailing_comments(130, false)
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -4335,6 +4379,51 @@ mod tests {
     }
 
     #[test]
+    fn check_all_bundle_matches_standalone_ordered_magic_comments() {
+        let src = "# frozen_string_literal: true\n# encoding: ascii\nx = 1\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone =
+            super::ordered_magic_comments::check_ordered_magic_comments(src.as_bytes());
+        assert!(alone.is_some());
+        assert_eq!(bundle.ordered_magic_comments, alone);
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_initial_indentation() {
+        let src = "  def f\n  end\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone =
+            super::initial_indentation::check_initial_indentation(src.as_bytes());
+        assert!(alone);
+        assert_eq!(bundle.initial_indentation, alone);
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_space_around_equals_in_parameter_default() {
+        let src = "def f(x, y=0, z = 1); end\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone = super::space_around_equals_in_parameter_default::check_space_around_equals_in_parameter_default(
+            src.as_bytes(),
+            cfg.space_around_equals_in_parameter_default,
+        );
+        assert!(!alone.is_empty());
+        assert_eq!(bundle.space_around_equals_in_parameter_default.len(), alone.len());
+        for (a, b) in bundle
+            .space_around_equals_in_parameter_default
+            .iter()
+            .zip(&alone)
+        {
+            assert_eq!((a.start, a.end), (b.start, b.end));
+        }
+    }
+
+    #[test]
     fn check_all_bundle_matches_standalone_file_null() {
         // A `/dev/null` literal (unlocking the gate), a bare `nul` after it,
         // an exempt array member, a `NUL:`, and a regexp body — several shapes
@@ -4484,8 +4573,8 @@ mod tests {
     fn check_all_bundle_skips_extra_spacing_when_gate_off() {
         let src = "x =  1\n";
         let (mut nums, lists) = default_packed();
-        // core-origin num 127 is the extra_spacing enable gate.
-        nums[0][127] = 0;
+        // core-origin num 128 is the extra_spacing enable gate.
+        nums[0][128] = 0;
         let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
         let bundle = check_all_bundle(src.as_bytes(), &cfg);
         assert!(bundle.extra_spacing.is_empty());

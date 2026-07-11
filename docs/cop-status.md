@@ -4,14 +4,14 @@ This document tracks which RuboCop cops shirobai has reimplemented in Rust,
 and which cops were attempted but reverted because they did not meet the
 project's drop-in compatibility and speed requirements together.
 
-## Implemented (95 cops)
+## Implemented (98 cops)
 
 shirobai replaces these cops with Rust implementations.
 Every offense position, message, and autocorrected byte matches stock RuboCop
 on all five verification corpora (Mastodon, Discourse, Redmine, fluentd,
 and RuboCop itself).
 
-### Layout (51)
+### Layout (53)
 
 - `Layout/AccessModifierIndentation`
 - `Layout/ArgumentAlignment`
@@ -42,6 +42,7 @@ and RuboCop itself).
 - `Layout/HashAlignment`
 - `Layout/IndentationConsistency`
 - `Layout/IndentationWidth`
+- `Layout/InitialIndentation`
 - `Layout/LeadingEmptyLines`
 - `Layout/LineLength`
 - `Layout/MultilineMethodCallBraceLayout`
@@ -50,6 +51,7 @@ and RuboCop itself).
 - `Layout/SpaceAfterColon`
 - `Layout/SpaceAfterComma`
 - `Layout/SpaceAfterSemicolon`
+- `Layout/SpaceAroundEqualsInParameterDefault`
 - `Layout/SpaceAroundKeyword`
 - `Layout/SpaceAroundMethodCallOperator`
 - `Layout/SpaceAroundOperators`
@@ -65,12 +67,13 @@ and RuboCop itself).
 - `Layout/SpaceInsideReferenceBrackets`
 - `Layout/TrailingEmptyLines`
 
-### Lint (11)
+### Lint (12)
 
 - `Lint/AmbiguousBlockAssociation`
 - `Lint/Debugger`
 - `Lint/DuplicateMagicComment`
 - `Lint/DuplicateMethods`
+- `Lint/OrderedMagicComments`
 - `Lint/ParenthesesAsGroupedExpression`
 - `Lint/RequireParentheses`
 - `Lint/SafeNavigationChain`
@@ -719,6 +722,16 @@ post-cluster HEAD on the corpus's own `.rubocop.yml`).
   of whether the file actually had any offense, and the per-file overhead was
   disproportionate to the saving. Per-cop paired bench on Mastodon showed a
   regression.
+- **Re-landed later (2026-07, toucher-batch-1)**: the byte-width lexer is
+  gone. Rust now only answers the cheap gate "is the first non-comment token
+  indented?" with a leading-byte scan — no token materialization, no lexer.
+  On the overwhelming majority of files (column-0 start) that settles it with
+  zero token cost, which is the point: stock's `first_token` forces the
+  parser-gem token stream on every file. Only the rare file with an actually
+  indented first line falls through to stock's own `first_token` /
+  `space_before` construction in the wrapper, so the offense and autocorrect
+  bytes are stock's by construction (the scan is a pure speed gate that can
+  only over-report, never under-report). Now in the Implemented list.
 
 ### Token-spacing cluster (6 cops)
 

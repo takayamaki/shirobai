@@ -436,6 +436,23 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # columns.
     "Layout/ExtraSpacing" =>
       "x = \"あ\"  + \"い\"\n",
+    # The wrapper builds the offense range and the line swap from 1-based LINE
+    # numbers via stock's own `buffer.line_range` (no Rust byte offset), so the
+    # multibyte prefix line must not perturb the line indexing: fsl then
+    # encoding after the prefix comment still pairs lines 3 and 2.
+    "Lint/OrderedMagicComments" =>
+      "# frozen_string_literal: true\n# encoding: ascii\nx = \"あ\"\n",
+    # The multibyte prefix comment is skipped; the indented token on the next
+    # line offends. The offense range and removal come from stock's own
+    # `first_token` / `range_with_surrounding_space`, which the multibyte prefix
+    # must not shift.
+    "Layout/InitialIndentation" =>
+      "  puts \"あ\"\n",
+    # The `=` offense range `[arg.end, value.begin)` sits after the multibyte
+    # prefix comment, so its prism byte offsets must map to char offsets, and
+    # the `/=\s*(\S+)/` autocorrect must round-trip a multibyte default value.
+    "Layout/SpaceAroundEqualsInParameterDefault" =>
+      "def f(x, y=:あ); end\n",
   }
 
   cases.each do |cop_name, body|

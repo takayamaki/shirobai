@@ -123,7 +123,12 @@ module Shirobai
       frozen_string_literal_comment: [0, 91].freeze,
       arguments_forwarding: [0, 92].freeze,
       space_around_operators: [0, 93].freeze,
-      extra_spacing: [0, 94].freeze,
+      # toucher-batch-1 core slots (94-96). ExtraSpacing takes the next free
+      # slot (97) after the merge.
+      ordered_magic_comments: [0, 94].freeze,
+      initial_indentation: [0, 95].freeze,
+      space_around_equals_in_parameter_default: [0, 96].freeze,
+      extra_spacing: [0, 97].freeze,
       # shirobai-performance plugin slots (origin 1). Always present in the
       # wire format; the Rust side leaves them empty unless the plugin gem
       # registered its packed segment (`Dispatch.register_plugin_packer`).
@@ -390,6 +395,10 @@ module Shirobai
         # Lint/DuplicateMagicComment is config-less; its `bundle_args` returns
         # `[]` and contributes nothing to `nums` / `lists`.
         _ = Cop::Lint::DuplicateMagicComment.bundle_args(config)
+        # Lint/OrderedMagicComments is config-less too.
+        _ = Cop::Lint::OrderedMagicComments.bundle_args(config)
+        # Layout/InitialIndentation is config-less too.
+        _ = Cop::Layout::InitialIndentation.bundle_args(config)
         dm = Cop::Lint::DuplicateMethods.bundle_args(config)
         # Style/Semicolon is config-less (path (a) needs no config; path (b)'s
         # AllowAsExpressionSeparator is handled in the wrapper); its
@@ -399,6 +408,7 @@ module Shirobai
         fslc = Cop::Style::FrozenStringLiteralComment.bundle_args(config)
         af = Cop::Style::ArgumentsForwarding.bundle_args(config)
         sao = Cop::Layout::SpaceAroundOperators.bundle_args(config)
+        saepd = Cop::Layout::SpaceAroundEqualsInParameterDefault.bundle_args(config)
         es = Cop::Layout::ExtraSpacing.bundle_args(config)
 
         nums = [
@@ -462,9 +472,11 @@ module Shirobai
           *fslc[0], # FrozenStringLiteralComment style (1 num)
           *af[0], # ArgumentsForwarding target_ruby / allow_only_rest / use_anon / explicit_block (4 nums)
           *sao[0], # SpaceAroundOperators enabled / exponent / rational / allow / table / force (6 nums)
-          # ExtraSpacing enabled / allow_for_alignment / allow_before_trailing_comments (3 nums).
-          # Its `ForceEqualSignAlignment` is NOT re-packed here: SpaceAroundOperators
-          # already packs that flag at num 126, the single wire source both cops read.
+          *saepd[0], # SpaceAroundEqualsInParameterDefault style (1 num, index 127)
+          # ExtraSpacing enabled / allow_for_alignment / allow_before_trailing_comments
+          # (3 nums, indices 128/129/130). Its `ForceEqualSignAlignment` is NOT
+          # re-packed here: SpaceAroundOperators already packs that flag at num 126,
+          # the single wire source both cops read.
           es[0][0], es[0][1], es[0][2]
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],

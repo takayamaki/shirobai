@@ -1848,7 +1848,8 @@ fn register_bundle_config(
 /// 87 array_alignment / 88 file_null / 89 semicolon /
 /// 90 redundant_freeze / 91 frozen_string_literal_comment /
 /// 92 arguments_forwarding / 93 space_around_operators /
-/// 94 extra_spacing
+/// 94 ordered_magic_comments / 95 initial_indentation /
+/// 96 space_around_equals_in_parameter_default / 97 extra_spacing
 ///
 /// Performance slots (origin 1; every slot empty unless the plugin gem
 /// registered its packed segment):
@@ -1895,7 +1896,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
         // Core origin (result[0]).
-        let ary = ruby.ary_new_capa(95);
+        let ary = ruby.ary_new_capa(98);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -2033,6 +2034,13 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(r.frozen_string_literal_comment)?;
         ary.push(map_arguments_forwarding(r.arguments_forwarding))?;
         ary.push(map_space_around_operators(r.space_around_operators))?;
+        // toucher-batch-1 core slots (94-96); ExtraSpacing lands on the next
+        // free slot (97) after the merge.
+        ary.push(map_ordered_magic_comments(r.ordered_magic_comments))?;
+        ary.push(r.initial_indentation)?;
+        ary.push(map_space_around_equals_in_parameter_default(
+            r.space_around_equals_in_parameter_default,
+        ))?;
         ary.push(map_extra_spacing(r.extra_spacing))?;
         // Performance origin (result[1]).
         let perf = ruby.ary_new_capa(5);
@@ -2169,6 +2177,22 @@ fn map_leading_empty_lines(
     v.into_iter()
         .map(|o| (o.start, o.end, o.ac_start, o.ac_end))
         .collect()
+}
+
+/// `Lint/OrderedMagicComments`: the 0-or-1 `(encoding_line, other_line)` pair
+/// (1-based buffer lines) the wrapper swaps.
+fn map_ordered_magic_comments(
+    v: Option<shirobai_core::rules::ordered_magic_comments::OrderedOffense>,
+) -> Vec<(usize, usize)> {
+    v.into_iter().collect()
+}
+
+/// `Layout/SpaceAroundEqualsInParameterDefault`: one `[start, end]` byte range
+/// per offense (the `=` and its surrounding space).
+fn map_space_around_equals_in_parameter_default(
+    v: Vec<shirobai_core::rules::space_around_equals_in_parameter_default::SpaceAroundEqualsOffense>,
+) -> Vec<(usize, usize)> {
+    v.into_iter().map(|o| (o.start, o.end)).collect()
 }
 
 type IfUnlessModifierOps = Vec<(u8, usize, usize, String)>;
@@ -3284,6 +3308,14 @@ fn check_duplicate_magic_comment(source: RString) -> Vec<usize> {
     shirobai_core::rules::duplicate_magic_comment::check_duplicate_magic_comment(bytes(&source))
 }
 
+/// Ruby entry point for `Lint/OrderedMagicComments` (standalone fallback,
+/// config-less). Returns the 0-or-1 `(encoding_line, other_line)` pair.
+fn check_ordered_magic_comments(source: RString) -> Vec<(usize, usize)> {
+    map_ordered_magic_comments(
+        shirobai_core::rules::ordered_magic_comments::check_ordered_magic_comments(bytes(&source)),
+    )
+}
+
 /// Ruby entry point for `Style/FrozenStringLiteralComment` (standalone
 /// fallback). `style`: 0 always, 1 never, 2 always_true. Returns at most one
 /// packed offense `(kind, start, fin, line, insert_line, is_emacs)`; byte
@@ -3323,6 +3355,29 @@ fn check_empty_lines(source: RString) -> Vec<(usize, usize)> {
 fn check_leading_empty_lines(source: RString) -> Vec<(usize, usize, usize, usize)> {
     map_leading_empty_lines(
         shirobai_core::rules::leading_empty_lines::check_leading_empty_lines(bytes(&source)),
+    )
+}
+
+/// Ruby entry point for `Layout/InitialIndentation` (standalone fallback, no
+/// config). Returns true iff the first non-comment token is indented (the
+/// wrapper then runs stock's exact offense construction).
+fn check_initial_indentation(source: RString) -> bool {
+    shirobai_core::rules::initial_indentation::check_initial_indentation(bytes(&source))
+}
+
+/// Ruby entry point for `Layout/SpaceAroundEqualsInParameterDefault`
+/// (standalone fallback). `style`: 0 = space, 1 = no_space. Returns one
+/// `[start, end]` byte range per offense.
+fn check_space_around_equals_in_parameter_default(
+    source: RString,
+    style: u8,
+) -> Vec<(usize, usize)> {
+    let cfg = shirobai_core::rules::space_around_equals_in_parameter_default::Config { style };
+    map_space_around_equals_in_parameter_default(
+        shirobai_core::rules::space_around_equals_in_parameter_default::check_space_around_equals_in_parameter_default(
+            bytes(&source),
+            cfg,
+        ),
     )
 }
 
@@ -4297,6 +4352,18 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_duplicate_magic_comment",
         function!(check_duplicate_magic_comment, 1),
+    )?;
+    module.define_module_function(
+        "check_ordered_magic_comments",
+        function!(check_ordered_magic_comments, 1),
+    )?;
+    module.define_module_function(
+        "check_initial_indentation",
+        function!(check_initial_indentation, 1),
+    )?;
+    module.define_module_function(
+        "check_space_around_equals_in_parameter_default",
+        function!(check_space_around_equals_in_parameter_default, 2),
     )?;
     module.define_module_function(
         "check_frozen_string_literal_comment",
