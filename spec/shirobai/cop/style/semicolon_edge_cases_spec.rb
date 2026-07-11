@@ -9,9 +9,9 @@ require "spec_helper"
 #   1. Path (a) groups PARSER tokens by line, and the tokens include comments:
 #      a trailing comment makes the last token a `tCOMMENT`, so `foo; # x` is
 #      NOT flagged even though the `;` looks like a terminator.
-#   2. Path (b) scans the RAW LINE TEXT for every `;` once a line carries 2+
-#      expressions, so a `;` INSIDE a string literal on such a line is flagged
-#      (a stock quirk) and `-A` replaces it with a newline.
+#   2. Path (b) walks PARSER tokens for real `;` tokens once a line carries 2+
+#      expressions (1.88.2 rubocop#15376), so a `;` INSIDE a string/regexp
+#      literal on such a line is NOT flagged; only the separator `;` is.
 #   3. The trailing `;` of `foo = 1; bar = 2;` is registered by BOTH paths
 #      (path (a) remove, path (b) newline); stock's add_offense order and
 #      corrector conflict resolution decide the result. shirobai calls
@@ -54,10 +54,15 @@ RSpec.describe Shirobai::Cop::Style::Semicolon do
     expect_autocorrect_parity(stock_klass, shirobai_klass, "foo;\n", cfg)
   end
 
-  # --- Quirk 2: path (b) raw-line scan flags `;` inside a string. ---
+  # --- Quirk 2: path (b) token scan skips `;` inside a string/regexp. ---
 
-  it "flags a string `;` when the line carries two expressions" do
+  it "does not flag a string `;` even when the line carries two expressions" do
+    # Only the separator `;` after `a = 1` is flagged, not the one in "x;y".
     expect_autocorrect_parity(stock_klass, shirobai_klass, "a = 1; b = \"x;y\"\n", cfg)
+  end
+
+  it "does not flag a regexp `;` even when the line carries two expressions" do
+    expect_autocorrect_parity(stock_klass, shirobai_klass, "x = /a;b/; y = 2\n", cfg)
   end
 
   it "does not flag a string `;` on a single-expression line" do

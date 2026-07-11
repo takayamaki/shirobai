@@ -419,6 +419,8 @@ impl<'a> Visitor<'a> {
             self.on_block_node(node, &n);
         } else if let Some(n) = node.as_begin_node() {
             self.on_begin_node(&n);
+        } else if let Some(n) = node.as_parentheses_node() {
+            self.on_parens_group(&n);
         } else if let Some(c) = node.as_call_node() {
             self.on_send(node, &c);
         } else if let Some((assign_start, value)) = assignment_value(node) {
@@ -822,6 +824,28 @@ impl<'a> Visitor<'a> {
             return sel;
         }
         end_start
+    }
+
+    /// `on_begin` for a parenthesized grouping expression `(...)` (rubocop#15311).
+    /// prism models it as a `ParenthesesNode` (parser `:begin` with an explicit
+    /// `(`). When the closing `)` begins its own line, the body is indented one
+    /// step from the first non-space column of the line the `(` sits on.
+    fn on_parens_group(&mut self, n: &ruby_prism::ParenthesesNode<'_>) {
+        let close_start = n.closing_loc().start_offset();
+        if !self.begins_its_line(close_start) {
+            return;
+        }
+        let Some(body) = n.body() else { return };
+        // `opening_line_start`: the first non-space offset of the `(`-line.
+        let open_start = n.opening_loc().start_offset();
+        let ls = self.line_start(open_start);
+        // First non-space of the whole `(`-line; the `(` itself when nothing
+        // precedes it on the line.
+        let base_off = (ls..open_start)
+            .find(|&i| !matches!(self.source[i], b' ' | b'\t'))
+            .unwrap_or(open_start);
+        let bref = self.make_body(&body);
+        self.check_indentation(base_off, Some(bref), false);
     }
 
     fn on_begin_node(&mut self, n: &ruby_prism::BeginNode<'_>) {

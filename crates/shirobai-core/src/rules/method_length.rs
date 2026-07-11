@@ -116,19 +116,14 @@ impl Finder<'_> {
 
     /// `on_block` for `define_method`: stock's `node.method?(:define_method)`
     /// gate (receiver-agnostic, argument-type-agnostic). A no-argument
-    /// `define_method` block raises in stock (no offense), so it is skipped.
+    /// `define_method` block no longer raises in stock (rubocop#15404 made the
+    /// name-argument lookup nil-safe: `method_name&.basic_literal?`), so it is
+    /// measured too — just never filterable by `AllowedMethods`.
     fn process_call(&mut self, node: &ruby_prism::CallNode<'_>) {
         if node.name().as_slice() != b"define_method" {
             return;
         }
         let Some(block) = node.block().and_then(|b| b.as_block_node()) else {
-            return;
-        };
-        // `node.send_node.first_argument` must exist or stock raises -> no offense.
-        let Some(first) = node
-            .arguments()
-            .and_then(|a| a.arguments().iter().next())
-        else {
             return;
         };
         if self.calc.cannot_exceed(block.body().as_ref(), self.max) {
@@ -138,9 +133,14 @@ impl Finder<'_> {
         if length <= self.max {
             return;
         }
-        // `allowed?` only runs when the name argument is a basic literal; map
-        // that to a filterable name, else mark the candidate unfilterable.
-        let (name, filterable) = basic_literal_name(&first);
+        // `allowed?` only runs when the name argument is present and a basic
+        // literal; map that to a filterable name, else mark the candidate
+        // unfilterable (a missing / dynamic / interpolated name).
+        let first = node.arguments().and_then(|a| a.arguments().iter().next());
+        let (name, filterable) = match first {
+            Some(first) => basic_literal_name(&first),
+            None => (String::new(), false),
+        };
         let loc = node.location();
         self.push(
             loc.start_offset(),
@@ -355,11 +355,13 @@ mod tests {
         assert_eq!(got.filterable, vec![false]);
     }
 
-    // A `define_method` block with no argument raises in stock -> skipped.
+    // A `define_method` block with no argument is measured (rubocop#15404 made
+    // stock nil-safe instead of raising), and is never filterable.
     #[test]
-    fn define_method_no_args_skipped() {
+    fn define_method_no_args_measured() {
         let got = run("define_method do\n  a = 1\n  a = 2\n  a = 3\nend", 2, false);
-        assert!(got.lengths.is_empty());
+        assert_eq!(got.lengths, vec![3]);
+        assert_eq!(got.filterable, vec![false]);
     }
 
     // A brace `define_method` block also counts.

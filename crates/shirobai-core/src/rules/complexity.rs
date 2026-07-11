@@ -261,6 +261,7 @@ fn score_body(source: &[u8], body: &Node<'_>) -> (usize, usize) {
     let mut scorer = Scorer {
         source,
         csend_vars: HashSet::new(),
+        guard_locs: HashSet::new(),
         cyclomatic: 1,
         perceived: 1,
     };
@@ -273,6 +274,12 @@ struct Scorer<'a> {
     /// Local variables that already had a counted `&.` since their last
     /// assignment (repeated `&.` on the same variable is discounted).
     csend_vars: HashSet<Vec<u8>>,
+    /// Locations of `case`/`in` pattern-guard nodes. prism models a guard
+    /// (`in pat if cond`) as an `IfNode` / `UnlessNode` that IS the `in`
+    /// pattern; parser-gem models it as a distinct `:if_guard` / `:unless_guard`
+    /// that is never a counted decision point. We record each guard's location
+    /// when scoring the `case_match` node and skip it when the walk reaches it.
+    guard_locs: HashSet<(usize, usize)>,
     cyclomatic: usize,
     perceived: usize,
 }
@@ -341,13 +348,30 @@ impl Scorer<'_> {
         } else if let Some(call) = node.as_call_node() {
             self.score_call(&call);
         } else if let Some(if_node) = node.as_if_node() {
-            self.cyclomatic += 1;
-            self.perceived += self.perceived_if_score(&if_node);
+            // Skip a `case`/`in` pattern guard (prism models it as an `IfNode`);
+            // parser-gem's `:if_guard` is not a counted decision point.
+            if !self.guard_locs.contains(&loc_of(node)) {
+                self.cyclomatic += 1;
+                self.perceived += self.perceived_if_score(&if_node);
+            }
         } else if let Some(unless_node) = node.as_unless_node() {
-            self.cyclomatic += 1;
-            self.perceived += usize::from(unless_node.else_clause().is_some()) + 1;
+            if !self.guard_locs.contains(&loc_of(node)) {
+                self.cyclomatic += 1;
+                self.perceived += usize::from(unless_node.else_clause().is_some()) + 1;
+            }
         } else if let Some(case_node) = node.as_case_node() {
             self.perceived += self.case_score(&case_node);
+        } else if let Some(case_match_node) = node.as_case_match_node() {
+            // Record each branch's guard location so the walk skips it later.
+            for cond in case_match_node.conditions().iter() {
+                if let Some(in_node) = cond.as_in_node() {
+                    let pat = in_node.pattern();
+                    if pat.as_if_node().is_some() || pat.as_unless_node().is_some() {
+                        self.guard_locs.insert(loc_of(&pat));
+                    }
+                }
+            }
+            self.perceived += case_match_score(&case_match_node);
         } else if let Some(begin_node) = node.as_begin_node() {
             if begin_node.rescue_clause().is_some() {
                 self.add_both(1);
@@ -379,8 +403,12 @@ impl Scorer<'_> {
                     self.add_both(1);
                 }
             }
+            // `in_pattern` is a cyclomatic decision point (each `in` = 1) but
+            // rubocop#15300 removed it from the PERCEIVED counted nodes: the
+            // enclosing `case_match` node now scores the perceived side (simple
+            // patterns discounted to 0.2). So count cyclomatic only here.
+            Node::InNode { .. } => self.cyclomatic += 1,
             Node::ForNode { .. }
-            | Node::InNode { .. }
             | Node::AndNode { .. }
             | Node::OrNode { .. }
             | Node::RescueModifierNode { .. }
@@ -405,6 +433,67 @@ impl Scorer<'_> {
             _ => {}
         }
     }
+}
+
+fn loc_of(node: &Node<'_>) -> (usize, usize) {
+    let l = node.location();
+    (l.start_offset(), l.end_offset())
+}
+
+/// Perceived score of a `case`/`in` (`case_match`), added in rubocop#15300.
+/// A simple `in` branch (no guard, pattern is a scalar/range literal or a
+/// constant/type) is discounted to 0.2 like a `when`; every other branch
+/// (structural pattern, binding, alternation, or a guard) keeps 1. A trailing
+/// `else` adds 0.2. The sum is rounded.
+fn case_match_score(cm: &ruby_prism::CaseMatchNode<'_>) -> usize {
+    let mut score: f64 = 0.0;
+    for cond in cm.conditions().iter() {
+        if let Some(in_node) = cond.as_in_node() {
+            score += if simple_in_pattern(&in_node) { 0.2 } else { 1.0 };
+        }
+    }
+    if cm.else_clause().is_some() {
+        score += 0.2;
+    }
+    score.round() as usize
+}
+
+/// `simple_in_pattern?`: no guard and the pattern is a literal (`Node#literal?`)
+/// or a constant/type (`const_type?`). In prism a guard (`in pat if cond`)
+/// wraps the pattern in an `IfNode` / `UnlessNode`, so a guarded branch is
+/// never simple.
+fn simple_in_pattern(in_node: &ruby_prism::InNode<'_>) -> bool {
+    let pattern = in_node.pattern();
+    // A guard makes the pattern an If/Unless wrapper -> not simple.
+    if pattern.as_if_node().is_some() || pattern.as_unless_node().is_some() {
+        return false;
+    }
+    pattern_is_literal(&pattern)
+        || pattern.as_constant_read_node().is_some()   // const_type? (`Foo`)
+        || pattern.as_constant_path_node().is_some() // const_type? (`Foo::Bar`)
+}
+
+/// Stock `Node#literal?`: a flat membership test of the node's parser type in
+/// `LITERALS`, mapped to the prism node classes that carry those parser types.
+fn pattern_is_literal(node: &Node<'_>) -> bool {
+    node.as_integer_node().is_some()                            // int
+        || node.as_float_node().is_some()                       // float
+        || node.as_imaginary_node().is_some()                   // complex
+        || node.as_rational_node().is_some()                    // rational
+        || node.as_string_node().is_some()                      // str
+        || node.as_interpolated_string_node().is_some()         // dstr
+        || node.as_x_string_node().is_some()                    // xstr
+        || node.as_interpolated_x_string_node().is_some()       // xstr (interp)
+        || node.as_symbol_node().is_some()                      // sym
+        || node.as_interpolated_symbol_node().is_some()         // dsym
+        || node.as_array_node().is_some()                       // array
+        || node.as_hash_node().is_some()                        // hash
+        || node.as_regular_expression_node().is_some()          // regexp
+        || node.as_interpolated_regular_expression_node().is_some() // regexp (interp)
+        || node.as_true_node().is_some()                        // true
+        || node.as_false_node().is_some()                       // false
+        || node.as_nil_node().is_some()                         // nil
+        || node.as_range_node().is_some() // irange / erange
 }
 
 impl<'pr> Visit<'pr> for Scorer<'_> {
@@ -505,6 +594,44 @@ mod tests {
     fn case_without_expr_with_else() {
         let src = "def m\n  case\n  when a then x\n  when b then y\n  else z\n  end\nend";
         assert_eq!(one(src), (3, 4));
+    }
+
+    // case/in (rubocop#15300): cyclomatic still counts each `in` (+N);
+    // perceived discounts simple literal / constant patterns to 0.2 each and
+    // scores the whole `case_match`.
+    #[test]
+    fn case_in_simple_literals() {
+        let src = "def m\n  case v\n  in 1 then a\n  in 2 then b\n  in 3 then c\n  end\nend";
+        // cyclomatic: 1 + 3 ins = 4; perceived: 1 + round(3*0.2)=1+1 = 2
+        assert_eq!(one(src), (4, 2));
+    }
+
+    #[test]
+    fn case_in_constant_patterns() {
+        let src = "def m\n  case v\n  in Integer then a\n  in String then b\n  in Float then c\n  end\nend";
+        assert_eq!(one(src), (4, 2));
+    }
+
+    #[test]
+    fn case_in_structural_patterns_full() {
+        let src = "def m\n  case v\n  in [1, a] then p\n  in {b:} then q\n  in String => c then r\n  end\nend";
+        // perceived: 1 + round(3*1) = 4
+        assert_eq!(one(src).1, 4);
+    }
+
+    #[test]
+    fn case_in_guarded_branch_full() {
+        let src = "def m\n  case v\n  in Integer if v > 0 then a\n  in Integer if v < 0 then b\n  in Integer then c\n  end\nend";
+        // perceived: 1 + round(1 + 1 + 0.2) = 1 + 2 = 3. The guard `if` nodes
+        // must NOT be counted as extra ifs.
+        assert_eq!(one(src).1, 3);
+    }
+
+    #[test]
+    fn case_in_mixed_branches() {
+        let src = "def m\n  case v\n  in [1, a] then p\n  in {b:} then q\n  in 3 then r\n  end\nend";
+        // perceived: 1 + round(1 + 1 + 0.2) = 3
+        assert_eq!(one(src).1, 3);
     }
 
     // && / || / and / or: +1 both.

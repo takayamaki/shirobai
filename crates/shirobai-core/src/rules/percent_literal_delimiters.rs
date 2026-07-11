@@ -291,8 +291,10 @@ impl<'s> Visitor<'s> {
     fn check_symbol_node(&mut self, n: &ruby_prism::SymbolNode<'_>) {
         // Stock `on_sym` only registers `%s`. A `%s[symbol]` literal in parser
         // is `(sym :symbol)` whose `children = [:symbol]` — a plain Symbol
-        // primitive that `string_source` returns `nil` for. So we scan no
-        // children at all for the contains check.
+        // primitive. rubocop#15366 made `string_source` handle a `Symbol` via
+        // `to_s`, so the symbol's name IS scanned for the preferred delimiter
+        // (e.g. `%s([)` contains `[`, so switching to `[]` would force escaping
+        // — no offense). prism's `unescaped` is that `to_s` value.
         let Some(opening) = n.opening_loc() else { return };
         let opening_start = opening.start_offset();
         let opening_end = opening.end_offset();
@@ -304,6 +306,7 @@ impl<'s> Visitor<'s> {
             return;
         }
         let Some(closing) = n.closing_loc() else { return };
+        let children: [&[u8]; 1] = [n.unescaped()];
         let loc = n.location();
         Self::check_literal(
             &mut self.offenses,
@@ -316,7 +319,7 @@ impl<'s> Visitor<'s> {
             closing.start_offset(),
             closing.end_offset(),
             type_index,
-            &[],
+            &children,
         );
     }
 
@@ -733,6 +736,17 @@ mod tests {
         let off = run_one("%s(symbol)\n", &all_brackets());
         assert_eq!(off.len(), 1);
         assert_eq!(off[0].type_index, 6);
+    }
+
+    #[test]
+    fn symbol_containing_preferred_delimiter_is_skipped() {
+        // rubocop#15366: `%s([)` — the symbol name `[` is the preferred open
+        // delimiter, so switching to `[]` would force escaping. No offense.
+        assert!(run_one("%s([)\n", &all_brackets()).is_empty());
+        // `%s(])` likewise contains the preferred close byte.
+        assert!(run_one("%s(])\n", &all_brackets()).is_empty());
+        // A symbol with neither preferred byte still flags.
+        assert_eq!(run_one("%s(sym)\n", &all_brackets()).len(), 1);
     }
 
     #[test]

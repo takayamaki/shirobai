@@ -137,9 +137,84 @@ fn loc(l: &Location<'_>) -> (usize, usize) {
     (l.start_offset(), l.end_offset())
 }
 
+/// Walks a node subtree tracking the furthest heredoc closing-delimiter end
+/// (`heredoc.loc.heredoc_end.end_pos`) among `:any_str` descendants. prism's
+/// heredoc `closing_loc` includes the trailing `\n`, which stock's
+/// `heredoc_end` excludes, so we snap the end back one byte past the delimiter.
+struct HeredocEndScan<'a> {
+    source: &'a [u8],
+    max_end: Option<usize>,
+}
+
+impl HeredocEndScan<'_> {
+    fn consider(&mut self, opening: &Location<'_>, closing: &Location<'_>) {
+        let is_heredoc = self
+            .source
+            .get(opening.start_offset()..opening.end_offset())
+            .is_some_and(|s| s.starts_with(b"<<"));
+        if !is_heredoc {
+            return;
+        }
+        let mut end = closing.end_offset();
+        if end > closing.start_offset() && self.source.get(end - 1) == Some(&b'\n') {
+            end -= 1;
+        }
+        if self.max_end.is_none_or(|m| end > m) {
+            self.max_end = Some(end);
+        }
+    }
+}
+
+impl<'pr> ruby_prism::Visit<'pr> for HeredocEndScan<'_> {
+    fn visit_string_node(&mut self, n: &ruby_prism::StringNode<'pr>) {
+        if let (Some(o), Some(c)) = (n.opening_loc(), n.closing_loc()) {
+            self.consider(&o, &c);
+        }
+        ruby_prism::visit_string_node(self, n);
+    }
+    fn visit_interpolated_string_node(&mut self, n: &ruby_prism::InterpolatedStringNode<'pr>) {
+        if let (Some(o), Some(c)) = (n.opening_loc(), n.closing_loc()) {
+            self.consider(&o, &c);
+        }
+        ruby_prism::visit_interpolated_string_node(self, n);
+    }
+    fn visit_x_string_node(&mut self, n: &ruby_prism::XStringNode<'pr>) {
+        self.consider(&n.opening_loc(), &n.closing_loc());
+        ruby_prism::visit_x_string_node(self, n);
+    }
+    fn visit_interpolated_x_string_node(&mut self, n: &ruby_prism::InterpolatedXStringNode<'pr>) {
+        self.consider(&n.opening_loc(), &n.closing_loc());
+        ruby_prism::visit_interpolated_x_string_node(self, n);
+    }
+}
+
 impl<'a> Visitor<'a> {
     fn line_of(&self, off: usize) -> usize {
         self.line_index.line_of(off)
+    }
+
+    /// Stock `end_loc`'s heredoc adjustment (rubocop#15400). For a def whose
+    /// body ends in a heredoc (`def a = <<~TEXT`), prism's node location ends at
+    /// the opener line, before the heredoc body. Return the furthest heredoc
+    /// closing-delimiter end among the node's descendants when it lies past
+    /// `node_end`, so `def_end` and the blank-line insertion land after the
+    /// heredoc, not inside it. `None` when there is no trailing heredoc.
+    fn trailing_heredoc_end(&self, node: &Node<'_>, node_end: usize) -> Option<usize> {
+        // Cheap bail: a heredoc always writes `<<` inside the node's own source.
+        let start = node.location().start_offset();
+        if !self
+            .source
+            .get(start..node_end)
+            .is_some_and(|s| s.windows(2).any(|w| w == b"<<"))
+        {
+            return None;
+        }
+        let mut scan = HeredocEndScan {
+            source: self.source,
+            max_end: None,
+        };
+        ruby_prism::Visit::visit(&mut scan, node);
+        scan.max_end.filter(|&e| e > node_end)
     }
 
     /// The `in_macro_scope?` chain evaluated at the enclosing begin (its parent
@@ -171,6 +246,12 @@ impl<'a> Visitor<'a> {
     /// Resolve a top-level statement node into a candidate, or `None` if it is
     /// not a def-like definition under the current config.
     fn candidate(&self, node: &Node<'_>) -> Option<Candidate> {
+        // `end_loc(node)` — the def's end, adjusted past a trailing heredoc body
+        // (rubocop#15400). Drives `end_line` (def_end) and `end_pos` (the
+        // blank-line insertion point). `node_end` stays the raw location end so
+        // `single_line?` matches stock's `node.single_line?`.
+        let raw_end = node.location().end_offset();
+        let hd_end = self.trailing_heredoc_end(node, raw_end).unwrap_or(raw_end);
         // Method: `def` / `defs` (DefNode covers both `def m` and `def self.m`).
         if let Some(d) = node.as_def_node() {
             if !self.config.method_defs {
@@ -186,8 +267,8 @@ impl<'a> Visitor<'a> {
                 loc_end,
                 // def_start = def keyword line; def_end = node end line.
                 start_line: self.line_of(loc_start),
-                end_line: self.line_of(ne),
-                end_pos: ne,
+                end_line: self.line_of(hd_end),
+                end_pos: hd_end,
                 kind: CandKind::Method,
             });
         }
@@ -205,8 +286,8 @@ impl<'a> Visitor<'a> {
                 loc_start,
                 loc_end,
                 start_line: self.line_of(loc_start),
-                end_line: self.line_of(ne),
-                end_pos: ne,
+                end_line: self.line_of(hd_end),
+                end_pos: hd_end,
                 kind: CandKind::Class,
             });
         }
@@ -223,8 +304,8 @@ impl<'a> Visitor<'a> {
                 loc_start,
                 loc_end,
                 start_line: self.line_of(loc_start),
-                end_line: self.line_of(ne),
-                end_pos: ne,
+                end_line: self.line_of(hd_end),
+                end_pos: hd_end,
                 kind: CandKind::Module,
             });
         }
@@ -254,8 +335,8 @@ impl<'a> Visitor<'a> {
                     loc_start: ns,
                     loc_end: ne,
                     start_line: self.line_of(ns),
-                    end_line: self.line_of(ne),
-                    end_pos: ne,
+                    end_line: self.line_of(hd_end),
+                    end_pos: hd_end,
                     kind: CandKind::Block,
                 });
             }
@@ -266,8 +347,8 @@ impl<'a> Visitor<'a> {
                 loc_start: ns,
                 loc_end: ne,
                 start_line: self.line_of(ns),
-                end_line: self.line_of(ne),
-                end_pos: ne,
+                end_line: self.line_of(hd_end),
+                end_pos: hd_end,
                 kind: CandKind::Send,
             });
         }

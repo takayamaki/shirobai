@@ -345,6 +345,11 @@ impl<'a> Visitor<'a> {
             // use_transformed_argname? returned false
             return None;
         }
+        // rubocop#15339: a splat transforming expr (`[*k, v]`) can't be a
+        // standalone block return value, so the rewrite would be invalid Ruby.
+        if key_body_expr.as_splat_node().is_some() {
+            return None;
+        }
         let key_loc = key_body_expr.location();
         let body_text = self.body_source_with_braces_at(key_body_expr, &key_loc);
         Some(EligibleCaptures {
@@ -690,6 +695,11 @@ impl<'a> Visitor<'a> {
             return None;
         }
         if !any_strict_descendant_lvar_named(key_body_expr, key_argname) {
+            return None;
+        }
+        // rubocop#15339: a splat transforming expr (`[*k, v]`) can't be a
+        // standalone block return value, so the rewrite would be invalid Ruby.
+        if key_body_expr.as_splat_node().is_some() {
             return None;
         }
         let key_loc = key_body_expr.location();
