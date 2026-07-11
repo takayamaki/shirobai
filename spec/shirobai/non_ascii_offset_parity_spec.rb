@@ -462,6 +462,14 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # comment. No autocorrect.
     "Naming/AsciiIdentifiers" =>
       "даль = 1\n",
+    # A modifier rescue (`b rescue 1`) and a misaligned begin/rescue after a
+    # multibyte comment. The modifier keyword position is a Rust BYTE range that
+    # must convert to a char offset (used only to SKIP the modifier resbody); the
+    # offense range and the whitespace-replace autocorrect come from stock's
+    # parser AST. A wrong conversion would skip the wrong resbody or misplace the
+    # correction, so this guards the byte/char boundary on the modifier set.
+    "Layout/RescueEnsureAlignment" =>
+      "a = b rescue 1\nbegin\n  x\n    rescue\n  y\nend\n",
     # The offense range (the array node) and the `.freeze` insert position both
     # come from stock's own code on the parser-gem AST (char offsets), never
     # through Rust; the only Rust output is the token-free frozen-string

@@ -702,6 +702,16 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Naming::AsciiIdentifiers,
       "älg = 1\n"
     ],
+    # `Layout/RescueEnsureAlignment` runs stock's `on_resbody` + autocorrect
+    # verbatim; the misaligned `rescue` carries a whitespace-replace corrector
+    # (correctable). Rust supplies only the modifier-rescue keyword set (used to
+    # SKIP modifier resbodies), which does not touch the corrector, so the
+    # lint-mode status must match stock.
+    "Layout/RescueEnsureAlignment" => [
+      RuboCop::Cop::Layout::RescueEnsureAlignment,
+      Shirobai::Cop::Layout::RescueEnsureAlignment,
+      "begin\n  x\n    rescue\n  y\nend\n"
+    ],
     # `Style/MutableConstant` runs stock's `on_casgn` + autocorrect verbatim;
     # the offense carries a `.freeze` corrector (correctable). The only replaced
     # method is the token-free `frozen_string_literals_enabled?`, which does not

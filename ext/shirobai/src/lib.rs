@@ -2025,6 +2025,9 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         // toucher-batch-3 core slot 102: `Naming/AsciiIdentifiers`
         // (`[[is_constant, start, end], ...]`).
         ary.push(r.ascii_identifiers)?;
+        // toucher-batch-4 core slot 103: `Layout/RescueEnsureAlignment`
+        // (`[[begin, end], ...]` modifier-`rescue` keyword ranges).
+        ary.push(r.rescue_ensure_alignment)?;
         // Performance origin (result[1]).
         let perf = ruby.ary_new_capa(5);
         perf.push(map_perf_detect(r.perf_detect))?;
@@ -3360,6 +3363,14 @@ fn check_ascii_identifiers(source: RString, ascii_constants: bool) -> Vec<(bool,
     shirobai_core::rules::ascii_identifiers::check_ascii_identifiers(bytes(&source), ascii_constants)
 }
 
+/// Ruby entry point for `Layout/RescueEnsureAlignment` (standalone fallback,
+/// used on CRLF/BOM files where `buffer.source != raw_source`). Returns the
+/// `(begin, end)` byte range of every modifier-`rescue` keyword; the wrapper
+/// converts them to char offsets and builds the `@modifier_locations` set.
+fn check_rescue_ensure_alignment(source: RString) -> Vec<(usize, usize)> {
+    shirobai_core::rules::rescue_ensure_alignment::check_rescue_ensure_alignment(bytes(&source))
+}
+
 /// `Style/EmptyLiteral`'s `frozen_string_literals_enabled?` (String.new path),
 /// computed from the leading comment scan without materializing the parser-gem
 /// token stream. `sfbd`: `AllCops/StringLiteralsFrozenByDefault` is literally
@@ -4385,6 +4396,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_ascii_identifiers",
         function!(check_ascii_identifiers, 2),
+    )?;
+    module.define_module_function(
+        "check_rescue_ensure_alignment",
+        function!(check_rescue_ensure_alignment, 1),
     )?;
     module.define_module_function(
         "check_frozen_string_literals_enabled",

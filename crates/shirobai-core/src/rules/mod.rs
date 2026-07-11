@@ -80,6 +80,7 @@ pub mod redundant_freeze;
 pub mod redundant_self;
 pub mod redundant_self_assignment;
 pub mod require_parentheses;
+pub mod rescue_ensure_alignment;
 pub mod rspec_dispatcher;
 pub mod rspec_empty_line;
 pub mod rspec_language;
