@@ -647,13 +647,28 @@ impl<'pr> Visit<'pr> for AbcScorer<'_> {
                 self.c += 1;
             }
         }
-        self.count_call(CallView {
-            receiver: receiver.as_ref(),
-            name: node.name().as_slice(),
-            attribute_write: node.is_attribute_write(),
-            safe_nav: node.is_safe_navigation(),
-            is_attribute: !has_args && !has_block_pass,
-        });
+        // A static regexp literal on the lhs of `=~` is `match_with_lvasgn` in
+        // the parser gem — with or without a named capture, `/x/o` included —
+        // so it is no send and counts no branch; only the operands (visited
+        // above) count. prism keeps this a plain `CallNode` when there is no
+        // named capture (the named-capture form is a `MatchWriteNode`, handled
+        // by `visit_match_write_node`), so skip the branch count here. A
+        // dynamic regexp (`/#{x}/ =~ y`), `!~`, a parenthesized regexp
+        // (`(/x/) =~ y`) and a regexp on the rhs (`y =~ /x/`) all stay real
+        // sends in the parser gem and count as usual.
+        let regexp_match_lhs = node.name().as_slice() == b"=~"
+            && receiver
+                .as_ref()
+                .is_some_and(|r| r.as_regular_expression_node().is_some());
+        if !regexp_match_lhs {
+            self.count_call(CallView {
+                receiver: receiver.as_ref(),
+                name: node.name().as_slice(),
+                attribute_write: node.is_attribute_write(),
+                safe_nav: node.is_safe_navigation(),
+                is_attribute: !has_args && !has_block_pass,
+            });
+        }
         if let Some(block_node) = block.as_ref().and_then(|b| b.as_block_node()) {
             self.visit_attached_block(&block_node, node.name().as_slice());
         }
@@ -1400,6 +1415,15 @@ mod tests {
             ("def m\n  x => y\nend", (0, 1, 0)),
             ("def m\n  x in y\nend", (0, 1, 0)),
             ("def m\n  /(?<g>a)/ =~ str\nend", (0, 1, 0)),
+            // A static regexp literal on the lhs of `=~` is `match_with_lvasgn`
+            // even without a named capture (`/x/o` included): the `=~` is not a
+            // branch, so only the rhs `str` send counts.
+            ("def m\n  /x(.)/ =~ str\nend", (0, 1, 0)),
+            ("def m\n  /x/o =~ str\nend", (0, 1, 0)),
+            // A non-regexp lhs, an interpolated regexp, and `!~` stay real sends.
+            ("def m\n  str =~ /x/\nend", (0, 2, 0)),
+            ("def m\n  /x#{y}/ =~ str\nend", (0, 3, 0)),
+            ("def m\n  /x/ !~ str\nend", (0, 2, 0)),
             ("def m\n  re =~ str\nend", (0, 3, 0)),
             ("def m\n  super\nend", (0, 0, 0)),
             ("def m\n  super(1)\nend", (0, 0, 0)),
