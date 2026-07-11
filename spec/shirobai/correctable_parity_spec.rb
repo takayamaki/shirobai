@@ -533,6 +533,13 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Layout::SpaceInsideStringInterpolation,
       "x = \"\#{ y }\"\n"
     ],
+    # `Style/EmptyLiteral` runs stock's on_send verbatim; the Array.new offense
+    # must stay correctable in lint mode.
+    "Style/EmptyLiteral" => [
+      RuboCop::Cop::Style::EmptyLiteral,
+      Shirobai::Cop::Style::EmptyLiteral,
+      "x = Array.new\n"
+    ],
     # Both directions are correctable in lint mode; the same-line-modifier
     # correction skip must leave an EMPTY corrector (`:unsupported`), exactly
     # like stock's `another_modifier_if_on_same_line?` guard.

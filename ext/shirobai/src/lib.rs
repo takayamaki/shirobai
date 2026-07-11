@@ -3338,6 +3338,20 @@ fn check_end_of_line(source: RString) -> usize {
     shirobai_core::rules::end_of_line::check_end_of_line(bytes(&source))
 }
 
+/// `Style/EmptyLiteral`'s `frozen_string_literals_enabled?` (String.new path),
+/// computed from the leading comment scan without materializing the parser-gem
+/// token stream. `sfbd`: `AllCops/StringLiteralsFrozenByDefault` is literally
+/// `true` (the fallback when no magic comment specifies a value).
+fn check_frozen_string_literals_enabled(source: RString, sfbd: bool) -> bool {
+    shirobai_core::rules::duplicate_magic_comment::frozen_string_literals_enabled(bytes(&source), sfbd)
+}
+
+/// `Style/EmptyLiteral`'s `frozen_string_literals_disabled?` (any leading
+/// `# frozen_string_literal: false`), token-free.
+fn check_frozen_string_literals_disabled(source: RString) -> bool {
+    shirobai_core::rules::duplicate_magic_comment::frozen_string_literals_disabled(bytes(&source))
+}
+
 /// Ruby entry point for `Layout/SpaceInsideStringInterpolation` (standalone
 /// fallback). `style`: 0 = no_space, 1 = space. See
 /// `map_space_inside_string_interpolation` for the returned shape.
@@ -4342,6 +4356,14 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         function!(check_initial_indentation, 1),
     )?;
     module.define_module_function("check_end_of_line", function!(check_end_of_line, 1))?;
+    module.define_module_function(
+        "check_frozen_string_literals_enabled",
+        function!(check_frozen_string_literals_enabled, 2),
+    )?;
+    module.define_module_function(
+        "check_frozen_string_literals_disabled",
+        function!(check_frozen_string_literals_disabled, 1),
+    )?;
     module.define_module_function(
         "check_space_inside_string_interpolation",
         function!(check_space_inside_string_interpolation, 2),

@@ -581,7 +581,7 @@ pub(crate) fn leading_line_count(
 /// side, so the wrapper passes `false` for either).
 ///
 /// Pure bytes plus the shared prism parse (comments only) — no parser tokens.
-pub(crate) fn frozen_string_literals_enabled(source: &[u8], sfbd_default: bool) -> bool {
+pub fn frozen_string_literals_enabled(source: &[u8], sfbd_default: bool) -> bool {
     if source.is_empty() {
         return sfbd_default;
     }
@@ -599,6 +599,30 @@ pub(crate) fn frozen_string_literals_enabled(source: &[u8], sfbd_default: bool) 
             }
         }
         sfbd_default
+    })
+}
+
+/// `RuboCop::Cop::FrozenStringLiteral#frozen_string_literals_disabled?`: true
+/// iff ANY leading comment line's `MagicComment.parse.frozen_string_literal` is
+/// `false` (stock uses `any?`, not the first-match `find` of the enabled path).
+/// Same leading-line scan as [`frozen_string_literals_enabled`], no parser
+/// tokens.
+pub fn frozen_string_literals_disabled(source: &[u8]) -> bool {
+    if source.is_empty() {
+        return false;
+    }
+
+    let (scan, last_comment_start) = parse_cache::with_parsed_and_comments(
+        source,
+        |_owner, _root, comments| scan_front(source, &comments),
+    );
+
+    line_index::with_line_index(source, |li| {
+        let leading = leading_line_count(source, li, &scan, last_comment_start);
+        li.line_starts()
+            .iter()
+            .take(leading)
+            .any(|&start| line_fsl(line_slice(source, start)) == Some(FslValue::False))
     })
 }
 
