@@ -159,8 +159,18 @@ impl Visitor<'_> {
             && let Some(n) = node.as_symbol_node()
         {
             let loc = node.location();
+            // A hash-key label (`key:`) has no opening `:` and a `:` closing
+            // delimiter; parser-gem's sym range stops at the value, so drop the
+            // trailing colon. Plain (`:sym`) and quoted (`:"sym"`) symbols keep
+            // the full location, including their leading `:` and any closing
+            // quote.
+            let end = if n.closing_loc().is_some_and(|c| c.as_slice() == b":") {
+                n.value_loc().map_or(loc.end_offset(), |v| v.end_offset())
+            } else {
+                loc.end_offset()
+            };
             let name = String::from_utf8_lossy(n.unescaped()).into_owned();
-            self.check(name, loc.start_offset(), loc.end_offset(), 2);
+            self.check(name, loc.start_offset(), end, 2);
         }
     }
 }
@@ -314,5 +324,24 @@ mod tests {
     #[test]
     fn masgn_targets_checked() {
         assert_eq!(names("a1, b2 = 1, 2", SNAKE_CASE).len(), 2);
+    }
+
+    /// Byte range of the single symbol offense in `source`. Uses `normalcase`
+    /// so the `_1`-numbered names below are offenses (they are valid snake_case).
+    fn sym_range(source: &str) -> (usize, usize) {
+        let (offenses, _) = check_variable_number(source.as_bytes(), NORMALCASE, 0b11, &[]);
+        assert_eq!(offenses.len(), 1, "expected one offense in {source:?}");
+        let o = &offenses[0];
+        (o.start_offset, o.end_offset)
+    }
+
+    #[test]
+    fn symbol_offense_ranges() {
+        // Plain symbol keeps its leading `:`.
+        assert_eq!(sym_range(":sym_1"), (0, 6));
+        // Quoted symbol keeps both delimiters.
+        assert_eq!(sym_range(":\"quoted_1\""), (0, 11));
+        // Hash-key label drops the trailing `:` (byte 9 is the colon).
+        assert_eq!(sym_range("{ TLSv1_1: 1 }"), (2, 9));
     }
 }
