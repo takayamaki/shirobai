@@ -26,8 +26,10 @@
 //!   keyword), `while`/`until` (but *not* `begin..end while` post-loops),
 //!   `for`, `when`, `in`, `rescue`, `and`/`or`, `||=`/`&&=`, comparison
 //!   operators, safe navigation (deduplicated per untouched local receiver),
-//!   and iterating blocks (`.map {}`; numbered/`it` blocks are *not* counted —
-//!   `numblock`/`itblock` are missing from `CyclomaticComplexity::COUNTED_NODES`).
+//!   and iterating blocks (`.map {}`; numbered blocks are *not* counted —
+//!   `numblock` is missing from `CyclomaticComplexity::COUNTED_NODES`. An
+//!   `it` block IS counted: the parser gem's pre-3.4 grammar has no
+//!   `itblock`, so `{ it }` is a plain block and `it` itself a bare send).
 //!
 //! With `CountRepeatedAttributes: false`, repeated no-argument call chains on
 //! the same root (`var.foo.bar` twice, bare `foo` twice, even repeated `->`
@@ -59,18 +61,34 @@ pub struct AbcMethod {
 /// `max_floor**2` (`max_floor` is `Max.floor` — conservative for a float
 /// `Max`, exact for an integer one; the Ruby side re-applies the exact
 /// `complexity > Max` filter). A negative `max_floor` reports every method.
-pub fn check_abc_size(source: &[u8], max_floor: i64, discount_repeated: bool) -> Vec<AbcMethod> {
-    let mut finder = build_rule(source, max_floor, discount_repeated);
+pub fn check_abc_size(
+    source: &[u8],
+    max_floor: i64,
+    discount_repeated: bool,
+    it_is_send: bool,
+) -> Vec<AbcMethod> {
+    let mut finder = build_rule(source, max_floor, discount_repeated, it_is_send);
     super::parse_cache::with_parsed(source, |_source, node| finder.visit(node));
     finder.out
 }
 
 /// Build the rule for use standalone or in a shared-walk bundle.
-pub(crate) fn build_rule(source: &[u8], max_floor: i64, discount_repeated: bool) -> AbcFinder<'_> {
+/// `it_is_send` is true when the target Ruby version is below 3.4: the parser
+/// gem then has no `itblock`, so a `{ it }` block is a plain block and `it`
+/// itself a bare send `(send nil :it)`. From 3.4 on, `it` is a local variable
+/// inside an `itblock` (which `COUNTED_NODES` does not list), matching what
+/// prism always reports.
+pub(crate) fn build_rule(
+    source: &[u8],
+    max_floor: i64,
+    discount_repeated: bool,
+    it_is_send: bool,
+) -> AbcFinder<'_> {
     AbcFinder {
         source,
         max_floor,
         discount_repeated,
+        it_is_send,
         out: Vec::new(),
     }
 }
@@ -81,12 +99,13 @@ pub(crate) struct AbcFinder<'a> {
     source: &'a [u8],
     max_floor: i64,
     discount_repeated: bool,
+    it_is_send: bool,
     pub(crate) out: Vec<AbcMethod>,
 }
 
 impl AbcFinder<'_> {
     fn record(&mut self, start: usize, end: usize, head_end: usize, name: String, body: &Node<'_>) {
-        let (a, b, c) = score_body(self.source, body, self.discount_repeated);
+        let (a, b, c) = score_body(self.source, body, self.discount_repeated, self.it_is_send);
         if self.max_floor >= 0 {
             let floor = self.max_floor as u64;
             if a * a + b * b + c * c <= floor * floor {
@@ -256,7 +275,12 @@ impl AttrTrie {
     }
 }
 
-fn score_body(source: &[u8], body: &Node<'_>, discount_repeated: bool) -> (u64, u64, u64) {
+fn score_body(
+    source: &[u8],
+    body: &Node<'_>,
+    discount_repeated: bool,
+    it_is_send: bool,
+) -> (u64, u64, u64) {
     let mut scorer = AbcScorer {
         source,
         a: 0,
@@ -266,6 +290,7 @@ fn score_body(source: &[u8], body: &Node<'_>, discount_repeated: bool) -> (u64, 
         trie: discount_repeated.then(AttrTrie::default),
         in_pattern: false,
         masgn_depth: 0,
+        it_is_send,
     };
     scorer.visit(body);
     (scorer.a, scorer.b, scorer.c)
@@ -288,6 +313,9 @@ struct AbcScorer<'a> {
     /// assignments by `compound_assignment` (their setter form is undetectable
     /// without an operator location).
     masgn_depth: u32,
+    /// Target Ruby below 3.4: `it` is a bare send `(send nil :it)` in a plain
+    /// block. From 3.4 on it is a local variable in an uncounted `itblock`.
+    it_is_send: bool,
 }
 
 /// The pieces of a (possibly virtual) parser `send`/`csend` needed to count it.
@@ -309,7 +337,11 @@ struct CallView<'n, 'pr> {
 /// (mirrors `root_node?` + the `attribute_call?` recursion: only no-arg,
 /// no-block calls link the chain — in the parser gem a receiver with any kind
 /// of block is the `block` node or has a `block_pass` argument, breaking it).
-fn attr_chain<'pr>(node: Option<&Node<'pr>>, methods: &mut Vec<&'pr [u8]>) -> Option<RootKey> {
+fn attr_chain<'pr>(
+    node: Option<&Node<'pr>>,
+    methods: &mut Vec<&'pr [u8]>,
+    it_is_send: bool,
+) -> Option<RootKey> {
     let Some(node) = node else {
         return Some(RootKey::SelfNil);
     };
@@ -331,12 +363,22 @@ fn attr_chain<'pr>(node: Option<&Node<'pr>>, methods: &mut Vec<&'pr [u8]>) -> Op
     if node.as_constant_read_node().is_some() || node.as_constant_path_node().is_some() {
         return Some(RootKey::Const(const_key(node)));
     }
+    // Ruby 3.4 `it`: below a 3.4 target the parser gem sees `(send nil :it)`
+    // — a no-arg, no-block call linking the chain to the shared self/nil
+    // root. From 3.4 on it is `(lvar :it)`, a regular local-variable root.
+    if node.as_it_local_variable_read_node().is_some() {
+        if it_is_send {
+            methods.push(b"it");
+            return Some(RootKey::SelfNil);
+        }
+        return Some(RootKey::Lvar(b"it".to_vec()));
+    }
     if let Some(call) = node.as_call_node()
         && call.arguments().is_none()
         && call.block().is_none()
     {
         let receiver = call.receiver();
-        let root = attr_chain(receiver.as_ref(), methods)?;
+        let root = attr_chain(receiver.as_ref(), methods, it_is_send)?;
         methods.push(call.name().as_slice());
         return Some(root);
     }
@@ -374,7 +416,7 @@ impl AbcScorer<'_> {
 
     fn trie_lookup(&mut self, receiver: Option<&Node<'_>>, name: &[u8]) -> bool {
         let mut methods: Vec<&[u8]> = Vec::new();
-        let Some(root) = attr_chain(receiver, &mut methods) else {
+        let Some(root) = attr_chain(receiver, &mut methods, self.it_is_send) else {
             return false;
         };
         methods.push(name);
@@ -391,7 +433,7 @@ impl AbcScorer<'_> {
             return;
         }
         let mut methods: Vec<&[u8]> = Vec::new();
-        let Some(root) = attr_chain(receiver, &mut methods) else {
+        let Some(root) = attr_chain(receiver, &mut methods, self.it_is_send) else {
             return;
         };
         self.trie
@@ -409,16 +451,24 @@ impl AbcScorer<'_> {
     // --- Shared counting steps ----------------------------------------------
 
     /// `RepeatedCsendDiscount#discount_for_repeated_csend?`: only untouched
-    /// local-variable receivers discount.
+    /// local-variable receivers discount. From a 3.4 target on, an `it`
+    /// receiver is the local variable `it`, so it joins the discount;
+    /// below 3.4 it is a send receiver and never discounts.
     fn csend_contribution(&mut self, receiver: Option<&Node<'_>>) -> u64 {
-        if let Some(recv) = receiver
-            && let Some(lvar) = recv.as_local_variable_read_node()
-        {
-            let name = lvar.name().as_slice().to_vec();
-            if self.csend_vars.contains(&name) {
-                return 0;
+        if let Some(recv) = receiver {
+            let name = if let Some(lvar) = recv.as_local_variable_read_node() {
+                Some(lvar.name().as_slice().to_vec())
+            } else if !self.it_is_send && recv.as_it_local_variable_read_node().is_some() {
+                Some(b"it".to_vec())
+            } else {
+                None
+            };
+            if let Some(name) = name {
+                if self.csend_vars.contains(&name) {
+                    return 0;
+                }
+                self.csend_vars.insert(name);
             }
-            self.csend_vars.insert(name);
         }
         1
     }
@@ -476,7 +526,10 @@ impl AbcScorer<'_> {
     /// shorthand `call`/`index` forms): the parser counts each child that
     /// `respond_to?(:setter_method?) && !setter_method?`. The target arm is a
     /// bare `(lvasgn ...)` etc. (no `setter_method?`), so only the *value*
-    /// matters: it counts iff it is a `send`/`csend` (and not a setter). In the
+    /// matters: it counts iff it responds to `setter_method?` and is not a
+    /// setter — that is `send`/`csend`, plus the other rubocop-ast method
+    /// dispatches `yield`, `super`/`zsuper` and `defined?` (verified against
+    /// the stock CLI, 2026-07-12 `cprobe`). In the
     /// parser gem a send with a literal `{ }`/`do..end` block is a `block` node
     /// (no `setter_method?`, so it does *not* count), but a send with a
     /// block-PASS (`&:to_sym`) stays a `send` (block-pass is an argument), so it
@@ -484,12 +537,31 @@ impl AbcScorer<'_> {
     /// disqualifies, a `BlockArgumentNode` (block-pass) does not. Non-call
     /// values (literals, `if`, `and`, arrays, ...) never count.
     fn compound_value_assignment(&mut self, value: &Node<'_>) {
-        if let Some(call) = value.as_call_node()
-            && !call.is_attribute_write()
-            && call
-                .block()
-                .is_none_or(|b| b.as_block_node().is_none())
-        {
+        let counts = if let Some(call) = value.as_call_node() {
+            !call.is_attribute_write()
+                && call
+                    .block()
+                    .is_none_or(|b| b.as_block_node().is_none())
+        } else if let Some(sup) = value.as_super_node() {
+            // `super(...)` / `super` are method dispatches too (they respond
+            // to `setter_method?`), so they count — unless a literal block
+            // wraps them in a parser `block` node. A block-pass (`&blk`)
+            // stays an argument and still counts.
+            sup.block().is_none_or(|b| b.as_block_node().is_none())
+        } else if let Some(fsup) = value.as_forwarding_super_node() {
+            // Bare `super` (parser `zsuper`); its concretely-typed block
+            // field can only be a literal block.
+            fsup.block().is_none()
+        } else {
+            // `yield` and `defined?` are method dispatches in the parser gem
+            // too, so they count like calls. An `it` reference only counts
+            // below a 3.4 target, where it is `(send nil :it)`; from 3.4 on
+            // it is a local variable.
+            value.as_yield_node().is_some()
+                || value.as_defined_node().is_some()
+                || (self.it_is_send && value.as_it_local_variable_read_node().is_some())
+        };
+        if counts {
             self.a += 1;
         }
     }
@@ -508,13 +580,18 @@ impl AbcScorer<'_> {
 impl<'pr> AbcScorer<'_> {
     /// Visit a block attached to a call (parser order: the send is counted
     /// before the block's parameters and body), then count the block node:
-    /// +1 C for an iterating method, except `numblock`/`itblock` forms which
-    /// are missing from `COUNTED_NODES`.
+    /// +1 C for an iterating method, except the `numblock` form which is
+    /// missing from `COUNTED_NODES`. An `it` block depends on the target:
+    /// below 3.4 the parser gem has no `itblock` — a `{ it }` block is a
+    /// plain `block` node with empty `(args)`, so an iterating method still
+    /// counts (and the `it` reference is a send, handled by
+    /// `visit_it_local_variable_read_node`). From 3.4 on it is an `itblock`,
+    /// which `COUNTED_NODES` does not list either.
     fn visit_attached_block(&mut self, block: &ruby_prism::BlockNode<'pr>, method_name: &[u8]) {
         let mut numbered = false;
         if let Some(params) = block.parameters() {
             numbered = params.as_numbered_parameters_node().is_some()
-                || params.as_it_parameters_node().is_some();
+                || (!self.it_is_send && params.as_it_parameters_node().is_some());
             self.visit(&params);
         }
         if let Some(body) = block.body() {
@@ -672,6 +749,27 @@ impl<'pr> Visit<'pr> for AbcScorer<'_> {
         if let Some(block_node) = block.as_ref().and_then(|b| b.as_block_node()) {
             self.visit_attached_block(&block_node, node.name().as_slice());
         }
+    }
+
+    /// A Ruby 3.4 `it` block reference. Below a 3.4 target the parser gem
+    /// sees `it` as a bare send `(send nil :it)`: a counted branch that is
+    /// attribute-eligible under the shared self/nil bucket for the
+    /// repeated-attribute discount. From 3.4 on it is a local variable and
+    /// counts nothing — the same as prism's own view.
+    fn visit_it_local_variable_read_node(
+        &mut self,
+        _node: &ruby_prism::ItLocalVariableReadNode<'pr>,
+    ) {
+        if !self.it_is_send {
+            return;
+        }
+        self.count_call(CallView {
+            receiver: None,
+            name: b"it",
+            attribute_write: false,
+            safe_nav: false,
+            is_attribute: true,
+        });
     }
 
     /// `->` literals are `(block (send nil :lambda) ...)` in the parser gem: a
@@ -1380,7 +1478,12 @@ mod tests {
     /// off. Ground-truth vectors come from the stock probe
     /// (`.tmp/2026-06-13/abc-size/probe*.rb`).
     fn abc(source: &str, discount: bool) -> (u64, u64, u64) {
-        let methods = check_abc_size(source.as_bytes(), -1, discount);
+        abc_for_target(source, discount, true)
+    }
+
+    /// Like `abc` but with an explicit `it_is_send` (false = target >= 3.4).
+    fn abc_for_target(source: &str, discount: bool, it_is_send: bool) -> (u64, u64, u64) {
+        let methods = check_abc_size(source.as_bytes(), -1, discount, it_is_send);
         assert_eq!(
             methods.len(),
             1,
@@ -1397,12 +1500,23 @@ mod tests {
         let cases: &[(&str, (u64, u64, u64))] = &[
             ("def m\n  [1].each { |x| x }\nend", (1, 1, 1)),
             ("def m\n  [1].each { _1 }\nend", (0, 1, 0)),
-            // `it` is an it-block parameter under prism's grammar (Ruby >= 3.4),
-            // so `it` is inert and only the iterating `each` counts. Under an
-            // older parser-gem target `it` would be a method send (B+1, plus the
-            // iterating block C+1) — that target-version skew is the only place
-            // prism and parser-gem disagree, exercised by the corpus parity run.
-            ("def m\n  [1].each { it }\nend", (0, 1, 0)),
+            // `it` under the parser gem's pre-3.4 grammar (the stock target on
+            // every corpus) is a bare send inside a PLAIN block: the `it` send
+            // counts B+1 and the iterating `each` block counts C+1. Vectors
+            // verified against a stock CLI probe (2026-07-12 `itprobe`).
+            ("def m\n  [1].each { it }\nend", (0, 2, 1)),
+            ("def m\n  x.map { it }\nend", (0, 3, 1)),
+            // Default config counts repeats, so BOTH `it` reads count.
+            ("def m\n  x.map { it + it }\nend", (0, 5, 1)),
+            // `it` receiver of a csend: `it` B+1, foo B+1, csend C+1 (the
+            // receiver is a send, not an untouched lvar, so no dedup).
+            ("def m\n  x.map { it&.foo }\nend", (0, 4, 2)),
+            // Compound assignment value: `it` is a send in the parser gem, so
+            // `compound_assignment` adds an extra A on top of the lvasgn.
+            ("def m\n  x.map { d ||= it }\nend", (2, 3, 2)),
+            ("def m\n  x.map { it[:k].to_s }\nend", (0, 5, 1)),
+            // Non-iterating method: the `it` send still counts, no block C.
+            ("def m\n  x.foo_method { it }\nend", (0, 3, 0)),
             ("def m\n  begin\n    foo\n  end while bar\nend", (0, 2, 0)),
             ("def m\n  begin\n    foo\n  end until bar\nend", (0, 2, 0)),
             ("def m\n  foo while bar\nend", (0, 2, 1)),
@@ -1468,6 +1582,18 @@ mod tests {
             // (and the iterating `map` block-pass adds a condition).
             ("def m\n  d -= exclude.map(&:to_sym)\nend", (2, 2, 1)),
             ("def m\n  d += foo\nend", (2, 1, 0)),
+            // `yield` / `super` / `defined?` values respond to
+            // `setter_method?` in rubocop-ast, so `compound_assignment`
+            // counts them like call values; a literal block wraps `super`
+            // in a parser `block` node, which does not count. Vectors from
+            // the stock CLI probe (2026-07-12 `cprobe`).
+            ("def m\n  d ||= yield\nend", (2, 1, 1)),
+            ("def m\n  d += yield\nend", (2, 1, 0)),
+            ("def m\n  d ||= yield(1)\nend", (2, 1, 1)),
+            ("def m\n  d ||= super\nend", (2, 0, 1)),
+            ("def m\n  d ||= super(1)\nend", (2, 0, 1)),
+            ("def m\n  d ||= super { 1 }\nend", (1, 0, 1)),
+            ("def m\n  d ||= defined?(z)\nend", (2, 1, 1)),
             ("def m\n  @d ||= foo\nend", (2, 1, 1)),
             ("def m\n  x = []\n  x[0] += foo\nend", (3, 2, 0)),
             ("def m\n  x.y ||= foo\nend", (2, 3, 1)),
@@ -1491,9 +1617,45 @@ mod tests {
             ("def m\n  x = []\n  x[0] += 1\nend", (2, 1, 0)),
             ("def m\n  Foo.bar\n  Foo.bar\nend", (0, 1, 0)),
             ("def m\n  $g.bar\n  $g.bar\n  $g = 1\n  $g.bar\nend", (1, 2, 0)),
+            // `it` is a bare send under the shared self/nil bucket, so the
+            // second read is discounted (stock CLI probe with
+            // `CountRepeatedAttributes: false`, 2026-07-12 `dprobe`).
+            ("def m\n  x.map { it + it }\nend", (0, 4, 1)),
+            // Across blocks too: the second `x`, `map` and `it` all discount;
+            // both iterating blocks still count a condition each.
+            ("def m\n  x.map { it }\n  x.map { it }\nend", (0, 3, 2)),
+            // `it.foo` chains through the self/nil root: the second chain
+            // repeats both components.
+            ("def m\n  x.map { it.foo; it.foo }\nend", (0, 4, 1)),
         ];
         for (src, expected) in cases {
             assert_eq!(abc(src, true), *expected, "discount-on case {src:?}");
+        }
+    }
+
+    /// Target Ruby >= 3.4 (`it_is_send: false`): `it` is a local variable in
+    /// an `itblock`, so it counts nothing and the itblock is exempt from the
+    /// iterating condition (the vendor spec's `:ruby34` context).
+    #[test]
+    fn target_ruby_34_it_vectors() {
+        let cases: &[(&str, bool, (u64, u64, u64))] = &[
+            ("def m\n  [1].each { it }\nend", false, (0, 1, 0)),
+            ("def m\n  x.map { x = it }\nend", false, (1, 2, 0)),
+            ("def m\n  x.map { it + it }\nend", false, (0, 3, 0)),
+            ("def m\n  x.map { d ||= it }\nend", false, (1, 2, 1)),
+            // `it&.foo` twice: the lvar receiver joins the csend dedup, so
+            // only the first safe navigation adds a condition.
+            ("def m\n  x.map { it&.foo; it&.foo }\nend", false, (0, 4, 1)),
+            // Discount on: `it.foo` chains root at the local variable `it`
+            // and the second chain is discounted.
+            ("def m\n  x.map { it.foo; it.foo }\nend", true, (0, 3, 0)),
+        ];
+        for (src, discount, expected) in cases {
+            assert_eq!(
+                abc_for_target(src, *discount, false),
+                *expected,
+                "ruby 3.4 case {src:?}"
+            );
         }
     }
 }
