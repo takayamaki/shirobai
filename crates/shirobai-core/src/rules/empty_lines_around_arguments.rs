@@ -84,11 +84,18 @@ impl<'a> Visitor<'a> {
         if self.line_of(node_start) == self.line_of(node_end) {
             return;
         }
-        // `node.arguments.empty?`
-        let args: Vec<Node<'_>> = match call.arguments() {
-            Some(a) => a.arguments().iter().collect(),
-            None => return,
-        };
+        // `node.arguments.empty?` — parser-gem's `send.arguments` includes
+        // the block-pass argument (`&blk`, bare `&`) as the last argument;
+        // prism keeps it in `block()`, outside `arguments()`.
+        let mut args: Vec<Node<'_>> = call
+            .arguments()
+            .map(|a| a.arguments().iter().collect())
+            .unwrap_or_default();
+        if let Some(block) = call.block()
+            && block.as_block_argument_node().is_some()
+        {
+            args.push(block);
+        }
         if args.is_empty() {
             return;
         }
