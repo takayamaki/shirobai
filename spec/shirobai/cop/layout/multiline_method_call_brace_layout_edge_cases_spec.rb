@@ -151,6 +151,53 @@ RSpec.describe Shirobai::Cop::Layout::MultilineMethodCallBraceLayout do
     expect(lint_offenses(klasses.first, src, default_config)).to be_empty
   end
 
+  it "folds the brace of a call that carries a do block" do
+    # Prism's CallNode spans through the block's `end`, but the parser-gem
+    # send node the corrector needs stops at `)`. The wrapper resolves the
+    # parser node by exact (begin, end) range, so the rule must report the
+    # SEND range, not the block-expression range.
+    src = "foo(a,\n  b\n) do |x|\n  x\nend\n"
+    expect_lint_parity(*klasses, src, default_config)
+    expect(expect_autocorrect_parity(*klasses, src, default_config))
+      .to eq("foo(a,\n  b) do |x|\n  x\nend\n")
+  end
+
+  it "folds the brace of a call that carries a brace block" do
+    src = "foo(a,\n  b\n) { |x| x }\n"
+    expect_lint_parity(*klasses, src, default_config)
+    expect(expect_autocorrect_parity(*klasses, src, default_config))
+      .to eq("foo(a,\n  b) { |x| x }\n")
+  end
+
+  it "pushes the brace down past a chained argument when a do block follows" do
+    # redmine issues_helper shape: the last argument is a chained call, the
+    # closing `)` shares its line, and the whole call carries a do block.
+    # NEW_LINE_MESSAGE fires and stock moves `)` to its own line.
+    src = <<~RUBY
+      issue_list(
+        items.preload(:a,
+                      :b).sort_by(&:lft)) do |child|
+        child
+      end
+    RUBY
+    expect_lint_parity(*klasses, src, default_config)
+    expect(expect_autocorrect_parity(*klasses, src, default_config))
+      .to eq(<<~RUBY)
+        issue_list(
+          items.preload(:a,
+                        :b).sort_by(&:lft)
+        ) do |child|
+          child
+        end
+      RUBY
+  end
+
+  it "still ignores a single-line call whose block spans lines" do
+    src = "foo(a, b) do\n  x\nend\n"
+    expect_lint_parity(*klasses, src, default_config, expect_offenses: false)
+    expect(lint_offenses(klasses.first, src, default_config)).to be_empty
+  end
+
   def config_with(base, cop_name, overrides)
     hash = base.to_h.dup
     hash[cop_name] = (hash[cop_name] || {}).merge(overrides)

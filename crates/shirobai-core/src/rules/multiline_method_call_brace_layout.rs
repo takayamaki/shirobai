@@ -152,8 +152,13 @@ impl super::dispatch::Rule for Visitor {
 
 impl Visitor {
     fn build_frame(&self, c: &ruby_prism::CallNode<'_>) -> CallFrame {
+        // Parser-gem SEND range: prism's CallNode spans an attached literal
+        // block, but the wrapper resolves the parser node by exact (begin,
+        // end) match and stock's chained?/argument? compare the send node —
+        // whose parent is the BLOCK node when a block is attached, so both
+        // are false. Excluding the block keeps every comparison aligned.
         let node_start = c.as_node().location().start_offset();
-        let node_end = c.as_node().location().end_offset();
+        let node_end = super::send_range::send_node_end_offset(c);
         let receiver_range = c
             .receiver()
             .map(|r| (r.location().start_offset(), r.location().end_offset()));
