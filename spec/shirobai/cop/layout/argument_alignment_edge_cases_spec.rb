@@ -71,6 +71,20 @@ RSpec.describe Shirobai::Cop::Layout::ArgumentAlignment do
     expect_autocorrect_parity(*klasses, src, fixed)
   end
 
+  it "does not drag multi-line percent-string interiors when realigning (fluentd test_config_parser)" do
+    # Stock hands AlignmentCorrector the argument NODE, whose
+    # `inside_string_ranges` taboo protects the string interior lines.
+    # A bare range loses that protection and a positive delta indents the
+    # `%()` body lines too.
+    src = <<~RUBY
+      x = foo(bar,
+      %(line1
+      line2 and more))
+    RUBY
+    expect_lint_parity(*klasses, src, config)
+    expect_autocorrect_parity(*klasses, src, config)
+  end
+
   def config_with(cop_name, overrides)
     base = RuboCop::ConfigLoader.default_configuration
     hash = base.to_h.dup

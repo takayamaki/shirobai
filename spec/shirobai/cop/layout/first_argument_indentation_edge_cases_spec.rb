@@ -122,6 +122,18 @@ RSpec.describe Shirobai::Cop::Layout::FirstArgumentIndentation do
     expect_autocorrect_parity(*klasses, src, config)
   end
 
+  it "does not drag multi-line percent-string interiors when realigning" do
+    # Same taboo as Layout/ArgumentAlignment: the correction target must be
+    # the parser NODE so `inside_string_ranges` protects the `%()` body.
+    src = <<~RUBY
+      foo(
+      %(line1
+      line2 and more))
+    RUBY
+    expect_lint_parity(*klasses, src, config)
+    expect_autocorrect_parity(*klasses, src, config)
+  end
+
   it "keeps the positional argument as the first when a block-pass follows" do
     src = <<~RUBY
       foo(
