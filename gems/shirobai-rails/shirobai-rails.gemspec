@@ -24,5 +24,5 @@ Gem::Specification.new do |spec|
   # Hard pin, same policy as core's rubocop pin: shirobai copies cop
   # behavior at the byte level, so even a minor rubocop-rails update
   # can break compatibility. A failed install beats a silent difference.
-  spec.add_dependency "rubocop-rails", "= 2.35.5"
+  spec.add_dependency "rubocop-rails", "= 2.36.0"
 end
