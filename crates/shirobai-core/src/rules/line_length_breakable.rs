@@ -1083,10 +1083,22 @@ impl<'pr> BreakableVisitor<'_> {
             if chained_to_heredoc(self.source, &call) {
                 return None;
             }
-            let args = call
+            // parser-gem's `send.arguments` includes the block-pass argument
+            // (`&blk`, bare `&`) as the LAST argument; prism keeps it in
+            // `block()`. Append it BEFORE `process_args`: with a block-pass
+            // last, a preceding braceless keyword hash is not the last
+            // argument and is NOT flattened into its pairs, and the
+            // block-pass itself is a pickable breakable element.
+            let mut raw: Vec<Node<'pr>> = call
                 .arguments()
-                .map(|a| process_args(a.arguments().iter().collect()))
+                .map(|a| a.arguments().iter().collect())
                 .unwrap_or_default();
+            if let Some(block) = call.block()
+                && block.as_block_argument_node().is_some()
+            {
+                raw.push(block);
+            }
+            let args = process_args(raw);
             return self.extract_breakable_node_from_elements(node, args, true, false);
         }
         if let Some(def) = node.as_def_node() {

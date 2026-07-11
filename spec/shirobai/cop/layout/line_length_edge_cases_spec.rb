@@ -194,6 +194,33 @@ RSpec.describe Shirobai::Cop::Layout::LineLength do
     expect(expect_autocorrect_parity(*klasses, src, max40_config)).to eq(src)
   end
 
+  it "can pick the trailing block-pass argument as the breakable element (fluentd out_forward)" do
+    # parser-gem's `send.arguments` includes the block-pass argument as the
+    # last element, so `extract_first_element_over_column_limit` can choose
+    # `&method(:x)` and stock breaks right before it. prism keeps the block
+    # argument in `CallNode#block()` — dropping it makes shirobai break one
+    # element earlier.
+    src = <<~RUBY
+      def start
+        timer_execute(:out_forward_keep_alived_socket_watcher, @keep_alive_watcher_interval, &method(:on_purge_obsolete_socks))
+      end
+    RUBY
+    expect_lint_parity(*klasses, src, default_config)
+    expect_autocorrect_parity(*klasses, src, default_config)
+  end
+
+  it "keeps the trailing kwargs hash unflattened when a block-pass follows (fluentd in_exec)" do
+    # `process_args` only splices a braceless keyword hash when it is the
+    # LAST argument. With a block-pass after it, parser-gem's last argument
+    # is the block-pass, so the hash stays one element and stock breaks
+    # before the WHOLE hash — not between its pairs.
+    src = <<~RUBY
+      child_process_execute(:exec_input, @command, interval: @run_interval, wait_timeout: @command_timeout, **options, &method(:run))
+    RUBY
+    expect_lint_parity(*klasses, src, default_config)
+    expect_autocorrect_parity(*klasses, src, default_config)
+  end
+
   it "spans the whole breakable element so same-round edits inside it survive the merge" do
     # `Team#autocorrect` merges every cop's corrector into one TreeRewriter.
     # Stock's breakable insertion is recorded against the chosen element
