@@ -360,6 +360,42 @@ fn map_space_around_operators(
         .collect()
 }
 
+/// `Layout/ExtraSpacing`: `[[start, end, message, action, edits], ...]` —
+/// `[start, end)` is the offense highlight; `message` is the offense text;
+/// `action` is `0` (`corrector.remove(range)` — `edits` empty) or `1` (the
+/// `ForceEqualSignAlignment` alignment, where `edits` is a list of
+/// `[edit_start, edit_end, text]` triples each applied with
+/// `corrector.replace(range(edit_start, edit_end), text)`; a zero-width range is
+/// an insertion, an empty `text` a deletion).
+#[allow(clippy::type_complexity)]
+fn map_extra_spacing(
+    v: Vec<shirobai_core::rules::extra_spacing::ExtraSpacingOffense>,
+) -> Vec<(usize, usize, String, u8, Vec<(usize, usize, String)>)> {
+    use shirobai_core::rules::extra_spacing::Correction;
+    v.into_iter()
+        .map(|o| {
+            let (action, edits) = match o.correction {
+                Correction::Remove => (0u8, Vec::new()),
+                Correction::Align(es) => (
+                    1u8,
+                    es.into_iter()
+                        .map(|e| {
+                            (e.start, e.end, String::from_utf8_lossy(&e.text).into_owned())
+                        })
+                        .collect(),
+                ),
+            };
+            (
+                o.start_offset,
+                o.end_offset,
+                String::from_utf8_lossy(&o.message).into_owned(),
+                action,
+                edits,
+            )
+        })
+        .collect()
+}
+
 #[allow(clippy::type_complexity)]
 fn map_first_argument_indentation(
     v: Vec<shirobai_core::rules::first_argument_indentation::FirstArgIndentOffense>,
@@ -1813,7 +1849,7 @@ fn register_bundle_config(
 /// 90 redundant_freeze / 91 frozen_string_literal_comment /
 /// 92 arguments_forwarding / 93 space_around_operators /
 /// 94 ordered_magic_comments / 95 initial_indentation /
-/// 96 space_around_equals_in_parameter_default
+/// 96 space_around_equals_in_parameter_default / 97 extra_spacing
 ///
 /// Performance slots (origin 1; every slot empty unless the plugin gem
 /// registered its packed segment):
@@ -1860,7 +1896,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
         // Core origin (result[0]).
-        let ary = ruby.ary_new_capa(94);
+        let ary = ruby.ary_new_capa(101);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -1998,17 +2034,15 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(r.frozen_string_literal_comment)?;
         ary.push(map_arguments_forwarding(r.arguments_forwarding))?;
         ary.push(map_space_around_operators(r.space_around_operators))?;
-        // toucher-batch-1 core slots (94-96); ExtraSpacing lands on the next
-        // free slot separately, so a merge reconciles the numbering.
+        // toucher-batch-1 core slots (94-96); ExtraSpacing (#55) lands on
+        // slot 97, then batch-2 appends slots 98-100.
         ary.push(map_ordered_magic_comments(r.ordered_magic_comments))?;
         ary.push(r.initial_indentation)?;
         ary.push(map_space_around_equals_in_parameter_default(
             r.space_around_equals_in_parameter_default,
         ))?;
-        // Slot 97 is RESERVED for the parallel `Layout/ExtraSpacing` PR (#55)
-        // renumber; batch-2 slots start at 98. Pushed as an empty array that no
-        // wrapper reads until #55 rebases onto this branch and fills it.
-        ary.push(ruby.ary_new())?;
+        // core slot 97: `Layout/ExtraSpacing` (#55).
+        ary.push(map_extra_spacing(r.extra_spacing))?;
         // toucher-batch-2 core slot 98: `Layout/EndOfLine` (stock's `last_line`
         // as a plain Integer).
         ary.push(r.end_of_line)?;
@@ -2680,6 +2714,33 @@ fn check_space_around_operators(
         force_equal_sign_alignment,
     };
     map_space_around_operators(sao::check_space_around_operators(bytes(&source), cfg))
+}
+
+/// Ruby entry point for `Layout/ExtraSpacing` (fallback path; the bundle is the
+/// usual path). Flags are `AllowForAlignment` / `AllowBeforeTrailingComments` /
+/// `ForceEqualSignAlignment`; the shape is documented on `map_extra_spacing`.
+#[allow(clippy::type_complexity)]
+fn check_extra_spacing(
+    source: RString,
+    allow_for_alignment: bool,
+    allow_before_trailing_comments: bool,
+    force_equal_sign_alignment: bool,
+) -> Vec<(usize, usize, String, u8, Vec<(usize, usize, String)>)> {
+    use shirobai_core::rules::extra_spacing as es;
+    let cfg = es::Config {
+        allow_for_alignment,
+        allow_before_trailing_comments,
+        force_equal_sign_alignment,
+    };
+    map_extra_spacing(es::check_extra_spacing(bytes(&source), cfg))
+}
+
+/// Ruby entry point for `Layout/ExtraSpacing`'s `ignored_ranges` (the multi-line
+/// hash key↔value spans). Returns `[[start, end], ...]`. Stock memoizes these on
+/// the cop instance; the Ruby wrapper does the same and applies the
+/// `ignored_range?` filter itself, so this is a separate, cacheable call.
+fn extra_spacing_ignored_ranges(source: RString) -> Vec<(usize, usize)> {
+    shirobai_core::rules::extra_spacing::ignored_ranges(bytes(&source))
 }
 
 /// Ruby entry point for `Layout/FirstArgumentIndentation`. Takes the source,
@@ -4305,6 +4366,14 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_space_around_operators",
         function!(check_space_around_operators, 6),
+    )?;
+    module.define_module_function(
+        "check_extra_spacing",
+        function!(check_extra_spacing, 4),
+    )?;
+    module.define_module_function(
+        "extra_spacing_ignored_ranges",
+        function!(extra_spacing_ignored_ranges, 1),
     )?;
     module.define_module_function("check_redundant_self", function!(check_redundant_self, 2))?;
     module.define_module_function(
