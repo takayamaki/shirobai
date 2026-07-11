@@ -130,7 +130,7 @@ impl ExtraSpacingRule {
 
     /// `check_tokens` per pair. Collects the cheap candidates; [`resolve`]
     /// applies the alignment / ignored-range filters.
-    fn check_pair(&mut self, source: &[u8], t1: &Token, t2: &Token) {
+    fn check_pair(&mut self, source: &[u8], line_index: &LineIndex, t1: &Token, t2: &Token) {
         // `return if token2.type == :tNL`.
         if t2.new_line() {
             return;
@@ -142,11 +142,11 @@ impl ExtraSpacingRule {
             });
             return;
         }
-        self.check_other(source, t1, t2);
+        self.check_other(source, line_index, t1, t2);
     }
 
     /// `check_other`: collect a same-line extra-space gap candidate.
-    fn check_other(&mut self, source: &[u8], t1: &Token, t2: &Token) {
+    fn check_other(&mut self, source: &[u8], line_index: &LineIndex, t1: &Token, t2: &Token) {
         // `return false if allow_for_trailing_comments? && token2.text.start_with?('#')`.
         if self.cfg.allow_before_trailing_comments
             && source.get(t2.begin_pos) == Some(&b'#')
@@ -154,7 +154,10 @@ impl ExtraSpacingRule {
             return;
         }
         // `extra_space_range`: same line, and a non-empty gap between the tokens.
-        if line_of(source, t1.begin_pos) != line_of(source, t2.begin_pos) {
+        // Same-line test via the binary-search line index: the free `line_of`
+        // scan is O(offset), which over every adjacent token pair is O(tokens x
+        // file size) per file (the dominant cost of this token cop).
+        if line_index.line_of(t1.begin_pos) != line_index.line_of(t2.begin_pos) {
             return;
         }
         let start_pos = t1.end_pos;
@@ -616,7 +619,7 @@ pub fn check_with_tokens(source: &[u8], cfg: Config, tokens: &[Token]) -> Vec<Ex
     let mut rule = ExtraSpacingRule::new(cfg, assignment_set);
     // `sorted_tokens.each_cons(2)`: drive the per-pair core directly.
     for w in tokens.windows(2) {
-        rule.check_pair(source, &w[0], &w[1]);
+        rule.check_pair(source, &line_index, &w[0], &w[1]);
     }
     resolve(source, cfg, rule, tokens, &def_equals)
 }
