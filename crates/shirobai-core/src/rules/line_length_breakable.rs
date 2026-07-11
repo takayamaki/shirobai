@@ -21,8 +21,10 @@ use ruby_prism::{Node, Visit};
 use std::collections::HashSet;
 
 /// A break that may be inserted on a particular source line. At most one per
-/// line (the first builder to claim a line wins, matching upstream's
-/// `breakable_range_by_line_index` write-once-per-line behaviour).
+/// line. Node and string claims are write-once (the first wins, matching
+/// upstream's `return if breakable_range_by_line_index[...]` guards); block
+/// claims assign unconditionally and overwrite earlier claims, matching
+/// upstream's `check_for_breakable_block`.
 pub struct Breakable {
     pub line_index: usize,
     pub insert_offset: usize,
@@ -83,8 +85,9 @@ pub fn compute_breakables_filtered(
             string_parent_start: None,
         };
         // Semicolons are claimed first (upstream does this in
-        // `on_new_investigation`, before the node walk), so a node never
-        // overrides a semicolon break on the same line.
+        // `on_new_investigation`, before the node walk), so a NODE claim never
+        // overrides a semicolon break on the same line. BLOCK claims do — they
+        // assign unconditionally, exactly like upstream.
         v.collect_semicolons(node);
         v.visit(node);
         v.into_breakables()
@@ -191,6 +194,17 @@ impl BreakableVisitor<'_> {
 
     fn claim(&mut self, line_index: usize, insert_offset: usize) {
         self.ranges.entry(line_index).or_insert(insert_offset);
+    }
+
+    /// Block claims ASSIGN instead of or-inserting: stock's
+    /// `check_for_breakable_block` writes `breakable_range_by_line_index[i]`
+    /// unconditionally, so a block beats an earlier semicolon / node / string
+    /// claim on the same line. A string's stored delimiter is NOT cleared —
+    /// stock never removes entries from `breakable_string_delimiters` either,
+    /// so a line whose string claim was overwritten by a block still inserts
+    /// the string-continuation form at the block position.
+    fn claim_block(&mut self, line_index: usize, insert_offset: usize) {
+        self.ranges.insert(line_index, insert_offset);
     }
 
     fn claim_string(&mut self, line_index: usize, insert_offset: usize, delimiter: String) {
@@ -484,6 +498,59 @@ impl<'pr> Visit<'pr> for BreakableVisitor<'_> {
             }
         }
     }
+
+    // `BeginNode.rescue_clause` is a concretely-typed field: the generated
+    // walker calls `visit_rescue_node` directly, so a `RescueNode` never
+    // reaches the generic branch hooks (see the trap table). parser wraps the
+    // exception list of `rescue A, B => e` in an implicit ARRAY node that
+    // `on_array` treats as a breakable collection; synthesize it here. The
+    // collection frame is pushed over the exception subtrees only — parser's
+    // implicit array is the parent of the exceptions, not of the body.
+    fn visit_rescue_node(&mut self, node: &ruby_prism::RescueNode<'pr>) {
+        self.check_for_breakable_rescue(node);
+        let exceptions: Vec<Node<'pr>> = node.exceptions().iter().collect();
+        if !exceptions.is_empty() {
+            let elems: Vec<ElemLoc> = exceptions
+                .iter()
+                .map(|e| {
+                    let (f, l) = node_lines(self.line_index, e);
+                    ElemLoc {
+                        first_line: f,
+                        last_line: l,
+                    }
+                })
+                .collect();
+            let first_line = elems[0].first_line;
+            let start_offset = exceptions[0].location().start_offset();
+            self.stack.push(Frame {
+                kind: FrameKind::Collection {
+                    elements: elems,
+                    breakable: exceptions.len() >= 2,
+                },
+                first_line,
+                // parser: a string exception's parent is the implicit array,
+                // which forbids string splitting.
+                parent_info: ParentInfo {
+                    forbids_string_split: true,
+                    dstr_open: None,
+                    start_offset,
+                },
+            });
+            for e in &exceptions {
+                self.visit(e);
+            }
+            self.stack.pop();
+        }
+        if let Some(r) = node.reference() {
+            self.visit(&r);
+        }
+        if let Some(s) = node.statements() {
+            self.visit_statements_node(&s);
+        }
+        if let Some(sub) = node.subsequent() {
+            self.visit_rescue_node(&sub);
+        }
+    }
 }
 
 impl<'pr> BreakableVisitor<'_> {
@@ -531,6 +598,18 @@ impl<'pr> BreakableVisitor<'_> {
             // `->(x) { }` — represented as a LambdaNode, not a call+block.
             self.check_for_breakable_lambda(node.location().start_offset(), &lambda);
         }
+        // `super(...) { }` / bare `super { }` — parser wraps them in a block
+        // node too, so stock's `on_block` fires for them (no receiver).
+        if let Some(sup) = node.as_super_node()
+            && let Some(block) = sup.block().and_then(|b| b.as_block_node())
+        {
+            self.check_for_breakable_block(node.location().start_offset(), None, &block, false);
+        }
+        if let Some(sup) = node.as_forwarding_super_node()
+            && let Some(block) = sup.block()
+        {
+            self.check_for_breakable_block(node.location().start_offset(), None, &block, false);
+        }
         if collection_elements(self.source, node).is_some() {
             self.check_for_breakable_node(node);
         }
@@ -545,15 +624,21 @@ impl<'pr> BreakableVisitor<'_> {
         block: &ruby_prism::BlockNode<'pr>,
         is_lambda: bool,
     ) {
-        // `block_node.single_line?`
-        let (bf, bl) = node_lines(self.line_index, &block.as_node());
-        // single_line? is over the whole block expression, whose first line is
-        // the receiver/call line.
-        let expr_first_line = self.line_index.line_of(block_expr_start);
-        if expr_first_line != bl || bf != expr_first_line {
+        // `block_node.single_line?` — BlockNode OVERRIDES the generic
+        // predicate: it compares only the `{`/`do` line with the `}`/`end`
+        // line. The receiver part may span any number of lines.
+        let open_line = self
+            .line_index
+            .line_of(block.opening_loc().start_offset());
+        let close_line = self
+            .line_index
+            .line_of(block.closing_loc().start_offset());
+        if open_line != close_line {
             return;
         }
-        let line_index = expr_first_line - 1;
+        // The claim goes to the block EXPRESSION's first line (the receiver
+        // line) even when the insertion point sits on a later line.
+        let line_index = self.line_index.line_of(block_expr_start) - 1;
         if !self.is_candidate(line_index) {
             return;
         }
@@ -564,7 +649,7 @@ impl<'pr> BreakableVisitor<'_> {
         }
 
         let begin_pos = self.breakable_block_range_begin(block, is_lambda);
-        self.claim(line_index, begin_pos + 1);
+        self.claim_block(line_index, begin_pos + 1);
     }
 
     fn check_for_breakable_lambda(
@@ -572,24 +657,29 @@ impl<'pr> BreakableVisitor<'_> {
         block_expr_start: usize,
         lambda: &ruby_prism::LambdaNode<'pr>,
     ) {
-        let (lf, ll) = node_lines(self.line_index, &lambda.as_node());
-        let expr_first_line = self.line_index.line_of(block_expr_start);
-        if lf != ll || lf != expr_first_line {
+        // Same `single_line?` as blocks: only the `{`/`do` line vs the
+        // `}`/`end` line.
+        let open = lambda.opening_loc();
+        let open_line = self.line_index.line_of(open.start_offset());
+        let close_line = self
+            .line_index
+            .line_of(lambda.closing_loc().start_offset());
+        if open_line != close_line {
             return;
         }
-        if !self.is_candidate(expr_first_line - 1) {
+        let line_index = self.line_index.line_of(block_expr_start) - 1;
+        if !self.is_candidate(line_index) {
             return;
         }
         // Lambdas always use `{ }` / `do end`; `breakable_block_range` for a
         // lambda always takes the `loc.begin` branch (the `!lambda?` guard fails).
-        let open = lambda.opening_loc();
         let open_src = &self.source[open.start_offset()..open.end_offset()];
         let begin_pos = if open_src == b"do" {
             open.start_offset() + 1
         } else {
             open.start_offset()
         };
-        self.claim(expr_first_line - 1, begin_pos + 1);
+        self.claim_block(line_index, begin_pos + 1);
     }
 
     /// `breakable_block_range(block_node).begin_pos`.
@@ -886,6 +976,71 @@ impl<'pr> BreakableVisitor<'_> {
         parts.len() != 1
     }
 
+    // --- breakable rescue (implicit exception array) ----------------------
+
+    /// parser wraps the exception classes of `rescue A, B, C => e` in an
+    /// implicit `array` node and `extract_breakable_node` treats it like any
+    /// other collection. Prism keeps the exceptions as a bare NodeList on
+    /// `RescueNode`, so the array is synthesized: its range runs from the
+    /// first exception's start to the last exception's end.
+    fn check_for_breakable_rescue(&mut self, rescue: &ruby_prism::RescueNode<'pr>) {
+        let exceptions: Vec<Node<'pr>> = rescue.exceptions().iter().collect();
+        // `breakable_collection?`: an implicit array is never a hash, so only
+        // the two-element rule applies.
+        if exceptions.len() < 2 {
+            return;
+        }
+        let first_line = self
+            .line_index
+            .line_of(exceptions.first().unwrap().location().start_offset());
+        // Cheap pre-filter, as in `check_for_breakable_node`.
+        if !self.is_candidate(first_line - 1) {
+            return;
+        }
+        // `safe_to_ignore?`: `already_on_multiple_lines?` measures the
+        // implicit array's own span, then the two containment predicates.
+        let last_line = self
+            .line_index
+            .line_of(exceptions.last().unwrap().location().end_offset());
+        if first_line != last_line {
+            return;
+        }
+        if self.contained_by_breakable_collection_on_same_line_at(first_line) {
+            return;
+        }
+        if self.contained_by_multiline_collection_that_could_be_broken_up() {
+            return;
+        }
+        if self.line_with_comment(first_line) {
+            return;
+        }
+        if self.line_length_chars(first_line - 1) <= self.max {
+            return;
+        }
+        // `extract_first_element_over_column_limit`: not a call, so no
+        // drop-first; the implicit list IS a parser `array`, so the heredoc
+        // shift applies.
+        let mut i = 0usize;
+        while self.within_column_limit(exceptions.get(i), first_line) {
+            i += 1;
+        }
+        let Some(i) = self.shift_index_for_heredoc(&exceptions, i) else {
+            return;
+        };
+        let bn = if i == 0 {
+            exceptions.into_iter().next()
+        } else {
+            exceptions.into_iter().nth(i - 1)
+        };
+        let Some(bn) = bn else { return };
+        let start = bn.location().start_offset();
+        let line_index = self.line_index.line_of(start) - 1;
+        if !self.is_candidate(line_index) {
+            return;
+        }
+        self.claim(line_index, start);
+    }
+
     // --- breakable node -------------------------------------------------
 
     fn check_for_breakable_node(&mut self, node: &Node<'pr>) {
@@ -1011,6 +1166,12 @@ impl<'pr> BreakableVisitor<'_> {
         if !applies {
             return Some(index);
         }
+        self.shift_index_for_heredoc(elements, index)
+    }
+
+    /// The array/call branch of `shift_elements_for_heredoc_arg`, shared with
+    /// the synthesized rescue collection (parser type `array`).
+    fn shift_index_for_heredoc(&self, elements: &[Node<'pr>], index: usize) -> Option<usize> {
         let heredoc_index = elements.iter().position(|e| is_heredoc(self.source, e));
         let Some(hi) = heredoc_index else {
             return Some(index);
@@ -1068,6 +1229,10 @@ impl<'pr> BreakableVisitor<'_> {
 
     fn contained_by_breakable_collection_on_same_line(&self, node: &Node<'pr>) -> bool {
         let (node_first_line, _) = node_lines(self.line_index, node);
+        self.contained_by_breakable_collection_on_same_line_at(node_first_line)
+    }
+
+    fn contained_by_breakable_collection_on_same_line_at(&self, node_first_line: usize) -> bool {
         for frame in self.stack.iter().rev() {
             if frame.first_line != node_first_line {
                 break;
@@ -1457,6 +1622,47 @@ mod tests {
     fn no_split_when_disabled() {
         let src = "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbb'\n";
         assert!(run(src, 40, false).is_empty());
+    }
+
+    // A rescue clause with several exception classes is broken like the
+    // implicit array parser builds for it: before the class crossing `max`.
+    #[test]
+    fn breakable_rescue_exception_list() {
+        let src = "begin\n  foo\nrescue Aaa::BbbError, Ccc::DddError, Eee::FffError => e\n  bar\nend\n";
+        let r = run(src, 40, false);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, 2);
+        assert_eq!(r[0].1, src.find("Eee").unwrap());
+    }
+
+    // A multi-line exception list is already broken; no claim.
+    #[test]
+    fn multiline_rescue_exception_list_ignored() {
+        let src = "begin\n  foo\nrescue Aaa::BbbError,\n  Ccc::DddError, Eee::FffError, Ggg::HhhError => e\n  bar\nend\n";
+        assert!(run(src, 40, false).is_empty());
+    }
+
+    // A single-line `{ }` block hanging off a multi-line receiver still
+    // claims: BlockNode#single_line? compares only the `{` and `}` lines,
+    // and the claim goes to the expression's FIRST line while the insertion
+    // point sits after the `|args|` on a later line.
+    #[test]
+    fn block_on_multiline_receiver_claims_first_line() {
+        let src = "((abc[:key][1] || []) + [xyz_padding_pad])\n  .any? { |target_id| abc[:blocking][target_id] }\n";
+        let r = run(src, 40, false);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, 0, "claim goes to the receiver line");
+        // The byte before the insertion point is the closing `|`.
+        assert_eq!(src.as_bytes()[r[0].1 - 1], b'|');
+    }
+
+    // A block claim overwrites an earlier semicolon claim on the same line.
+    #[test]
+    fn block_overwrites_semicolon_claim() {
+        let src = "aaa = 1; bbb.ccc_ddd(eee).fff { |g| g * 27 }\n";
+        let r = run(src, 40, false);
+        assert_eq!(r.len(), 1);
+        assert_eq!(src.as_bytes()[r[0].1 - 1], b'|', "block wins over the semicolon");
     }
 
     // A string inside a hash value is not split; the hash is broken instead.
