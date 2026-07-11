@@ -34,7 +34,7 @@ one shared cdylib, no extra cargo build for users.
 
 ```ruby
 # Gemfile
-gem "rubocop", "= 1.88.0"
+gem "rubocop", "= 1.88.2"
 gem "rubocop-performance", "= 1.26.1"
 gem "shirobai"
 gem "shirobai-performance"

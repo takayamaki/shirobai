@@ -3,5 +3,5 @@
 # Stock side of benches/parity_diff_rails.sh: rubocop + rubocop-rails only.
 source "https://rubygems.org"
 
-gem "rubocop", "= 1.88.0"
+gem "rubocop", "= 1.88.2"
 gem "rubocop-rails", "= 2.35.5"

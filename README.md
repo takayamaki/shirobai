@@ -101,7 +101,7 @@ The image is simple: RuboCop hops on a shiro-bai and gets faster.
 
 | | |
 |---|---|
-| RuboCop | **pinned to `= 1.88.0`** |
+| RuboCop | **pinned to `= 1.88.2`** |
 | Ruby | `>= 3.1` |
 | Rust | `>= 1.75` (stable) |
 | Platforms | Linux / macOS (anywhere `cargo build --release` works) |
@@ -137,7 +137,7 @@ you can disable shirobai's replacement in your config; the stock cop will run in
 Add to your Gemfile next to `rubocop`:
 
 ```ruby
-gem "rubocop", "= 1.88.0"
+gem "rubocop", "= 1.88.2"
 gem "shirobai"
 ```
 
@@ -215,7 +215,7 @@ Each directory has its own `README.md` with details.
 | `ext/shirobai/` | magnus bridge (cdylib) |
 | `benches/` | Benchmarks and the parity oracles |
 | `spec/` | RSpec, vendor spec inclusion, edge-case parity |
-| `vendor/rubocop/` | Git submodule pinned to 1.88.0 for vendor specs |
+| `vendor/rubocop/` | Git submodule pinned to 1.88.2 for vendor specs |
 | `gems/shirobai-performance/` | Plugin gem (rubocop-performance cops) |
 | `gems/shirobai-rspec/` | Plugin gem (rubocop-rspec cops) |
 | `gems/shirobai-rails/` | Plugin gem (rubocop-rails cops) |

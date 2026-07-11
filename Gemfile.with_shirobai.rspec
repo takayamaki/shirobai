@@ -4,7 +4,7 @@
 # the shirobai core and the shirobai-rspec plugin shell from this tree.
 source "https://rubygems.org"
 
-gem "rubocop", "= 1.88.0"
+gem "rubocop", "= 1.88.2"
 gem "rubocop-rspec", "= 3.10.2"
 gem "shirobai", path: "."
 gem "shirobai-rspec", path: "gems/shirobai-rspec"
