@@ -135,6 +135,8 @@ module Shirobai
       # toucher-batch-3 core slots 101-102.
       magic_comment_format: [0, 101].freeze,
       ascii_identifiers: [0, 102].freeze,
+      # toucher-batch-4 core slot 103.
+      rescue_ensure_alignment: [0, 103].freeze,
       # shirobai-performance plugin slots (origin 1). Always present in the
       # wire format; the Rust side leaves them empty unless the plugin gem
       # registered its packed segment (`Dispatch.register_plugin_packer`).
@@ -418,6 +420,7 @@ module Shirobai
         es = Cop::Layout::ExtraSpacing.bundle_args(config)
         sisi = Cop::Layout::SpaceInsideStringInterpolation.bundle_args(config)
         aid = Cop::Naming::AsciiIdentifiers.bundle_args(config)
+        rea = Cop::Layout::RescueEnsureAlignment.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -487,7 +490,8 @@ module Shirobai
           # the single wire source both cops read.
           es[0][0], es[0][1], es[0][2],
           *sisi[0], # SpaceInsideStringInterpolation style (1 num, index 131)
-          *aid[0] # AsciiIdentifiers 0=disabled / 1=enabled,AsciiConstants off / 2=enabled,on (1 num, index 132)
+          *aid[0], # AsciiIdentifiers 0=disabled / 1=enabled,AsciiConstants off / 2=enabled,on (1 num, index 132)
+          *rea[0] # RescueEnsureAlignment 0=disabled / 1=enabled (1 num, index 133)
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0], aba[0],

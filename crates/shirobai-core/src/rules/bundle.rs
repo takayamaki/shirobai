@@ -42,7 +42,8 @@ use super::{
     redundant_self,
     redundant_self_assignment,
     ascii_identifiers,
-    require_parentheses, rspec_dispatcher, rspec_empty_line, rspec_language, safe_navigation_chain,
+    require_parentheses, rescue_ensure_alignment, rspec_dispatcher, rspec_empty_line,
+    rspec_language, safe_navigation_chain,
     self_assignment,
     semicolon,
     space_around_equals_in_parameter_default,
@@ -195,6 +196,7 @@ pub fn check_multiline_bundle(
 /// | 130 | extra_spacing allow_before_trailing_comments (`AllowBeforeTrailingComments`, default false) |
 /// | 131 | space_inside_string_interpolation style (`Layout/SpaceInsideStringInterpolation` `EnforcedStyle`: 0 = no_space, 1 = space) — toucher-batch-2's first core index |
 /// | 132 | ascii_identifiers (`Naming/AsciiIdentifiers`): 0 = disabled, 1 = enabled with `AsciiConstants` off, 2 = enabled with `AsciiConstants` on — toucher-batch-3's core index |
+/// | 133 | rescue_ensure_alignment (`Layout/RescueEnsureAlignment`): 0 = disabled, 1 = enabled (gates the modifier-`rescue` keyword collection) — toucher-batch-4's core index |
 ///
 /// Core segment `lists[0]` (`Vec<String>`):
 ///
@@ -405,6 +407,9 @@ pub struct BundleConfig {
     /// `Naming/AsciiIdentifiers` `AsciiConstants` (whether `tCONSTANT` tokens
     /// are checked as well as identifiers).
     pub ascii_identifiers_constants: bool,
+    /// `Layout/RescueEnsureAlignment` enabled gate: `false` skips collecting
+    /// modifier-`rescue` keyword positions on the shared walk.
+    pub rescue_ensure_alignment_enabled: bool,
     pub duplicate_methods: duplicate_methods::Config,
     /// `Style/RedundantFreeze`: `AllCops/TargetRubyVersion >= 3.0`.
     pub redundant_freeze_target_30_plus: bool,
@@ -478,7 +483,7 @@ pub const ORIGIN_RSPEC: usize = 2;
 pub const ORIGIN_RAILS: usize = 3;
 pub const N_ORIGINS: usize = 4;
 
-const CORE_NUMS_LEN: usize = 133;
+const CORE_NUMS_LEN: usize = 134;
 const CORE_LISTS_LEN: usize = 28;
 const PERF_NUMS_LEN: usize = 3;
 const PERF_LISTS_LEN: usize = 1;
@@ -723,6 +728,7 @@ impl BundleConfig {
             // AsciiConstants off, 2 enabled with AsciiConstants on.
             ascii_identifiers_enabled: nums[132] != 0,
             ascii_identifiers_constants: nums[132] == 2,
+            rescue_ensure_alignment_enabled: nums[133] != 0,
             ambiguous_block_association: ambiguous_block_association::Config {
                 allowed_methods: next_list(),
             },
@@ -1013,6 +1019,11 @@ pub struct BundleResult {
     /// (the first non-ASCII byte run inside a flagged identifier/constant
     /// token). Empty for every all-ASCII file (the fast path).
     pub ascii_identifiers: Vec<ascii_identifiers::AsciiIdentOffense>,
+    /// `Layout/RescueEnsureAlignment`: the `(begin, end)` byte range of every
+    /// modifier-`rescue` keyword. The wrapper turns these into the
+    /// `@modifier_locations` set and runs stock's `on_resbody` / `on_ensure`.
+    /// Empty when the cop is disabled (the gate skips the collection).
+    pub rescue_ensure_alignment: Vec<rescue_ensure_alignment::ModifierRescuePos>,
     pub space_inside_hash_literal_braces:
         Vec<space_inside_hash_literal_braces::SpaceInsideHashLiteralBracesOffense>,
     pub space_inside_array_literal_brackets:
@@ -1364,6 +1375,12 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // shape simple — `el_rule` is consumed only on the eligible path.
     let empty_lines_eligible = empty_lines::contains_newline_triple(source);
     let mut el_rule = empty_lines::build_rule(source);
+    // `Layout/RescueEnsureAlignment`: joins the shared walk to collect the
+    // modifier-`rescue` keyword positions (its only toucher cost), gated off
+    // when the cop is disabled. Built regardless to keep the borrow shape
+    // simple; pushed onto `rules` only when enabled and its result read back
+    // after the walk (empty otherwise).
+    let mut rea_rule = rescue_ensure_alignment::build_rule();
     // shirobai-performance plugin rules: built and driven only when the
     // plugin gem woke the segment up. A core-only install pays nothing here.
     let mut pd_rule = cfg
@@ -1490,6 +1507,9 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     if empty_lines_eligible {
         rules.push(&mut el_rule);
     }
+    if cfg.rescue_ensure_alignment_enabled {
+        rules.push(&mut rea_rule);
+    }
     if let Some(rule) = aa_rule.as_mut() {
         rules.push(rule);
     }
@@ -1538,6 +1558,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
 
     let multiline_operation = op_rule.offenses;
     let multiline_method_call = mc_rule.offenses;
+    // Empty unless the gate pushed the rule onto the shared walk.
+    let rescue_ensure_alignment = rea_rule.positions;
     let argument_alignment = aa_rule.map(|r| r.offenses).unwrap_or_default();
     let array_alignment = ara_rule.offenses;
     let arguments_forwarding = af_rule.take_offenses();
@@ -1792,6 +1814,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         space_inside_string_interpolation,
         magic_comment_format,
         ascii_identifiers,
+        rescue_ensure_alignment,
         space_inside_hash_literal_braces,
         space_inside_array_literal_brackets,
         space_before_block_braces,
@@ -1943,6 +1966,7 @@ mod tests {
             1, 1, 0, // extra_spacing: enabled(128) / allow_for_alignment(129, true) / allow_before_trailing_comments(130, false)
             0, // space_inside_string_interpolation: style (no_space) — index 131
             2, // ascii_identifiers: enabled + AsciiConstants on (default) — index 132
+            1, // rescue_ensure_alignment: enabled (default) — index 133
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -4469,6 +4493,30 @@ mod tests {
             super::ordered_magic_comments::check_ordered_magic_comments(src.as_bytes());
         assert!(alone.is_some());
         assert_eq!(bundle.ordered_magic_comments, alone);
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_rescue_ensure_alignment() {
+        // Two modifier rescues (collected) plus a begin/rescue (a RescueNode,
+        // NOT collected) — exercises both the enter hook and the type split.
+        let src = "a rescue 1\nbegin\n  x\nrescue\n  y\nend\nb = c rescue 2\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone =
+            super::rescue_ensure_alignment::check_rescue_ensure_alignment(src.as_bytes());
+        assert_eq!(alone.len(), 2);
+        assert_eq!(bundle.rescue_ensure_alignment, alone);
+    }
+
+    #[test]
+    fn check_all_bundle_rescue_ensure_alignment_disabled_is_empty() {
+        let src = "a rescue 1\n";
+        let (mut nums, lists) = default_packed();
+        nums[0][133] = 0; // disable the cop (core segment)
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        assert!(bundle.rescue_ensure_alignment.is_empty());
     }
 
     #[test]

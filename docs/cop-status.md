@@ -4,14 +4,14 @@ This document tracks which RuboCop cops shirobai has reimplemented in Rust,
 and which cops were attempted but reverted because they did not meet the
 project's drop-in compatibility and speed requirements together.
 
-## Implemented (104 cops)
+## Implemented (106 cops)
 
 shirobai replaces these cops with Rust implementations.
 Every offense position, message, and autocorrected byte matches stock RuboCop
 on all five verification corpora (Mastodon, Discourse, Redmine, fluentd,
 and RuboCop itself).
 
-### Layout (56)
+### Layout (57)
 
 - `Layout/AccessModifierIndentation`
 - `Layout/ArgumentAlignment`
@@ -50,6 +50,7 @@ and RuboCop itself).
 - `Layout/MultilineMethodCallBraceLayout`
 - `Layout/MultilineMethodCallIndentation`
 - `Layout/MultilineOperationIndentation`
+- `Layout/RescueEnsureAlignment`
 - `Layout/SpaceAfterColon`
 - `Layout/SpaceAfterComma`
 - `Layout/SpaceAfterSemicolon`
@@ -103,7 +104,7 @@ and RuboCop itself).
 - `Naming/PredicatePrefix`
 - `Naming/VariableNumber`
 
-### Style (24)
+### Style (25)
 
 - `Style/ArgumentsForwarding`
 - `Style/BlockDelimiters`
@@ -117,6 +118,7 @@ and RuboCop itself).
 - `Style/IfUnlessModifier`
 - `Style/LineEndConcatenation`
 - `Style/MagicCommentFormat`
+- `Style/MutableConstant`
 - `Style/NestedParenthesizedCalls`
 - `Style/PercentLiteralDelimiters`
 - `Style/RedundantFreeze`
@@ -162,6 +164,59 @@ the only thing replaced: Rust does the same leading-comment scan (shared with
 prism parse, and the config half runs Ruby-side. So this cop joins neither the
 bundle wire nor the shared walk; it is stock's cop with a token-free
 `frozen_strings?`.
+
+### Note: `Style/MutableConstant` (frozen-scan-only Rust)
+
+Same shape as `Style/EmptyLiteral`. The whole cop body — the `on_casgn`
+mutability check (`literal_check` / `strict_check`, both `EnforcedStyle`
+axes), the `shareable_constant_value` scope scan (which reads
+`processed_source.lines`, NOT the token stream, so it is not a toucher), and
+the wide `.freeze` autocorrect (splat expansion, array bracketing, range /
+dotless-send parenthesizing, recursive nested freezing) — runs stock's own
+code VERBATIM on the real parser AST, so detection and `-A` bytes match stock
+by construction, including target-Ruby-dependent behavior (frozen regexp/range
+from 3.0, the `range_enclosed_in_parentheses?` `<= 2.7` branch). The ONE place
+stock reaches the parser-gem token stream (the toucher cost) is the
+`FrozenStringLiteral` mixin's `frozen_string_literals_enabled?`, via
+`leading_comment_lines` -> `processed_source.tokens`. This wrapper overrides
+just that one method with the shared token-free Rust leading-comment scan
+(`check_frozen_string_literals_enabled`, the same one behind `EmptyLiteral` /
+`Lint/DuplicateMagicComment` / `Style/FrozenStringLiteralComment`): it returns
+the first leading magic comment's `frozen_string_literal` value, or the
+`StringLiteralsFrozenByDefault` fallback when none (`nil`/`false` both map to
+`false`, exactly matching stock's `string_literals_frozen_by_default?.nil?`
+guard). So this cop joins neither the bundle wire nor the shared walk (no slot,
+no packed-config num); it is stock's cop with a token-free
+`frozen_string_literals_enabled?`. Real-fire parity verified against stock at
+zero diff on Mastodon (27), Redmine (162), and RuboCop itself (17).
+
+### Note: `Layout/RescueEnsureAlignment` (modifier-set-only Rust)
+
+Stock's `on_new_investigation` materializes the parser-gem token stream on
+EVERY file (the toucher cost — it is effectively an A-class toucher) purely to
+collect the keyword position of each modifier `rescue` (`x rescue y`), which the
+cop then uses to SKIP those `resbody` nodes (a modifier rescue is not an
+alignment target). Everything else — `on_resbody` / `on_ensure`, the
+`alignment_node` resolution (kwbegin / def / class / assignment / access
+modifier / block-send variants), the offense, and the whitespace autocorrect —
+is cheap AST work. This wrapper copies stock's body verbatim and replaces ONLY
+`on_new_investigation` (and its consumer `modifier?`): prism separates a modifier
+rescue into its own node type (`RescueModifierNode`, distinct from the
+`RescueNode` of a begin/def/block clause), so the shared walk collects each
+one's `keyword_loc` byte range in the single traversal (slot `[0, 103]`, gated
+by packed-config num 133). The wrapper byte-to-char converts those positions
+(via `SourceOffsets`) into the `@modifier_locations` set and runs stock's
+detection / autocorrect unchanged, so offenses, messages, and corrected bytes
+match stock by construction. The offense ranges themselves come from
+`node.loc.keyword` on the parser AST (never through Rust), so only the modifier
+keyword positions — used purely for set membership — cross the byte/char
+boundary. CRLF/BOM files (`buffer.source != raw_source`) fall back to the
+standalone `check_rescue_ensure_alignment` against `buffer.source`. Under the
+default config `Layout/BeginEndAlignment.EnforcedStyleAlignWith` is
+`start_of_line`, so the corpus parity always exercises that branch (the
+block-send multiline branch is covered by edge specs under the `keyword` style).
+Real-fire parity verified against stock at zero diff on Mastodon (26), Redmine
+(87), and RuboCop itself (0).
 
 ### Note: `Style/MagicCommentFormat` (leading-line-only Rust)
 
