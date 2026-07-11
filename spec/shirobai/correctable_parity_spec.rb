@@ -526,6 +526,13 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Layout::LineContinuationSpacing,
       "'a'  \\\n'b'\n"
     ],
+    # `Layout/SpaceInsideStringInterpolation` (default no_space) removes the
+    # inner spaces; both offenses must stay correctable in lint mode.
+    "Layout/SpaceInsideStringInterpolation" => [
+      RuboCop::Cop::Layout::SpaceInsideStringInterpolation,
+      Shirobai::Cop::Layout::SpaceInsideStringInterpolation,
+      "x = \"\#{ y }\"\n"
+    ],
     # Both directions are correctable in lint mode; the same-line-modifier
     # correction skip must leave an EMPTY corrector (`:unsupported`), exactly
     # like stock's `another_modifier_if_on_same_line?` guard.

@@ -4,14 +4,14 @@ This document tracks which RuboCop cops shirobai has reimplemented in Rust,
 and which cops were attempted but reverted because they did not meet the
 project's drop-in compatibility and speed requirements together.
 
-## Implemented (99 cops)
+## Implemented (100 cops)
 
 shirobai replaces these cops with Rust implementations.
 Every offense position, message, and autocorrected byte matches stock RuboCop
 on all five verification corpora (Mastodon, Discourse, Redmine, fluentd,
 and RuboCop itself).
 
-### Layout (54)
+### Layout (55)
 
 - `Layout/AccessModifierIndentation`
 - `Layout/ArgumentAlignment`
@@ -66,6 +66,7 @@ and RuboCop itself).
 - `Layout/SpaceInsideHashLiteralBraces`
 - `Layout/SpaceInsideParens`
 - `Layout/SpaceInsideReferenceBrackets`
+- `Layout/SpaceInsideStringInterpolation`
 - `Layout/TrailingEmptyLines`
 
 ### Lint (12)

@@ -448,6 +448,10 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # multibyte prefix (the range comes from stock's own `source_range`).
     "Layout/EndOfLine" =>
       "x = 1\r\n",
+    # The interpolation offense ranges AND the autocorrect edits are Rust byte
+    # offsets, so they must convert to char offsets after the multibyte prefix.
+    "Layout/SpaceInsideStringInterpolation" =>
+      "x = \"\#{ y }\"\n",
     # The `=` offense range `[arg.end, value.begin)` sits after the multibyte
     # prefix comment, so its prism byte offsets must map to char offsets, and
     # the `/=\s*(\S+)/` autocorrect must round-trip a multibyte default value.

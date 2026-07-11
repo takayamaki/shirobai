@@ -50,6 +50,7 @@ use super::{
     space_before_first_arg,
     space_inside_array_literal_brackets, space_inside_block_braces,
     space_inside_hash_literal_braces, space_inside_parens, space_inside_reference_brackets,
+    space_inside_string_interpolation,
     stabby_lambda_parentheses,
     string_literals,
     string_literals_in_interpolation,
@@ -188,6 +189,8 @@ pub fn check_multiline_bundle(
 /// | 125 | space_around_operators hash_table_style (`Layout/HashAlignment` `EnforcedHashRocketStyle` includes `table`) |
 /// | 126 | space_around_operators force_equal_sign_alignment (`Layout/ExtraSpacing` `ForceEqualSignAlignment`) |
 /// | 127 | space_around_equals_in_parameter_default style (`Layout/SpaceAroundEqualsInParameterDefault` `EnforcedStyle`: 0 = space, 1 = no_space) — toucher-batch-1's next-free core index |
+/// | 128-130 | RESERVED for the parallel `Layout/ExtraSpacing` PR (#55) renumber (enabled / allow_for_alignment / allow_before_trailing_comments). Zero-filled placeholders on this branch; #55's merge replaces them in place, so no renumber is needed. |
+/// | 131 | space_inside_string_interpolation style (`Layout/SpaceInsideStringInterpolation` `EnforcedStyle`: 0 = no_space, 1 = space) — toucher-batch-2's first core index |
 ///
 /// Core segment `lists[0]` (`Vec<String>`):
 ///
@@ -389,6 +392,9 @@ pub struct BundleConfig {
     /// (0 = space, 1 = no_space).
     pub space_around_equals_in_parameter_default:
         space_around_equals_in_parameter_default::Config,
+    /// `Layout/SpaceInsideStringInterpolation` `EnforcedStyle`
+    /// (0 = no_space, 1 = space).
+    pub space_inside_string_interpolation: space_inside_string_interpolation::Config,
     pub duplicate_methods: duplicate_methods::Config,
     /// `Style/RedundantFreeze`: `AllCops/TargetRubyVersion >= 3.0`.
     pub redundant_freeze_target_30_plus: bool,
@@ -455,7 +461,7 @@ pub const ORIGIN_RSPEC: usize = 2;
 pub const ORIGIN_RAILS: usize = 3;
 pub const N_ORIGINS: usize = 4;
 
-const CORE_NUMS_LEN: usize = 128;
+const CORE_NUMS_LEN: usize = 132;
 const CORE_LISTS_LEN: usize = 28;
 const PERF_NUMS_LEN: usize = 3;
 const PERF_LISTS_LEN: usize = 1;
@@ -688,6 +694,12 @@ impl BundleConfig {
             space_around_equals_in_parameter_default:
                 space_around_equals_in_parameter_default::Config {
                     style: nums[127] as u8,
+                },
+            // nums[128..=130] are RESERVED for the parallel `Layout/ExtraSpacing`
+            // PR (#55) renumber (zero-filled here, read by nobody).
+            space_inside_string_interpolation:
+                space_inside_string_interpolation::Config {
+                    style: nums[131] as u8,
                 },
             ambiguous_block_association: ambiguous_block_association::Config {
                 allowed_methods: next_list(),
@@ -958,6 +970,11 @@ pub struct BundleResult {
     /// `tokens.last.line`). Shares `end_of_line::check_end_of_line`; the wrapper
     /// runs stock's own scan body with this value injected.
     pub line_continuation_spacing: usize,
+    /// `Layout/SpaceInsideStringInterpolation`: one offense tuple per offending
+    /// delimiter, with the autocorrect edits attached to the first offense of
+    /// each interpolation.
+    pub space_inside_string_interpolation:
+        Vec<space_inside_string_interpolation::SpaceInsideInterpOffense>,
     pub space_inside_hash_literal_braces:
         Vec<space_inside_hash_literal_braces::SpaceInsideHashLiteralBracesOffense>,
     pub space_inside_array_literal_brackets:
@@ -1272,6 +1289,10 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         source,
         cfg.space_around_equals_in_parameter_default,
     );
+    let mut sisi_rule = space_inside_string_interpolation::build_rule(
+        source,
+        cfg.space_inside_string_interpolation,
+    );
     let mut uc_rule = unreachable_code::build_rule();
     let mut htk_rule = hash_transform_keys::build_rule(source);
     let mut aba_rule =
@@ -1400,6 +1421,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         &mut cmc_rule,
         &mut slp_rule,
         &mut saepd_rule,
+        &mut sisi_rule,
         &mut uc_rule,
         &mut htk_rule,
         &mut aba_rule,
@@ -1545,6 +1567,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let colon_method_call = cmc_rule.offenses;
     let stabby_lambda_parentheses = slp_rule.offenses;
     let space_around_equals_in_parameter_default = saepd_rule.offenses;
+    let space_inside_string_interpolation = sisi_rule.offenses;
     let unreachable_code = uc_rule.offenses;
     let hash_transform_keys = htk_rule.offenses;
     let ambiguous_block_association = aba_rule.offenses;
@@ -1697,6 +1720,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         initial_indentation,
         end_of_line,
         line_continuation_spacing,
+        space_inside_string_interpolation,
         space_inside_hash_literal_braces,
         space_inside_array_literal_brackets,
         space_before_block_braces,
@@ -1844,6 +1868,8 @@ mod tests {
             34, 1, 1, 0, // arguments_forwarding: target_ruby / allow_only_rest / use_anon / explicit_block
             1, 0, 0, 1, 0, 0, // space_around_operators: enabled / exponent / rational / allow_for_alignment(true) / hash_table / force_equal
             0, // space_around_equals_in_parameter_default: style (space) — index 127
+            0, 0, 0, // 128-130 RESERVED for Layout/ExtraSpacing PR (#55)
+            0, // space_inside_string_interpolation: style (no_space) — index 131
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -4393,6 +4419,24 @@ mod tests {
         let alone = super::end_of_line::check_end_of_line(src.as_bytes());
         assert_eq!(bundle.end_of_line, alone);
         assert_eq!(alone, 3);
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_space_inside_string_interpolation() {
+        let src = "\"#{ x }\"\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone = super::space_inside_string_interpolation::check_space_inside_string_interpolation(
+            src.as_bytes(),
+            cfg.space_inside_string_interpolation,
+        );
+        assert_eq!(bundle.space_inside_string_interpolation.len(), alone.len());
+        assert_eq!(alone.len(), 2);
+        for (a, b) in bundle.space_inside_string_interpolation.iter().zip(&alone) {
+            assert_eq!((a.start, a.end, a.command), (b.start, b.end, b.command));
+            assert_eq!(a.edits, b.edits);
+        }
     }
 
     #[test]

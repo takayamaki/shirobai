@@ -92,6 +92,7 @@ pub mod space_before_block_braces;
 pub mod space_before_first_arg;
 pub mod space_inside_parens;
 pub mod space_inside_reference_brackets;
+pub mod space_inside_string_interpolation;
 pub mod space_inside_array_literal_brackets;
 pub mod space_inside_block_braces;
 pub mod space_inside_hash_literal_braces;

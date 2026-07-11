@@ -2015,6 +2015,10 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         // toucher-batch-2 core slot 99: `Layout/LineContinuationSpacing`
         // (stock's `last_line`, same value as slot 98).
         ary.push(r.line_continuation_spacing)?;
+        // toucher-batch-2 core slot 100: `Layout/SpaceInsideStringInterpolation`.
+        ary.push(map_space_inside_string_interpolation(
+            r.space_inside_string_interpolation,
+        ))?;
         // Performance origin (result[1]).
         let perf = ruby.ary_new_capa(5);
         perf.push(map_perf_detect(r.perf_detect))?;
@@ -2166,6 +2170,23 @@ fn map_space_around_equals_in_parameter_default(
     v: Vec<shirobai_core::rules::space_around_equals_in_parameter_default::SpaceAroundEqualsOffense>,
 ) -> Vec<(usize, usize)> {
     v.into_iter().map(|o| (o.start, o.end)).collect()
+}
+
+/// `Layout/SpaceInsideStringInterpolation`: `[[start, end, command, [[edit_start,
+/// edit_end, insert?], ...]], ...]`. `command`: 0 = "Do not use", 1 = "Use".
+/// Each edit removes `[start, end)` (`insert?` false) or inserts one space at
+/// `start` (`insert?` true). The edits are attached to the first offense of each
+/// interpolation.
+type SpaceInsideInterpTuple = (usize, usize, u8, Vec<(usize, usize, bool)>);
+fn map_space_inside_string_interpolation(
+    v: Vec<shirobai_core::rules::space_inside_string_interpolation::SpaceInsideInterpOffense>,
+) -> Vec<SpaceInsideInterpTuple> {
+    v.into_iter()
+        .map(|o| {
+            let edits = o.edits.into_iter().map(|e| (e.start, e.end, e.insert)).collect();
+            (o.start, o.end, o.command, edits)
+        })
+        .collect()
 }
 
 type IfUnlessModifierOps = Vec<(u8, usize, usize, String)>;
@@ -3317,6 +3338,21 @@ fn check_end_of_line(source: RString) -> usize {
     shirobai_core::rules::end_of_line::check_end_of_line(bytes(&source))
 }
 
+/// Ruby entry point for `Layout/SpaceInsideStringInterpolation` (standalone
+/// fallback). `style`: 0 = no_space, 1 = space. See
+/// `map_space_inside_string_interpolation` for the returned shape.
+fn check_space_inside_string_interpolation(
+    source: RString,
+    style: u8,
+) -> Vec<SpaceInsideInterpTuple> {
+    map_space_inside_string_interpolation(
+        shirobai_core::rules::space_inside_string_interpolation::check_space_inside_string_interpolation(
+            bytes(&source),
+            shirobai_core::rules::space_inside_string_interpolation::Config { style },
+        ),
+    )
+}
+
 /// Ruby entry point for `Layout/SpaceAroundEqualsInParameterDefault`
 /// (standalone fallback). `style`: 0 = space, 1 = no_space. Returns one
 /// `[start, end]` byte range per offense.
@@ -4306,6 +4342,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         function!(check_initial_indentation, 1),
     )?;
     module.define_module_function("check_end_of_line", function!(check_end_of_line, 1))?;
+    module.define_module_function(
+        "check_space_inside_string_interpolation",
+        function!(check_space_inside_string_interpolation, 2),
+    )?;
     module.define_module_function(
         "check_space_around_equals_in_parameter_default",
         function!(check_space_around_equals_in_parameter_default, 2),

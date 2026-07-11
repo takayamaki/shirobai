@@ -134,6 +134,7 @@ module Shirobai
       # empty placeholder at 97 (see `ext/shirobai/src/lib.rs`).
       end_of_line: [0, 98].freeze,
       line_continuation_spacing: [0, 99].freeze,
+      space_inside_string_interpolation: [0, 100].freeze,
       # shirobai-performance plugin slots (origin 1). Always present in the
       # wire format; the Rust side leaves them empty unless the plugin gem
       # registered its packed segment (`Dispatch.register_plugin_packer`).
@@ -414,6 +415,7 @@ module Shirobai
         af = Cop::Style::ArgumentsForwarding.bundle_args(config)
         sao = Cop::Layout::SpaceAroundOperators.bundle_args(config)
         saepd = Cop::Layout::SpaceAroundEqualsInParameterDefault.bundle_args(config)
+        sisi = Cop::Layout::SpaceInsideStringInterpolation.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -476,9 +478,13 @@ module Shirobai
           *fslc[0], # FrozenStringLiteralComment style (1 num)
           *af[0], # ArgumentsForwarding target_ruby / allow_only_rest / use_anon / explicit_block (4 nums)
           *sao[0], # SpaceAroundOperators enabled / exponent / rational / allow / table / force (6 nums)
-          # toucher-batch-1 next-free core index (127). ExtraSpacing appends its
-          # own nums after SpaceAroundOperators on its branch; a merge reconciles.
-          *saepd[0] # SpaceAroundEqualsInParameterDefault style (1 num)
+          # toucher-batch-1 next-free core index (127).
+          *saepd[0], # SpaceAroundEqualsInParameterDefault style (1 num) [127]
+          # 128-130 RESERVED for the parallel Layout/ExtraSpacing PR (#55)
+          # renumber (enabled / allow_for_alignment / allow_before_trailing).
+          # Zero-filled placeholders; #55's merge replaces them in place.
+          0, 0, 0,
+          *sisi[0] # SpaceInsideStringInterpolation style (1 num) [131]
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0], aba[0],
