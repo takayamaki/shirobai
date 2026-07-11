@@ -481,6 +481,49 @@ impl<'pr> Visit<'pr> for BreakableVisitor<'_> {
         self.stack.pop();
     }
 
+    // parser wraps a call-with-block in a `(block (send) args body)` node:
+    // from inside the block body, the SEND is NOT an ancestor — the wrapper
+    // block node is (kind-wise a non-collection, first line = the whole
+    // expression's). prism hangs the block off the CallNode, so the naive
+    // stack would show the call's collection frame from inside the block and
+    // `contained_by_multiline_collection_that_could_be_broken_up` would
+    // wrongly suppress claims inside the block (mastodon accounts_index).
+    // Swap the call frame for the parser block wrapper while descending into
+    // a real block child (a `BlockArgumentNode` stays an argument: parser
+    // keeps `&blk` under the send).
+    fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
+        if let Some(r) = node.receiver() {
+            self.visit(&r);
+        }
+        if let Some(a) = node.arguments() {
+            self.visit_arguments_node(&a);
+        }
+        let Some(block) = node.block() else { return };
+        if block.as_block_node().is_none() {
+            self.visit(&block);
+            return;
+        }
+        let call_frame = self.stack.pop();
+        let first_line = call_frame.as_ref().map_or_else(
+            || self.line_index.line_of(node.location().start_offset()),
+            |f| f.first_line,
+        );
+        self.stack.push(Frame {
+            kind: FrameKind::Other,
+            first_line,
+            parent_info: ParentInfo {
+                forbids_string_split: false,
+                dstr_open: None,
+                start_offset: node.location().start_offset(),
+            },
+        });
+        self.visit(&block);
+        self.stack.pop();
+        if let Some(f) = call_frame {
+            self.stack.push(f);
+        }
+    }
+
     // String nodes are leaves and the generic `visit_branch_node_enter` hook is
     // not reliably called for them, so the string-split checks live in the typed
     // visitors. These do not push an ancestor frame (strings are leaves), so the

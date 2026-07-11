@@ -221,6 +221,23 @@ RSpec.describe Shirobai::Cop::Layout::LineLength do
     expect_autocorrect_parity(*klasses, src, default_config)
   end
 
+  it "keeps a send inside a block breakable when the block's call has multi-line args (mastodon accounts_index)" do
+    # parser wraps a call-with-block in a `(block (send) args body)` node:
+    # from inside the block body, the SEND is NOT an ancestor, so its
+    # (multi-line) argument list cannot trigger
+    # `contained_by_multiline_collection_that_could_be_broken_up?`. prism
+    # hangs the block off the CallNode, so a naive ancestor stack sees the
+    # call's collection frame from inside the block and wrongly suppresses
+    # the inner send's breakable claim.
+    src = <<~RUBY
+      foo(aa, bb: 1, cc: lambda { |x|
+        yy
+      }) { bar :dd, ee: 222, ff: 333, gg: 444 }
+    RUBY
+    expect_lint_parity(*klasses, src, max40_config)
+    expect_autocorrect_parity(*klasses, src, max40_config)
+  end
+
   it "spans the whole breakable element so same-round edits inside it survive the merge" do
     # `Team#autocorrect` merges every cop's corrector into one TreeRewriter.
     # Stock's breakable insertion is recorded against the chosen element
