@@ -457,6 +457,11 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # the `/=\s*(\S+)/` autocorrect must round-trip a multibyte default value.
     "Layout/SpaceAroundEqualsInParameterDefault" =>
       "def f(x, y=:あ); end\n",
+    # The offense range (the first non-ASCII run inside the identifier) is a Rust
+    # BYTE range, so it must convert to char offsets after the multibyte prefix
+    # comment. No autocorrect.
+    "Naming/AsciiIdentifiers" =>
+      "даль = 1\n",
   }
 
   cases.each do |cop_name, body|

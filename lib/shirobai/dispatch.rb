@@ -135,8 +135,9 @@ module Shirobai
       end_of_line: [0, 98].freeze,
       line_continuation_spacing: [0, 99].freeze,
       space_inside_string_interpolation: [0, 100].freeze,
-      # toucher-batch-3 core slot 101.
+      # toucher-batch-3 core slots 101-102.
       magic_comment_format: [0, 101].freeze,
+      ascii_identifiers: [0, 102].freeze,
       # shirobai-performance plugin slots (origin 1). Always present in the
       # wire format; the Rust side leaves them empty unless the plugin gem
       # registered its packed segment (`Dispatch.register_plugin_packer`).
@@ -418,6 +419,7 @@ module Shirobai
         sao = Cop::Layout::SpaceAroundOperators.bundle_args(config)
         saepd = Cop::Layout::SpaceAroundEqualsInParameterDefault.bundle_args(config)
         sisi = Cop::Layout::SpaceInsideStringInterpolation.bundle_args(config)
+        aid = Cop::Naming::AsciiIdentifiers.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -486,7 +488,8 @@ module Shirobai
           # renumber (enabled / allow_for_alignment / allow_before_trailing).
           # Zero-filled placeholders; #55's merge replaces them in place.
           0, 0, 0,
-          *sisi[0] # SpaceInsideStringInterpolation style (1 num) [131]
+          *sisi[0], # SpaceInsideStringInterpolation style (1 num) [131]
+          *aid[0] # AsciiIdentifiers 0=disabled / 1=enabled,AsciiConstants off / 2=enabled,on (1 num) [132]
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0], aba[0],

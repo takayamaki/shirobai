@@ -2022,6 +2022,9 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         // toucher-batch-3 core slot 101: `Style/MagicCommentFormat` (stock's
         // `leading_comment_lines` boundary as a plain Integer).
         ary.push(r.magic_comment_format)?;
+        // toucher-batch-3 core slot 102: `Naming/AsciiIdentifiers`
+        // (`[[is_constant, start, end], ...]`).
+        ary.push(r.ascii_identifiers)?;
         // Performance origin (result[1]).
         let perf = ruby.ary_new_capa(5);
         perf.push(map_perf_detect(r.perf_detect))?;
@@ -3349,6 +3352,14 @@ fn check_magic_comment_format(source: RString) -> usize {
     shirobai_core::rules::magic_comment_format::check_magic_comment_format(bytes(&source))
 }
 
+/// Ruby entry point for `Naming/AsciiIdentifiers` (standalone fallback).
+/// `ascii_constants`: whether `tCONSTANT` tokens are checked too. Returns one
+/// `(is_constant, start, end)` per offense (the first non-ASCII byte run);
+/// byte offsets are converted to chars by the wrapper.
+fn check_ascii_identifiers(source: RString, ascii_constants: bool) -> Vec<(bool, usize, usize)> {
+    shirobai_core::rules::ascii_identifiers::check_ascii_identifiers(bytes(&source), ascii_constants)
+}
+
 /// `Style/EmptyLiteral`'s `frozen_string_literals_enabled?` (String.new path),
 /// computed from the leading comment scan without materializing the parser-gem
 /// token stream. `sfbd`: `AllCops/StringLiteralsFrozenByDefault` is literally
@@ -4370,6 +4381,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_magic_comment_format",
         function!(check_magic_comment_format, 1),
+    )?;
+    module.define_module_function(
+        "check_ascii_identifiers",
+        function!(check_ascii_identifiers, 2),
     )?;
     module.define_module_function(
         "check_frozen_string_literals_enabled",

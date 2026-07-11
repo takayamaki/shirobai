@@ -5,6 +5,7 @@ pub mod ambiguous_block_association;
 pub mod argument_alignment;
 pub mod arguments_forwarding;
 pub mod array_alignment;
+pub mod ascii_identifiers;
 pub mod assignment_indentation;
 pub mod block_alignment;
 pub mod block_delimiters;
