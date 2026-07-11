@@ -784,17 +784,23 @@ impl<'pr> BreakableVisitor<'_> {
         range_end: usize,
     ) -> String {
         let mut max_length = self.max as isize - 3;
-        // same_line?(node, node.parent): offset by the column difference.
+        // Offset by the string's starting column so the broken line actually
+        // fits within `Max` (rubocop#15402). On the same line as its parent use
+        // the column difference; otherwise the string is indented on its own
+        // line, so subtract that indentation — without this an indented string
+        // under a multi-line parent never shortens below `Max` and the
+        // autocorrect loops, inserting empty `"" \` fragments.
         let parent_start = self.parent_start_offset();
-        if let Some(p) = parent_start
-            && self.line_index.line_of(range_begin) == self.line_index.line_of(p)
-        {
-            let node_col =
-                self.line_index
-                    .column(self.source, node.location().start_offset()) as isize;
-            let parent_col = self.line_index.column(self.source, p) as isize;
-            max_length -= node_col - parent_col;
-        }
+        let node_col = self
+            .line_index
+            .column(self.source, node.location().start_offset()) as isize;
+        max_length -= match parent_start {
+            Some(p) if self.line_index.line_of(range_begin) == self.line_index.line_of(p) => {
+                let parent_col = self.line_index.column(self.source, p) as isize;
+                node_col - parent_col
+            }
+            _ => node_col,
+        };
         let _ = parent_quote;
         let full = String::from_utf8_lossy(&self.source[range_begin..range_end]);
         if max_length <= 0 {

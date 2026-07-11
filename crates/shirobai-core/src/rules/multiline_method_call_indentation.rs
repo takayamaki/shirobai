@@ -776,7 +776,7 @@ impl<'a> Visitor<'a> {
         lhs: (usize, usize),
         rhs: (usize, usize),
     ) -> Option<(isize, String)> {
-        let pair_key = self.find_pair_ancestor();
+        let pair_key = self.find_pair_ancestor(node_range);
 
         if pair_key.is_some() && self.style == Style::Aligned {
             return self.check_hash_pair_indentation(call, node_range, lhs, rhs);
@@ -812,12 +812,28 @@ impl<'a> Visitor<'a> {
         ))
     }
 
-    /// `find_pair_ancestor`: the key range of the nearest hash-`pair` ancestor.
-    fn find_pair_ancestor(&self) -> Option<(usize, usize)> {
-        self.stack.iter().rev().find_map(|f| match f.kind {
-            FrameKind::Pair { key } => Some(key),
-            _ => None,
-        })
+    /// `find_pair_ancestor(node)`: the key range of the nearest hash-`pair`
+    /// ancestor. rubocop#15423: stop climbing (no pair) as soon as a grouped
+    /// expression `(...)` (`grouped_expression?`) or an enclosing parenthesized
+    /// argument list that strictly contains the node
+    /// (`inside_arg_list_parentheses?`) is reached — a pair above such a
+    /// delimiter must not anchor the chain's indentation.
+    fn find_pair_ancestor(&self, node_range: (usize, usize)) -> Option<(usize, usize)> {
+        for f in self.stack.iter().rev() {
+            match &f.kind {
+                FrameKind::Pair { key } => return Some(*key),
+                // `grouped_expression?(ancestor)`: a parenthesized `(...)` group.
+                FrameKind::Paren => return None,
+                // `inside_arg_list_parentheses?(node, ancestor)`: a parenthesized
+                // send whose `(` / `)` strictly enclose the node.
+                FrameKind::Send {
+                    paren: Some((pb, pe)),
+                    ..
+                } if node_range.0 > *pb && node_range.1 < *pe => return None,
+                _ => {}
+            }
+        }
+        None
     }
 
     fn base_receiver_is_hash(&self, call: &CallNode<'_>) -> bool {

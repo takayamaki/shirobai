@@ -13,11 +13,12 @@ module Shirobai
       # positions reconstruct those index facts. Rust returns one `[offset,
       # last_token]` pair per flagged `;`.
       #
-      # Path (b) (`on_begin`, the raw-line scan for expression separators) stays
-      # here, ported verbatim from stock: it is pure parser AST + line text and
-      # costs no token stream, so it matches stock byte for byte for free. The
-      # `AllowAsExpressionSeparator` option only turns path (b) off, exactly as
-      # in stock.
+      # Path (b) (`on_begin`, the token scan for expression separators) stays
+      # here, ported verbatim from stock: it walks `processed_source.tokens`
+      # for real `;` tokens on lines that carry more than one expression, so a
+      # `;` inside a string/regexp literal is skipped and it matches stock byte
+      # for byte. The `AllowAsExpressionSeparator` option only turns path (b)
+      # off, exactly as in stock.
       #
       # Autocorrect is stock's, run at correction time on the real parser AST /
       # tokens (only reached with `-a`): path (a)'s last-token pattern may wrap
@@ -155,10 +156,11 @@ module Shirobai
         end
 
         def find_semicolon_positions(line)
-          # Scan for all the semicolons on the line.
-          semicolons = processed_source[line - 1].enum_for(:scan, ";")
-          semicolons.each do
-            yield Regexp.last_match.begin(0)
+          # Scan for all the semicolon tokens on the line. Iterating tokens
+          # rather than the raw source skips `;` characters inside
+          # string/regexp literals.
+          processed_source.tokens.each do |token|
+            yield token.column if token.line == line && token.semicolon?
           end
         end
 

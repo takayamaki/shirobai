@@ -96,7 +96,7 @@ type Loc = (usize, usize);
 
 pub fn check_redundant_self(source: &[u8], kernel_methods: &[String]) -> Vec<RedundantSelfOffense> {
     let mut visitor = build_rule(kernel_methods);
-    super::parse_cache::with_parsed(source, |_source, node| visitor.visit(node));
+    super::dispatch::run(source, &mut [&mut visitor]);
     visitor.offenses
 }
 
@@ -443,15 +443,26 @@ impl super::dispatch::Rule for Visitor<'_> {
         self.ancestors.pop();
         self.handle_leave();
     }
-}
 
-impl<'pr> Visit<'pr> for Visitor<'_> {
-    fn visit_branch_node_enter(&mut self, node: Node<'pr>) {
-        super::dispatch::Rule::enter(self, &node);
+    /// `on_resbody`: register the exception variable of `rescue => e` so a
+    /// `self.e` in the body is not flagged. `RescueNode` is reached through
+    /// `BeginNode`'s concretely-typed field and never goes through `enter`, so
+    /// we also push its location onto the ancestor stack here (and pop it in
+    /// `leave_rescue`) so the body's sends see it as an ancestor — mirroring
+    /// stock's `node.each_ancestor` scope lookup.
+    fn enter_rescue(&mut self, node: &Node<'_>) {
+        if let Some(rescue) = node.as_rescue_node()
+            && let Some(reference) = rescue.reference()
+            && let Some(target) = reference.as_local_variable_target_node()
+        {
+            let name = String::from_utf8_lossy(target.name().as_slice()).into_owned();
+            self.add_local(Self::loc_of(node), name);
+        }
+        self.ancestors.push(Self::loc_of(node));
     }
 
-    fn visit_branch_node_leave(&mut self) {
-        super::dispatch::Rule::leave(self);
+    fn leave_rescue(&mut self) {
+        self.ancestors.pop();
     }
 }
 

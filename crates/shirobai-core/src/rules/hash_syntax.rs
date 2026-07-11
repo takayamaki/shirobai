@@ -487,11 +487,11 @@ impl Visitor<'_> {
     /// `check` for the no-mixed-keys messages: the fix depends on the offending
     /// pair's own delimiter (`autocorrect_no_mixed_keys`).
     fn check_no_mixed(&mut self, hash_node: &Node<'_>, pairs: &[Pair], delim: Delim, braces: bool) {
-        for pair in pairs {
+        for (i, pair) in pairs.iter().enumerate() {
             let pd = if pair.colon { Delim::Colon } else { Delim::Rocket };
             if pd == delim {
                 let fix = if pair.colon { Fix::HashRockets } else { Fix::Ruby19 };
-                self.emit_style_offense(hash_node, pair, 2, fix, braces);
+                self.emit_style_offense(hash_node, pair, 2, fix, braces, i == 0);
             } else {
                 self.emit_correct_style();
             }
@@ -508,10 +508,10 @@ impl Visitor<'_> {
         fix: Fix,
         braces: bool,
     ) {
-        for pair in pairs {
+        for (i, pair) in pairs.iter().enumerate() {
             let pd = if pair.colon { Delim::Colon } else { Delim::Rocket };
             if pd == delim {
-                self.emit_style_offense(hash_node, pair, msg, fix, braces);
+                self.emit_style_offense(hash_node, pair, msg, fix, braces, i == 0);
             } else {
                 self.emit_correct_style();
             }
@@ -536,11 +536,12 @@ impl Visitor<'_> {
         msg: u8,
         fix: Fix,
         braces: bool,
+        is_first_pair: bool,
     ) {
         let start = pair.range.0;
         let end = pair.op_range.1;
         let ops = match fix {
-            Fix::Ruby19 => self.autocorrect_ruby19(hash_node, pair, braces),
+            Fix::Ruby19 => self.autocorrect_ruby19(hash_node, pair, braces, is_first_pair),
             Fix::HashRockets => self.autocorrect_hash_rockets(pair),
         };
         self.offenses.push(HashSyntaxOffense {
@@ -948,7 +949,13 @@ impl Visitor<'_> {
 
     // ---- EnforcedStyle correctors ----
 
-    fn autocorrect_ruby19(&self, hash_node: &Node<'_>, pair: &Pair, braces: bool) -> Vec<Op> {
+    fn autocorrect_ruby19(
+        &self,
+        hash_node: &Node<'_>,
+        pair: &Pair,
+        braces: bool,
+        is_first_pair: bool,
+    ) -> Vec<Op> {
         let range_start = pair.key_range.0;
         // `range_with_surrounding_space(key.join(operator), side: :right)`:
         // extend right over `[ \t]*\n*` (stock defaults), then run the `sub`.
@@ -966,7 +973,10 @@ impl Visitor<'_> {
             end: range_end,
             text: replacement,
         }];
-        if !braces && self.parent_is_return_type(hash_node) {
+        // rubocop#15327: the braceless-return wrap runs once per offending pair
+        // but the hash must only be wrapped once, so only the first pair of the
+        // hash inserts the braces (`pair_node.equal?(hash_node.pairs.first)`).
+        if !braces && is_first_pair && self.parent_is_return_type(hash_node) {
             let (hs, he) = loc(&hash_node.location());
             ops.push(Op {
                 kind: 2,

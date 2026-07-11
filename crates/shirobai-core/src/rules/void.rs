@@ -606,11 +606,11 @@ impl<'a> Visitor<'a> {
         let Some(call) = expr.as_call_node() else {
             return;
         };
-        // `node.type?(:send, :any_block)`: a csend without a literal block is
-        // neither.
-        if !has_block_literal(&call) && call.is_safe_navigation() {
-            return;
-        }
+        // `node.type?(:call, :any_block)` (rubocop#15419): `:call` covers both
+        // `:send` and `:csend`, so a safe-navigation call (`x&.sort`) with no
+        // literal block is now checked too. Every prism `CallNode` is a parser
+        // `:call` (no block) or `:any_block` (block literal), so there is no
+        // node kind to reject here.
         let name = call.name().as_slice();
         let replaceable_by_each = METHODS_REPLACEABLE_BY_EACH.contains(&name);
         if !replaceable_by_each && !NONMUTATING_METHODS_WITH_BANG_VERSION.contains(&name) {
@@ -1300,8 +1300,12 @@ mod tests {
             apply(src, &got),
             "[1,2,3].each do |n|\n  n.to_s\nend\n\"done\"\n"
         );
-        // csend without a block literal is excluded.
-        assert!(run_nonmutating("x&.sort\ntop\n").is_empty());
+        // csend without a block literal is now checked (rubocop#15419).
+        let csend = "x&.sort\ntop\n";
+        let got = run_nonmutating(csend);
+        assert_eq!(got.len(), 1);
+        assert_eq!(&csend[got[0].start_offset..got[0].end_offset], "x&.sort");
+        assert_eq!(apply(csend, &got), "x&.sort!\ntop\n");
         // branch bodies still correct (no removal suppression for replaces).
         let got = run_nonmutating("cond ? x.sort : nil\ntop\n");
         assert_eq!(got.len(), 1);

@@ -22,10 +22,13 @@
 //!    `StringNode`, and the `content_loc` (between the delimiters) for a
 //!    regexp / xstr body — mirroring parser's `:str`-child location.
 //!
-//! `acceptable?` exempts a `:str` whose direct parent is an array or a hash
-//! pair (prism `ArrayNode` / `AssocNode`). A regexp / xstr body's parser parent
-//! is the regexp / xstr node itself (never an array or pair), so those bodies
-//! are never exempt regardless of what encloses the literal.
+//! `acceptable?` exempts a `:str` whose direct parent is an array, a hash pair,
+//! or a `:dstr` (prism `ArrayNode` / `AssocNode` / `InterpolatedStringNode` —
+//! the last covers both interpolation and adjacent-literal concatenation; added
+//! in rubocop#15333 so an interpolated/concatenated `str` is not rewritten in
+//! isolation). A regexp / xstr body's parser parent is the regexp / xstr node
+//! itself (never an array / pair / dstr), so those bodies are never exempt
+//! regardless of what encloses the literal.
 
 use ruby_prism::{Location, Node};
 
@@ -133,7 +136,17 @@ impl Visitor {
 
 impl super::dispatch::Rule for Visitor {
     fn enter(&mut self, node: &Node<'_>) {
-        let acceptable = matches!(node, Node::ArrayNode { .. } | Node::AssocNode { .. });
+        // A `:str` whose parent is a parser `:array` / `:pair` / `:dstr` is
+        // exempt (rubocop#15333: a `str` that is part of an interpolated or
+        // concatenated string must not be rewritten in isolation). prism models
+        // both interpolation and adjacent-literal concatenation as
+        // `InterpolatedStringNode` (= parser `:dstr`). A `str` part inside an
+        // interpolated regexp / xstr / dsym has a `:regexp` / `:xstr` / `:dsym`
+        // parent, not `:dstr`, so those stay flagged.
+        let acceptable = matches!(
+            node,
+            Node::ArrayNode { .. } | Node::AssocNode { .. } | Node::InterpolatedStringNode { .. }
+        );
         self.parent_acceptable.push(acceptable);
     }
 
@@ -264,15 +277,23 @@ mod tests {
         assert!(run("'the /dev/null device and NUL'").is_empty());
     }
 
-    // A `str` part inside an interpolated string is a parser `:str`: flagged,
-    // and the replace range is the content (no quotes).
+    // A `str` part inside an interpolated string has a `:dstr` parent
+    // (rubocop#15333): exempt, not rewritten in isolation. But it still feeds
+    // the `/dev/null` gate, so a following bare `nul` becomes flaggable.
     #[test]
     fn interpolated_string_part() {
-        let src = "x = \"#{y}/dev/null\"";
-        let got = run(src);
+        assert!(run("x = \"#{y}/dev/null\"").is_empty());
+        assert_eq!(apply("x = \"#{y}/dev/null\""), "x = \"#{y}/dev/null\"");
+        // The exempt `/dev/null` part still unlocks the bare-`nul` gate.
+        let got = run("x = \"#{y}/dev/null\"\nz = 'NUL'");
         assert_eq!(got.len(), 1);
-        assert_eq!(&src[got[0].start_offset..got[0].end_offset], "/dev/null");
-        assert_eq!(apply(src), "x = \"#{y}File::NULL\"");
+        assert_eq!(got[0].message, "Use `File::NULL` instead of `NUL`.");
+    }
+
+    // Adjacent string literal concatenation is also `:dstr`: exempt.
+    #[test]
+    fn adjacent_concatenation_part() {
+        assert!(run("x = '/dev/null' '/dev/null'").is_empty());
     }
 
     // A non-interpolated regexp / xstr body is a parser `:str` child: flagged,

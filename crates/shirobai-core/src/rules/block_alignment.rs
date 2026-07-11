@@ -262,7 +262,7 @@ impl<'a> Visitor<'a> {
                     .message_loc()
                     .map(|l| l.start_offset())
                     .unwrap_or(call.location().start_offset());
-                return self.block_node_loc_with_anchor(&bn, &arg_ranges, selector);
+                return self.block_node_loc_with_anchor(node.location().start_offset(), &bn, &arg_ranges, selector);
             }
             return None;
         }
@@ -275,14 +275,14 @@ impl<'a> Visitor<'a> {
                     }
                 }
                 let selector = sup.keyword_loc().start_offset();
-                return self.block_node_loc_with_anchor(&bn, &arg_ranges, selector);
+                return self.block_node_loc_with_anchor(node.location().start_offset(), &bn, &arg_ranges, selector);
             }
             return None;
         }
         if let Some(fsup) = node.as_forwarding_super_node() {
             if let Some(bn) = fsup.block() {
                 let selector = node.location().start_offset();
-                return self.block_node_loc_with_anchor(&bn, &[], selector);
+                return self.block_node_loc_with_anchor(node.location().start_offset(), &bn, &[], selector);
             }
             return None;
         }
@@ -297,7 +297,8 @@ impl<'a> Visitor<'a> {
                 arg_ranges.push(loc(&ploc));
             }
             let selector = lam.operator_loc().start_offset();
-            let anchor_start = self.do_line_anchor(open_start, &arg_ranges, &[], selector);
+            let anchor_start =
+                self.do_line_anchor(node.location().start_offset(), open_start, &arg_ranges, &[], selector);
             return Some(BlockLoc {
                 open_start,
                 close_start,
@@ -310,6 +311,7 @@ impl<'a> Visitor<'a> {
 
     fn block_node_loc_with_anchor(
         &self,
+        node_start: usize,
         bn: &ruby_prism::BlockNode<'_>,
         send_arg_ranges: &[(usize, usize)],
         selector_start: usize,
@@ -321,7 +323,7 @@ impl<'a> Visitor<'a> {
             let ploc = params.location();
             block_param_ranges.push(loc(&ploc));
         }
-        let anchor_start = self.do_line_anchor(open_start, send_arg_ranges, &block_param_ranges, selector_start);
+        let anchor_start = self.do_line_anchor(node_start, open_start, send_arg_ranges, &block_param_ranges, selector_start);
         Some(BlockLoc {
             open_start,
             close_start,
@@ -332,9 +334,13 @@ impl<'a> Visitor<'a> {
 
     /// When the `do`/`{` line begins inside one of the call's arguments or the
     /// block's parameters, return the method selector start offset as the
-    /// alignment anchor.
+    /// alignment anchor. rubocop#15312 additionally requires the do-line's first
+    /// char to sit inside `(` / `[`: a bare argument list without parentheses
+    /// puts the continuation indentation under the author's control, so the
+    /// anchor must not move to the dispatch line.
     fn do_line_anchor(
         &self,
+        node_start: usize,
         open_start: usize,
         send_arg_ranges: &[(usize, usize)],
         block_param_ranges: &[(usize, usize)],
@@ -350,11 +356,27 @@ impl<'a> Visitor<'a> {
             .chain(block_param_ranges.iter())
             .any(|&(s, e)| s <= first_char_pos && first_char_pos < e);
 
-        if inside {
+        if inside && self.inside_parentheses(node_start, first_char_pos) {
             Some(selector_start)
         } else {
             None
         }
+    }
+
+    /// `inside_parentheses?(node, pos)`: whether the `(` / `[` tokens opened
+    /// between `node_start` and `pos` outnumber the `)` / `]` closed — i.e. `pos`
+    /// sits inside an unclosed round/square bracket. Block braces `{` / `}` are
+    /// not counted (stock checks `left_parens?` / `left_bracket?` only).
+    fn inside_parentheses(&self, node_start: usize, pos: usize) -> bool {
+        let mut depth: i32 = 0;
+        for &b in &self.source[node_start..pos] {
+            match b {
+                b'(' | b'[' => depth += 1,
+                b')' | b']' => depth -= 1,
+                _ => {}
+            }
+        }
+        depth > 0
     }
 }
 

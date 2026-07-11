@@ -59,9 +59,16 @@ RSpec.describe Shirobai::Cop::Style::FileNull do
       expect(corrected).to eq("x = `File::NULL`\n")
     end
 
-    it "flags and rewrites a `/dev/null` `str` part inside an interpolated string" do
+    it "does NOT flag a `/dev/null` `str` part inside an interpolated string (dstr parent)" do
+      # rubocop#15333: a `str` that is part of a `:dstr` is not a standalone
+      # null device; rewriting it in isolation would corrupt the string.
       corrected = expect_autocorrect_parity(*klasses, "x = \"\#{y}/dev/null\"\n", config)
-      expect(corrected).to eq("x = \"\#{y}File::NULL\"\n")
+      expect(corrected).to eq("x = \"\#{y}/dev/null\"\n")
+    end
+
+    it "does NOT flag a `/dev/null` part of adjacent string concatenation (dstr parent)" do
+      corrected = expect_autocorrect_parity(*klasses, "x = '/dev/null' '/dev/null'\n", config)
+      expect(corrected).to eq("x = '/dev/null' '/dev/null'\n")
     end
 
     it "does NOT flag a plain symbol, and it does NOT feed the gate" do

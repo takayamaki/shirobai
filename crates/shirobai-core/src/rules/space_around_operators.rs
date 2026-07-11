@@ -369,13 +369,14 @@ impl<'a> Visitor<'a> {
     /// handled by returning the special marker the Ruby wrapper recognizes.)
     fn replacement(&self, ws_start: usize, ws_end: usize, right_is_rational: bool) -> Vec<u8> {
         let range_source = self.s(ws_start, ws_end);
-        if range_source.windows(2).any(|w| w == b"**")
-            && self.config.exponent_style != STYLE_SPACE
-        {
+        // rubocop#15401: match the operator exactly (stripped), not by substring,
+        // so compound assignments like `**=` / `/=` are not mistaken for `**` /
+        // `/` (which would drop the `=` and silently change behaviour).
+        let stripped = strip(range_source);
+        if stripped == b"**" && self.config.exponent_style != STYLE_SPACE {
             return b"**".to_vec();
         }
-        if range_source.contains(&b'/') && right_is_rational && self.config.rational_style != STYLE_SPACE
-        {
+        if stripped == b"/" && right_is_rational && self.config.rational_style != STYLE_SPACE {
             return b"/".to_vec();
         }
         if range_source.last() == Some(&b'\n') {

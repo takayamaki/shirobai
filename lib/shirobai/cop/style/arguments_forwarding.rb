@@ -42,7 +42,7 @@ module Shirobai
         def self.badge = RuboCop::Cop::Badge.parse(cop_name)
 
         def self.autocorrect_incompatible_with
-          [RuboCop::Cop::Naming::BlockForwarding]
+          [RuboCop::Cop::Naming::BlockForwarding, RuboCop::Cop::Style::MethodDefParentheses]
         end
 
         # `[[target_ruby, allow_only_rest, use_anon, explicit_block],

@@ -95,8 +95,6 @@ pub(crate) struct Visitor<'a> {
 struct Frame {
     kind: FrameKind,
     start: usize,
-    end: usize,
-    first_line: usize,
 }
 
 #[derive(Clone)]
@@ -348,6 +346,33 @@ impl<'a> Visitor<'a> {
         self.check_alignment(base, es, ee);
     }
 
+    /// `EndKeywordAlignment#start_line_range(node)`: the range from the first
+    /// non-space to the last non-space of the physical line that `offset_on_line`
+    /// sits on. Its column is that line's indentation. Used as the block-rescue
+    /// `else` base since rubocop#15432 (replacing the old assignment / send-node
+    /// choice).
+    fn start_line_range(&self, offset_on_line: usize) -> AlignRange {
+        let src = self.source;
+        let is_ws = |b: u8| matches!(b, b' ' | b'\t' | b'\r' | 0x0c | 0x0b);
+        let mut ls = offset_on_line.min(src.len());
+        while ls > 0 && src[ls - 1] != b'\n' {
+            ls -= 1;
+        }
+        let mut le = offset_on_line.min(src.len());
+        while le < src.len() && src[le] != b'\n' {
+            le += 1;
+        }
+        let mut start = ls;
+        while start < le && is_ws(src[start]) {
+            start += 1;
+        }
+        let mut end = le;
+        while end > start && is_ws(src[end - 1]) {
+            end -= 1;
+        }
+        AlignRange { start, end }
+    }
+
     fn base_range_of_rescue(&self, begin: &ruby_prism::BeginNode<'_>) -> AlignRange {
         // Explicit `begin` (kwbegin): align with the `begin` keyword.
         if let Some(begin_kw) = begin.begin_keyword_loc() {
@@ -379,23 +404,14 @@ impl<'a> Visitor<'a> {
                         end: *kw_end,
                     };
                 }
-                // The block's owning call is the grandparent; an enclosing
-                // assignment (great-grandparent) on the same line wins.
+                // The block's owning call is the grandparent. rubocop#15432:
+                // the base is the block expression's first physical line (from
+                // its own first non-space), so an operator method call
+                // (`foo << x.map do`) or an assignment on that line anchors the
+                // `else` at the line's indentation, not at the send.
                 FrameKind::Block if nf >= 2 => {
-                    let call = &self.frames[nf - 2];
-                    if nf >= 3 {
-                        let gg = &self.frames[nf - 3];
-                        if matches!(gg.kind, FrameKind::Write) && gg.first_line == call.first_line {
-                            return AlignRange {
-                                start: gg.start,
-                                end: gg.end,
-                            };
-                        }
-                    }
-                    return AlignRange {
-                        start: call.start,
-                        end: call.end,
-                    };
+                    let call_start = self.frames[nf - 2].start;
+                    return self.start_line_range(call_start);
                 }
                 _ => {}
             }
@@ -612,8 +628,6 @@ impl<'a> Visitor<'a> {
     /// The ancestor frame for `node`.
     fn frame_for(&self, node: &Node<'_>) -> Frame {
         let start = node.location().start_offset();
-        let end = node.location().end_offset();
-        let first_line = self.line_of(start);
         let kind = if let Some(n) = node.as_if_node() {
             match n.if_keyword_loc() {
                 Some(kw) if &self.source[kw.start_offset()..kw.end_offset()] != b"elsif" => {
@@ -661,12 +675,7 @@ impl<'a> Visitor<'a> {
         } else {
             FrameKind::Other
         };
-        Frame {
-            kind,
-            start,
-            end,
-            first_line,
-        }
+        Frame { kind, start }
     }
 }
 

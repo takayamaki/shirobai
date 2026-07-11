@@ -153,17 +153,23 @@ impl UnreachableCodeVisitor {
         });
     }
 
-    /// Process a parser `:begin`-equivalent expression list (`each_cons(2)` —
-    /// the offense fires on the second expression whenever the first is flow).
+    /// Process a parser `:begin`-equivalent expression list. rubocop#15418:
+    /// once a flow-of-control statement is reached, EVERY following statement in
+    /// the block is unreachable (not just the one immediately after it). The
+    /// flow statement itself must not be the last expression. `flow_expression?`
+    /// (which registers `def` redefinitions) is only consulted while searching
+    /// for the first flow statement, exactly like stock.
     fn process_sequence(&mut self, exprs: &[Node<'_>]) {
         if exprs.len() < 2 {
             return;
         }
-        for window in exprs.windows(2) {
-            let e1 = &window[0];
-            let e2 = &window[1];
-            if self.flow_expression(e1) {
-                self.push_offense(e2);
+        let n = exprs.len();
+        let mut flow_reached = false;
+        for (index, expr) in exprs.iter().enumerate() {
+            if flow_reached {
+                self.push_offense(expr);
+            } else if index < n - 1 && self.flow_expression(expr) {
+                flow_reached = true;
             }
         }
     }
@@ -568,6 +574,17 @@ mod tests {
     fn flags_raise_followed_by_statement() {
         let off = detect("def f\n  raise\n  bar\nend\n");
         assert_eq!(off.len(), 1);
+    }
+
+    #[test]
+    fn flags_every_statement_after_flow() {
+        // rubocop#15418: `a`, `b`, and `c` are all unreachable after `return`.
+        let src = "def f\n  return\n  a\n  b\n  c\nend\n";
+        let off = detect(src);
+        assert_eq!(off.len(), 3);
+        assert_eq!(&src[off[0].0..off[0].1], "a");
+        assert_eq!(&src[off[1].0..off[1].1], "b");
+        assert_eq!(&src[off[2].0..off[2].1], "c");
     }
 
     #[test]
