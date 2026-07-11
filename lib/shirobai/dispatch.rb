@@ -135,6 +135,8 @@ module Shirobai
       end_of_line: [0, 98].freeze,
       line_continuation_spacing: [0, 99].freeze,
       space_inside_string_interpolation: [0, 100].freeze,
+      # toucher-batch-3 core slot 101.
+      magic_comment_format: [0, 101].freeze,
       # shirobai-performance plugin slots (origin 1). Always present in the
       # wire format; the Rust side leaves them empty unless the plugin gem
       # registered its packed segment (`Dispatch.register_plugin_packer`).

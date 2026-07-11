@@ -2019,6 +2019,9 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_space_inside_string_interpolation(
             r.space_inside_string_interpolation,
         ))?;
+        // toucher-batch-3 core slot 101: `Style/MagicCommentFormat` (stock's
+        // `leading_comment_lines` boundary as a plain Integer).
+        ary.push(r.magic_comment_format)?;
         // Performance origin (result[1]).
         let perf = ruby.ary_new_capa(5);
         perf.push(map_perf_detect(r.perf_detect))?;
@@ -3338,6 +3341,14 @@ fn check_end_of_line(source: RString) -> usize {
     shirobai_core::rules::end_of_line::check_end_of_line(bytes(&source))
 }
 
+/// Ruby entry point for `Style/MagicCommentFormat` (standalone fallback, no
+/// config). Returns stock's `leading_comment_lines` boundary (the first
+/// non-comment token line, or `0` for none); the wrapper runs stock's own
+/// `magic_comments` + offense/correction logic with that range injected.
+fn check_magic_comment_format(source: RString) -> usize {
+    shirobai_core::rules::magic_comment_format::check_magic_comment_format(bytes(&source))
+}
+
 /// `Style/EmptyLiteral`'s `frozen_string_literals_enabled?` (String.new path),
 /// computed from the leading comment scan without materializing the parser-gem
 /// token stream. `sfbd`: `AllCops/StringLiteralsFrozenByDefault` is literally
@@ -4356,6 +4367,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         function!(check_initial_indentation, 1),
     )?;
     module.define_module_function("check_end_of_line", function!(check_end_of_line, 1))?;
+    module.define_module_function(
+        "check_magic_comment_format",
+        function!(check_magic_comment_format, 1),
+    )?;
     module.define_module_function(
         "check_frozen_string_literals_enabled",
         function!(check_frozen_string_literals_enabled, 2),

@@ -50,6 +50,7 @@ pub mod line_end_concatenation;
 pub mod line_index;
 pub mod line_length;
 pub mod line_length_breakable;
+pub mod magic_comment_format;
 pub mod method_length;
 pub mod method_name;
 pub mod module_length;

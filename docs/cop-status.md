@@ -4,7 +4,7 @@ This document tracks which RuboCop cops shirobai has reimplemented in Rust,
 and which cops were attempted but reverted because they did not meet the
 project's drop-in compatibility and speed requirements together.
 
-## Implemented (101 cops)
+## Implemented (102 cops)
 
 shirobai replaces these cops with Rust implementations.
 Every offense position, message, and autocorrected byte matches stock RuboCop
@@ -101,7 +101,7 @@ and RuboCop itself).
 - `Naming/PredicatePrefix`
 - `Naming/VariableNumber`
 
-### Style (23)
+### Style (24)
 
 - `Style/ArgumentsForwarding`
 - `Style/BlockDelimiters`
@@ -114,6 +114,7 @@ and RuboCop itself).
 - `Style/HashTransformKeys`
 - `Style/IfUnlessModifier`
 - `Style/LineEndConcatenation`
+- `Style/MagicCommentFormat`
 - `Style/NestedParenthesizedCalls`
 - `Style/PercentLiteralDelimiters`
 - `Style/RedundantFreeze`
@@ -159,6 +160,32 @@ the only thing replaced: Rust does the same leading-comment scan (shared with
 prism parse, and the config half runs Ruby-side. So this cop joins neither the
 bundle wire nor the shared walk; it is stock's cop with a token-free
 `frozen_strings?`.
+
+### Note: `Style/MagicCommentFormat` (leading-line-only Rust)
+
+Same shape as `Style/EmptyLiteral`. The cop's whole body — the `CommentRange`
+`DIRECTIVE_REGEXP` / `VALUE_REGEXP` scan, the separator/capitalization offense
+predicates, the messages, and the `.tr`/`.downcase`/`.upcase` corrections — runs
+on the parser-gem *comment* objects (`each_comment_in_lines`, backed by
+`processed_source.comments` from the parse, not the token stream). The ONLY
+place stock touches the parser-gem token stream is `leading_comment_lines`'
+`processed_source.tokens.find { |t| !t.comment? }` (the "toucher" cost). shirobai
+replaces just that: Rust returns the first-non-comment-token line (the shared
+leading-comment front scan, BOM-aware), and the wrapper reuses stock's
+`CommentRange` verbatim and copies the offense/message/correction helpers, so
+detection, messages, and autocorrect are stock's own code — byte-identical by
+construction, including non-ASCII offsets (offense ranges come from
+`CommentRange`'s `loc.expression` char offsets, never through Rust, so no
+`SourceOffsets` conversion is needed). Wired into the bundle (slot `[0, 101]`)
+for the shared parse; config-less on the Rust side.
+
+The shared front scan (`first_token_pos`) gained a leading-UTF-8-BOM skip here:
+prism reports every comment/token offset after the BOM, so the scan must start
+past it or it would mistake the BOM's first byte for the first token (which hid
+leading magic comments). This also fixes a latent divergence in
+`Lint/DuplicateMagicComment` / `Lint/OrderedMagicComments` on BOM files with more
+than one leading magic comment; the verification corpora contain no BOM Ruby
+files, so it never surfaced there.
 
 ## Plugin cops: shirobai-performance (proof of concept)
 

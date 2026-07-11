@@ -31,7 +31,7 @@ use super::{
     initial_indentation,
     leading_empty_lines,
     line_end_concatenation, line_length,
-    line_length_breakable, method_length, method_name, module_length,
+    line_length_breakable, magic_comment_format, method_length, method_name, module_length,
     multiline_method_call_brace_layout, nested_parenthesized_calls,
     ordered_magic_comments,
     parentheses_as_grouped_expression,
@@ -975,6 +975,11 @@ pub struct BundleResult {
     /// each interpolation.
     pub space_inside_string_interpolation:
         Vec<space_inside_string_interpolation::SpaceInsideInterpOffense>,
+    /// `Style/MagicCommentFormat`: stock's `leading_comment_lines` boundary (the
+    /// 1-based line of the first non-comment token, or `0` for none). The
+    /// wrapper builds the leading-line range from it and runs stock's own
+    /// `magic_comments` + offense/correction logic unchanged.
+    pub magic_comment_format: usize,
     pub space_inside_hash_literal_braces:
         Vec<space_inside_hash_literal_braces::SpaceInsideHashLiteralBracesOffense>,
     pub space_inside_array_literal_brackets:
@@ -1599,6 +1604,10 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // `Layout/LineContinuationSpacing`: same `last_line` definition as
     // `Layout/EndOfLine`, so it reuses the single computation.
     let line_continuation_spacing = end_of_line;
+    // `Style/MagicCommentFormat`: stock's `leading_comment_lines` boundary (the
+    // first non-comment token line) from the cached parse, so the wrapper avoids
+    // `processed_source.tokens`. The rest of the cop is stock Ruby.
+    let magic_comment_format = magic_comment_format::check_magic_comment_format(source);
     // `Lint/DuplicateMagicComment` is a leading-line scan (comments + the
     // first non-comment token position from the cached parse), no AST walk.
     let duplicate_magic_comment =
@@ -1721,6 +1730,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         end_of_line,
         line_continuation_spacing,
         space_inside_string_interpolation,
+        magic_comment_format,
         space_inside_hash_literal_braces,
         space_inside_array_literal_brackets,
         space_before_block_braces,
@@ -4408,6 +4418,18 @@ mod tests {
             super::initial_indentation::check_initial_indentation(src.as_bytes());
         assert!(alone);
         assert_eq!(bundle.initial_indentation, alone);
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_magic_comment_format() {
+        let src = "# frozen-string-literal: true\n# encoding: utf-8\nputs 1\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone =
+            super::magic_comment_format::check_magic_comment_format(src.as_bytes());
+        assert_eq!(alone, 3);
+        assert_eq!(bundle.magic_comment_format, alone);
     }
 
     #[test]

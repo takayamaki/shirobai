@@ -547,6 +547,29 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     end
   end
 
+  # `Style/MagicCommentFormat` is `Enabled: pending`, so the Team-based runs
+  # above would drop it on both sides (vacuously green); force-enable it. The
+  # offense/autocorrect ranges come from stock's own `CommentRange`
+  # (`loc.expression`, char offsets), so parity is stock by construction, but
+  # the multibyte leading comment still guards the leading-line accounting: the
+  # kebab directive on the line after the prefix must stay flagged and corrected.
+  describe "Style/MagicCommentFormat (pending cop, force-enabled)" do
+    it "matches stock offenses and autocorrect output after a multibyte comment" do
+      enabled_config = RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new(
+          { "Style/MagicCommentFormat" => { "Enabled" => true } }, "(test)"
+        ),
+        "(test)"
+      )
+      offenses = expect_parity(
+        "Style/MagicCommentFormat",
+        "#{prefix}# frozen-string-literal: true\nputs 1\n",
+        enabled_config
+      )
+      expect(offenses).not_to be_empty, "fixture produced no stock offense; fix the source"
+    end
+  end
+
   # `Lint/DuplicateMagicComment` is `Enabled: pending`, so the Team-based
   # runs above would drop it on BOTH sides under the default config
   # (vacuously green); force-enable it. The wrapper passes line numbers

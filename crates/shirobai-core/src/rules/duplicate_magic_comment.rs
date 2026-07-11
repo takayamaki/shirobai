@@ -165,7 +165,12 @@ pub(crate) enum ScanEnd {
 /// column 0; parsers before 3.4 also stopped at indented `__END__`).
 fn first_token_pos(source: &[u8], comments: &[(usize, usize)]) -> ScanEnd {
     let len = source.len();
-    let mut pos = 0usize;
+    // A leading UTF-8 BOM is never a token: prism (and parser-gem) report every
+    // comment/token offset AFTER it, so the scan must start past it or it would
+    // mistake the BOM's first byte for the first token. The byte just past the
+    // BOM still counts as a line start for the `__END__` column-0 rule.
+    let bom_len = if source.starts_with(&[0xEF, 0xBB, 0xBF]) { 3 } else { 0 };
+    let mut pos = bom_len;
     let mut ci = 0usize; // cursor into the ordered, disjoint comment ranges
     loop {
         if pos >= len {
@@ -200,7 +205,10 @@ fn first_token_pos(source: &[u8], comments: &[(usize, usize)]) -> ScanEnd {
             return ScanEnd::NoToken { stop: pos };
         }
         // `__END__` at column 0 followed by a newline or EOF stops the lexer.
-        if b == b'_' && (pos == 0 || source[pos - 1] == b'\n') && is_end_marker(&source[pos..]) {
+        if b == b'_'
+            && (pos == bom_len || source[pos - 1] == b'\n')
+            && is_end_marker(&source[pos..])
+        {
             return ScanEnd::NoToken { stop: pos };
         }
         return ScanEnd::Token(pos);
@@ -1165,5 +1173,18 @@ mod tests {
     #[test]
     fn double_hash_no_match() {
         assert_eq!(run("## encoding: utf-8\n# encoding: utf-8\nx = 1\n"), Vec::<usize>::new());
+    }
+
+    // A leading UTF-8 BOM must not be mistaken for the first token: without the
+    // BOM skip the front scan would stop at byte 0 (leading count 0) and miss
+    // every leading magic comment. The BOM-prefixed line 1 itself does not match
+    // (its raw text starts with the BOM, not `#`), so the two fsl lines below it
+    // are what pair up.
+    #[test]
+    fn leading_bom_is_skipped() {
+        // Line 1 (BOM-prefixed raw text) does not classify; lines 2 and 3 are
+        // the two fsl comments that pair, so line 3 is the duplicate.
+        let src = "\u{feff}# frozen_string_literal: true\n# frozen_string_literal: true\n# frozen_string_literal: true\nx = 1\n";
+        assert_eq!(run(src), vec![3]);
     }
 }

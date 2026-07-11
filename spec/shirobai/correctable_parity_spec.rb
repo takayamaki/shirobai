@@ -686,6 +686,15 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Layout::SpaceAroundOperators,
       "x=1+2\n"
     ],
+    # A leading kebab magic comment (default EnforcedStyle snake_case): the
+    # directive offense carries a `replace` corrector (correctable). The wrapper
+    # runs stock's `fix_directives` verbatim, so the corrector is attached in
+    # lint mode exactly like stock.
+    "Style/MagicCommentFormat" => [
+      RuboCop::Cop::Style::MagicCommentFormat,
+      Shirobai::Cop::Style::MagicCommentFormat,
+      "# frozen-string-literal: true\nputs 1\n"
+    ],
   }
 
   cases.each do |name, (stock_klass, shirobai_klass, source)|
