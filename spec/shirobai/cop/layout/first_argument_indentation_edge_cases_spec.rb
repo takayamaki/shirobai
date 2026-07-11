@@ -93,4 +93,43 @@ RSpec.describe Shirobai::Cop::Layout::FirstArgumentIndentation do
     stock = expect_lint_parity(*klasses, src, config)
     expect(stock.size).to be >= 1
   end
+
+  it "treats a lone block-pass argument as the first argument" do
+    # parser-gem's `send.arguments` includes the block-pass argument, so a
+    # call whose only argument is `&blk` still has a first argument to check.
+    # prism keeps it in `CallNode#block()`, outside `arguments()` — shirobai
+    # used to bail out and miss the offense. Same prism/parser mapping family
+    # as the `Layout/ArgumentAlignment` bare-`&` gap found in the redmine
+    # `-a` byte audit.
+    src = <<~RUBY
+      foo(
+          &blk
+      )
+    RUBY
+    expect_lint_parity(*klasses, src, config)
+    expect_autocorrect_parity(*klasses, src, config)
+  end
+
+  it "treats a lone block-pass argument to super as the first argument" do
+    src = <<~RUBY
+      def run(&blk)
+        super(
+            &blk
+        )
+      end
+    RUBY
+    expect_lint_parity(*klasses, src, config)
+    expect_autocorrect_parity(*klasses, src, config)
+  end
+
+  it "keeps the positional argument as the first when a block-pass follows" do
+    src = <<~RUBY
+      foo(
+          bar,
+          &blk
+      )
+    RUBY
+    expect_lint_parity(*klasses, src, config)
+    expect_autocorrect_parity(*klasses, src, config)
+  end
 end

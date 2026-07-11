@@ -510,10 +510,15 @@ impl super::dispatch::Rule for Visitor<'_> {
 impl<'a> Visitor<'a> {
     fn dispatch(&mut self, node: &Node<'_>) {
         if let Some(c) = node.as_call_node() {
-            let Some(args) = c.arguments() else { return };
-            let Some(first) = args.arguments().iter().next() else {
-                return;
-            };
+            // parser-gem's `send.arguments` includes the block-pass argument
+            // (`&blk`, bare `&`) as the last argument, so a call whose ONLY
+            // argument is a block-pass still has a first argument. prism
+            // keeps it in `block()`, outside `arguments()`.
+            let first = c
+                .arguments()
+                .and_then(|args| args.arguments().iter().next())
+                .or_else(|| c.block().filter(|b| b.as_block_argument_node().is_some()));
+            let Some(first) = first else { return };
             // `node.dot?`: a `.`/`&.` operator call.
             let has_dot = c.call_operator_loc().is_some();
             self.process_call(
@@ -526,10 +531,12 @@ impl<'a> Visitor<'a> {
                 c.closing_loc().map(|cl| cl.start_offset()),
             );
         } else if let Some(s) = node.as_super_node() {
-            let Some(args) = s.arguments() else { return };
-            let Some(first) = args.arguments().iter().next() else {
-                return;
-            };
+            // Same block-pass mapping as calls: `super(&blk)`.
+            let first = s
+                .arguments()
+                .and_then(|args| args.arguments().iter().next())
+                .or_else(|| s.block().filter(|b| b.as_block_argument_node().is_some()));
+            let Some(first) = first else { return };
             self.process_call(
                 loc(&s.as_node().location()),
                 loc(&first.location()),
