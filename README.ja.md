@@ -34,7 +34,7 @@ shirobaiは日本語話者なら当然わかるでしょう、白バイです。
 
 ## 現状
 
-- **93 cop** を Rust 実装済み（Lint / Layout / Metrics / Naming / Style）。
+- **106 cop** を Rust 実装済み（Lint / Layout / Metrics / Naming / Style）。
 - **プラグイン cop gem**（共有 native extension 経由でさらに 37 cop、
   cargo build の追加なし）: `gems/shirobai-rspec` が rubocop-rspec の 21 cop を、
   `gems/shirobai-rails` が rubocop-rails の 11 cop を、

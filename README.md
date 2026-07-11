@@ -43,7 +43,7 @@ The image is simple: RuboCop hops on a shiro-bai and gets faster.
 
 ## Current status
 
-- **93 cops** reimplemented in Rust (Lint / Layout / Metrics / Naming / Style).
+- **106 cops** reimplemented in Rust (Lint / Layout / Metrics / Naming / Style).
 - **Plugin-cop gems** (37 more cops through the same shared native
   extension, no second cargo build): `gems/shirobai-rspec` replaces 21
   rubocop-rspec cops, `gems/shirobai-rails` replaces 11 rubocop-rails cops,
