@@ -23,6 +23,7 @@ pub mod dot_position;
 pub mod duplicate_magic_comment;
 pub mod duplicate_methods;
 pub mod empty_comment;
+pub mod end_of_line;
 pub mod empty_line_after_guard_clause;
 pub mod empty_line_after_magic_comment;
 pub mod empty_line_between_defs;

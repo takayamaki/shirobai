@@ -2005,6 +2005,13 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_space_around_equals_in_parameter_default(
             r.space_around_equals_in_parameter_default,
         ))?;
+        // Slot 97 is RESERVED for the parallel `Layout/ExtraSpacing` PR (#55)
+        // renumber; batch-2 slots start at 98. Pushed as an empty array that no
+        // wrapper reads until #55 rebases onto this branch and fills it.
+        ary.push(ruby.ary_new())?;
+        // toucher-batch-2 core slot 98: `Layout/EndOfLine` (stock's `last_line`
+        // as a plain Integer).
+        ary.push(r.end_of_line)?;
         // Performance origin (result[1]).
         let perf = ruby.ary_new_capa(5);
         perf.push(map_perf_detect(r.perf_detect))?;
@@ -3301,6 +3308,12 @@ fn check_initial_indentation(source: RString) -> bool {
     shirobai_core::rules::initial_indentation::check_initial_indentation(bytes(&source))
 }
 
+/// Ruby entry point for `Layout/EndOfLine` (standalone fallback, no config).
+/// Returns stock's `last_line`; the wrapper runs stock's own scan body.
+fn check_end_of_line(source: RString) -> usize {
+    shirobai_core::rules::end_of_line::check_end_of_line(bytes(&source))
+}
+
 /// Ruby entry point for `Layout/SpaceAroundEqualsInParameterDefault`
 /// (standalone fallback). `style`: 0 = space, 1 = no_space. Returns one
 /// `[start, end]` byte range per offense.
@@ -4289,6 +4302,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         "check_initial_indentation",
         function!(check_initial_indentation, 1),
     )?;
+    module.define_module_function("check_end_of_line", function!(check_end_of_line, 1))?;
     module.define_module_function(
         "check_space_around_equals_in_parameter_default",
         function!(check_space_around_equals_in_parameter_default, 2),

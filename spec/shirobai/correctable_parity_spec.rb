@@ -511,6 +511,13 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Layout::InitialIndentation,
       "  def f\n  end\n"
     ],
+    # `Layout/EndOfLine` has NO autocorrect: the offense must stay
+    # non-correctable (`:unsupported`) on both sides, exactly like stock.
+    "Layout/EndOfLine" => [
+      RuboCop::Cop::Layout::EndOfLine,
+      Shirobai::Cop::Layout::EndOfLine,
+      "x = 1\r\ny = 2\n"
+    ],
     # Both directions are correctable in lint mode; the same-line-modifier
     # correction skip must leave an EMPTY corrector (`:unsupported`), exactly
     # like stock's `another_modifier_if_on_same_line?` guard.

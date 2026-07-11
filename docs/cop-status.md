@@ -4,14 +4,14 @@ This document tracks which RuboCop cops shirobai has reimplemented in Rust,
 and which cops were attempted but reverted because they did not meet the
 project's drop-in compatibility and speed requirements together.
 
-## Implemented (97 cops)
+## Implemented (98 cops)
 
 shirobai replaces these cops with Rust implementations.
 Every offense position, message, and autocorrected byte matches stock RuboCop
 on all five verification corpora (Mastodon, Discourse, Redmine, fluentd,
 and RuboCop itself).
 
-### Layout (52)
+### Layout (53)
 
 - `Layout/AccessModifierIndentation`
 - `Layout/ArgumentAlignment`
@@ -35,6 +35,7 @@ and RuboCop itself).
 - `Layout/EmptyLinesAroundMethodBody`
 - `Layout/EmptyLinesAroundModuleBody`
 - `Layout/EndAlignment`
+- `Layout/EndOfLine`
 - `Layout/FirstArgumentIndentation`
 - `Layout/FirstArrayElementIndentation`
 - `Layout/FirstHashElementIndentation`
@@ -122,6 +123,22 @@ and RuboCop itself).
 - `Style/TrailingCommaInArguments`
 - `Style/TrailingCommaInArrayLiteral`
 - `Style/TrailingCommaInHashLiteral`
+
+### Known limitation: `Layout/EndOfLine` last_line (heredoc tail)
+
+`Layout/EndOfLine` scans `raw_source` line by line up to stock's `last_line`
+(`processed_source.tokens.last.line`). shirobai supplies `last_line` from the
+shared parse (the end line of the last top-level statement) instead of
+materializing the parser-gem token stream. These agree everywhere except one
+prism/parser structural difference: when the file's LAST top-level statement
+ENDS with a heredoc, parser-gem puts the final `tNL` on the heredoc OPENER line,
+while prism's node end is the terminator line, so shirobai's `last_line` is
+higher and scans the heredoc body/terminator lines. This can only change the
+result on a file with MIXED line endings whose sole bad EOL sits on such a
+heredoc body — a shape that never occurs in the LF-only verification corpora
+(`EndOfLine` reports nothing on all five) and is not exercised by the vendor
+spec. Same family as the README `TargetRubyVersion` notes: disable shirobai's
+replacement for byte-exact behavior on that pathological input.
 
 ## Plugin cops: shirobai-performance (proof of concept)
 

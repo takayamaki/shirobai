@@ -22,7 +22,7 @@ use super::{
     empty_line_between_defs,
     empty_lines,
     block_alignment, else_alignment, empty_lines_around_arguments, empty_lines_around_body,
-    end_alignment,
+    end_alignment, end_of_line,
     first_argument_indentation, first_array_element_indentation, first_hash_element_indentation,
     frozen_string_literal_comment,
     hash_alignment, hash_each_methods, hash_syntax, hash_transform_keys,
@@ -949,6 +949,10 @@ pub struct BundleResult {
     /// `Layout/InitialIndentation`: true iff the first non-comment token is
     /// indented (a cheap gate; the wrapper runs stock's exact construction).
     pub initial_indentation: bool,
+    /// `Layout/EndOfLine`: stock's `last_line` (the token-stream bound on the
+    /// line scan). The wrapper runs stock's own `on_new_investigation` body
+    /// with this value injected, so detection is stock's code by construction.
+    pub end_of_line: usize,
     pub space_inside_hash_literal_braces:
         Vec<space_inside_hash_literal_braces::SpaceInsideHashLiteralBracesOffense>,
     pub space_inside_array_literal_brackets:
@@ -1561,6 +1565,9 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // indented?". The wrapper turns a `true` into stock's exact offense.
     let initial_indentation =
         initial_indentation::check_initial_indentation(source);
+    // `Layout/EndOfLine`: stock's `last_line` (end line of the last top-level
+    // statement) from the cached parse, so the wrapper avoids `tokens.last`.
+    let end_of_line = end_of_line::check_end_of_line(source);
     // `Lint/DuplicateMagicComment` is a leading-line scan (comments + the
     // first non-comment token position from the cached parse), no AST walk.
     let duplicate_magic_comment =
@@ -1680,6 +1687,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         empty_lines,
         leading_empty_lines,
         initial_indentation,
+        end_of_line,
         space_inside_hash_literal_braces,
         space_inside_array_literal_brackets,
         space_before_block_braces,
@@ -4365,6 +4373,17 @@ mod tests {
             super::initial_indentation::check_initial_indentation(src.as_bytes());
         assert!(alone);
         assert_eq!(bundle.initial_indentation, alone);
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_end_of_line() {
+        let src = "def f\n 1\nend\n__END__\nzzz\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone = super::end_of_line::check_end_of_line(src.as_bytes());
+        assert_eq!(bundle.end_of_line, alone);
+        assert_eq!(alone, 3);
     }
 
     #[test]

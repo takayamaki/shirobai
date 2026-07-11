@@ -128,6 +128,11 @@ module Shirobai
       ordered_magic_comments: [0, 94].freeze,
       initial_indentation: [0, 95].freeze,
       space_around_equals_in_parameter_default: [0, 96].freeze,
+      # Slot 97 is RESERVED for the parallel `Layout/ExtraSpacing` PR (#55)
+      # renumber (its Rust result lands there when it rebases onto this branch);
+      # toucher-batch-2 therefore starts at slot 98. The Rust side pushes an
+      # empty placeholder at 97 (see `ext/shirobai/src/lib.rs`).
+      end_of_line: [0, 98].freeze,
       # shirobai-performance plugin slots (origin 1). Always present in the
       # wire format; the Rust side leaves them empty unless the plugin gem
       # registered its packed segment (`Dispatch.register_plugin_packer`).

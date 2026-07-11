@@ -443,6 +443,11 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # must not shift.
     "Layout/InitialIndentation" =>
       "  puts \"あ\"\n",
+    # A `\r\n` line after the multibyte comment. The offense sits at column 0 of
+    # the CR+LF line; its begin_pos must land on that line's start after the
+    # multibyte prefix (the range comes from stock's own `source_range`).
+    "Layout/EndOfLine" =>
+      "x = 1\r\n",
     # The `=` offense range `[arg.end, value.begin)` sits after the multibyte
     # prefix comment, so its prism byte offsets must map to char offsets, and
     # the `/=\s*(\S+)/` autocorrect must round-trip a multibyte default value.
