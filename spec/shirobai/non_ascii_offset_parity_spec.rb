@@ -437,6 +437,12 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # encoding after the prefix comment still pairs lines 3 and 2.
     "Lint/OrderedMagicComments" =>
       "# frozen_string_literal: true\n# encoding: ascii\nx = \"あ\"\n",
+    # The multibyte prefix comment is skipped; the indented token on the next
+    # line offends. The offense range and removal come from stock's own
+    # `first_token` / `range_with_surrounding_space`, which the multibyte prefix
+    # must not shift.
+    "Layout/InitialIndentation" =>
+      "  puts \"あ\"\n",
   }
 
   cases.each do |cop_name, body|

@@ -1812,7 +1812,7 @@ fn register_bundle_config(
 /// 87 array_alignment / 88 file_null / 89 semicolon /
 /// 90 redundant_freeze / 91 frozen_string_literal_comment /
 /// 92 arguments_forwarding / 93 space_around_operators /
-/// 94 ordered_magic_comments
+/// 94 ordered_magic_comments / 95 initial_indentation
 ///
 /// Performance slots (origin 1; every slot empty unless the plugin gem
 /// registered its packed segment):
@@ -2000,6 +2000,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         // toucher-batch-1 core slots (94-96); ExtraSpacing lands on the next
         // free slot separately, so a merge reconciles the numbering.
         ary.push(map_ordered_magic_comments(r.ordered_magic_comments))?;
+        ary.push(r.initial_indentation)?;
         // Performance origin (result[1]).
         let perf = ruby.ary_new_capa(5);
         perf.push(map_perf_detect(r.perf_detect))?;
@@ -3281,6 +3282,13 @@ fn check_leading_empty_lines(source: RString) -> Vec<(usize, usize, usize, usize
     )
 }
 
+/// Ruby entry point for `Layout/InitialIndentation` (standalone fallback, no
+/// config). Returns true iff the first non-comment token is indented (the
+/// wrapper then runs stock's exact offense construction).
+fn check_initial_indentation(source: RString) -> bool {
+    shirobai_core::rules::initial_indentation::check_initial_indentation(bytes(&source))
+}
+
 /// Ruby entry point for `Layout/EmptyLinesAroundArguments` (no config). Returns
 /// the shape documented on `map_empty_lines_around_arguments`.
 fn check_empty_lines_around_arguments(source: RString) -> Vec<(usize, usize)> {
@@ -4248,6 +4256,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_ordered_magic_comments",
         function!(check_ordered_magic_comments, 1),
+    )?;
+    module.define_module_function(
+        "check_initial_indentation",
+        function!(check_initial_indentation, 1),
     )?;
     module.define_module_function(
         "check_frozen_string_literal_comment",

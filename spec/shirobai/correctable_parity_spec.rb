@@ -498,6 +498,12 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Layout::LeadingEmptyLines,
       "\nclass Foo\nend\n"
     ],
+    # Leading-space removal corrector; the offense must stay correctable.
+    "Layout/InitialIndentation" => [
+      RuboCop::Cop::Layout::InitialIndentation,
+      Shirobai::Cop::Layout::InitialIndentation,
+      "  def f\n  end\n"
+    ],
     # Both directions are correctable in lint mode; the same-line-modifier
     # correction skip must leave an EMPTY corrector (`:unsupported`), exactly
     # like stock's `another_modifier_if_on_same_line?` guard.

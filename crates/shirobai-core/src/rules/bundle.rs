@@ -28,6 +28,7 @@ use super::{
     hash_alignment, hash_each_methods, hash_syntax, hash_transform_keys,
     if_unless_modifier,
     indentation_consistency, indentation_width,
+    initial_indentation,
     leading_empty_lines,
     line_end_concatenation, line_length,
     line_length_breakable, method_length, method_name, module_length,
@@ -929,6 +930,9 @@ pub struct BundleResult {
     pub empty_lines: Vec<empty_lines::EmptyLinesOffense>,
     /// At most one offense per file (the leading-blank-line offense).
     pub leading_empty_lines: Option<leading_empty_lines::LeadingEmptyLinesOffense>,
+    /// `Layout/InitialIndentation`: true iff the first non-comment token is
+    /// indented (a cheap gate; the wrapper runs stock's exact construction).
+    pub initial_indentation: bool,
     pub space_inside_hash_literal_braces:
         Vec<space_inside_hash_literal_braces::SpaceInsideHashLiteralBracesOffense>,
     pub space_inside_array_literal_brackets:
@@ -1530,6 +1534,11 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // from the cached parse, no AST walk.
     let leading_empty_lines =
         leading_empty_lines::check_leading_empty_lines(source);
+    // `Layout/InitialIndentation`: a cheap leading-byte scan (no AST walk, no
+    // token materialization) answering "is the first non-comment token
+    // indented?". The wrapper turns a `true` into stock's exact offense.
+    let initial_indentation =
+        initial_indentation::check_initial_indentation(source);
     // `Lint/DuplicateMagicComment` is a leading-line scan (comments + the
     // first non-comment token position from the cached parse), no AST walk.
     let duplicate_magic_comment =
@@ -1647,6 +1656,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         empty_line_after_magic_comment,
         empty_lines,
         leading_empty_lines,
+        initial_indentation,
         space_inside_hash_literal_braces,
         space_inside_array_literal_brackets,
         space_before_block_braces,
@@ -4319,6 +4329,18 @@ mod tests {
             super::ordered_magic_comments::check_ordered_magic_comments(src.as_bytes());
         assert!(alone.is_some());
         assert_eq!(bundle.ordered_magic_comments, alone);
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_initial_indentation() {
+        let src = "  def f\n  end\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone =
+            super::initial_indentation::check_initial_indentation(src.as_bytes());
+        assert!(alone);
+        assert_eq!(bundle.initial_indentation, alone);
     }
 
     #[test]

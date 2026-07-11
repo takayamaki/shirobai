@@ -126,6 +126,7 @@ module Shirobai
       # toucher-batch-1 core slots (94-96). ExtraSpacing takes the next free
       # slot on its own branch; a merge reconciles any overlap.
       ordered_magic_comments: [0, 94].freeze,
+      initial_indentation: [0, 95].freeze,
       # shirobai-performance plugin slots (origin 1). Always present in the
       # wire format; the Rust side leaves them empty unless the plugin gem
       # registered its packed segment (`Dispatch.register_plugin_packer`).
@@ -394,6 +395,8 @@ module Shirobai
         _ = Cop::Lint::DuplicateMagicComment.bundle_args(config)
         # Lint/OrderedMagicComments is config-less too.
         _ = Cop::Lint::OrderedMagicComments.bundle_args(config)
+        # Layout/InitialIndentation is config-less too.
+        _ = Cop::Layout::InitialIndentation.bundle_args(config)
         dm = Cop::Lint::DuplicateMethods.bundle_args(config)
         # Style/Semicolon is config-less (path (a) needs no config; path (b)'s
         # AllowAsExpressionSeparator is handled in the wrapper); its
