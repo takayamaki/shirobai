@@ -173,3 +173,10 @@ Shirobai::Dispatch.register_plugin_packer(
     Shirobai::RSpec.relevant_file?(config, processed_source.file_path)
   end
 ) { |config| Shirobai::RSpec.segment(config) }
+
+# Re-run the autocorrect-incompatibility alignment now that this gem's stock
+# department and wrappers are enlisted: the core run happened before they
+# existed, so lists like `Rails/SafeNavigation -> Style::RedundantSelf` or
+# `RSpec/AlignLeftLetBrace -> Layout::ExtraSpacing` still name dismissed
+# stock classes until this call (see Shirobai::Inject).
+Shirobai::Inject.align_autocorrect_incompatibilities!

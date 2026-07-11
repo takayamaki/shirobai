@@ -284,8 +284,17 @@ module Shirobai
       def bundle_token(config, inactive = EMPTY_INACTIVE)
         @bundle_tokens ||= {}.compare_by_identity
         per_config = (@bundle_tokens[config] ||= {})
-        per_config[inactive] ||=
+        per_config[inactive] ||= begin
+          # A new Config means config resolution just happened — the moment
+          # any third-party plugin gem (rubocop-capybara et al.) named in
+          # `plugins:` / `require:` has finished loading. Re-align the
+          # `autocorrect_incompatible_with` lists if those loads grew the
+          # registry (see `Inject.align_if_registry_grew!`), so their skip
+          # entries point at the replacement classes before any correction
+          # round runs.
+          Inject.align_if_registry_grew!
           Shirobai.register_bundle_config(*packed_config(config, inactive))
+        end
       end
 
       private

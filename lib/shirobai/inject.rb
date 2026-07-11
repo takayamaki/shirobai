@@ -34,12 +34,28 @@ module Shirobai
     #
     # Rewrite every active cop's list through the stock-to-shirobai map:
     # wrappers get stock's list (the drop-in truth) translated, and remaining
-    # stock cops get their own list translated. Runs once, after all wrapper
-    # classes are defined (each auto-enlists via `Base.inherited`).
+    # stock cops get their own list translated. Runs after all core wrapper
+    # classes are defined (each auto-enlists via `Base.inherited`), again at
+    # each shirobai plugin gem's require (their stock departments — e.g.
+    # `Rails/SafeNavigation` listing `Style::RedundantSelf` — enlist between
+    # aligner runs), and lazily when the registry grew since the last run
+    # (third-party plugins like rubocop-capybara load during config
+    # resolution, after every shirobai require; see `align_if_registry_grew!`
+    # and `Dispatch.bundle_token`). Idempotent: an already-translated list
+    # maps to itself and is skipped.
+    #
+    # The rewritten methods return a FRESH copy per call, like stock's
+    # per-call array literals: rubocop-performance and rubocop-capybara
+    # prepend singleton modules that do `super.push(...)`, so a shared (or
+    # frozen) array would accumulate duplicates across calls (or raise
+    # FrozenError).
     def self.align_autocorrect_incompatibilities!
       registry = RuboCop::Cop::Registry.global
+      cops = registry.cops
+      @aligned_registry_size = cops.size
+
       replacements = {}
-      registry.cops.each do |cop|
+      cops.each do |cop|
         next unless cop.name&.start_with?("Shirobai::")
 
         stock = stock_counterpart(cop)
@@ -49,9 +65,9 @@ module Shirobai
       replacements.each do |stock, wrapper|
         list = stock.autocorrect_incompatible_with
                     .map { |klass| replacements.fetch(klass, klass) }.freeze
-        wrapper.define_singleton_method(:autocorrect_incompatible_with) { list }
+        wrapper.define_singleton_method(:autocorrect_incompatible_with) { list.dup }
       end
-      registry.cops.each do |cop|
+      cops.each do |cop|
         next if replacements.value?(cop)
 
         list = cop.autocorrect_incompatible_with
@@ -59,8 +75,22 @@ module Shirobai
         next if mapped == list
 
         mapped.freeze
-        cop.define_singleton_method(:autocorrect_incompatible_with) { mapped }
+        cop.define_singleton_method(:autocorrect_incompatible_with) { mapped.dup }
       end
+    end
+
+    # Cheap re-alignment guard for plugins that load AFTER every shirobai
+    # require: rubocop resolves `plugins:` / `require:` gems while loading
+    # the corpus config, and those gems (rubocop-capybara et al.) may list a
+    # replaced class or enlist new cops. Badge replacement keeps the registry
+    # count, but a plugin load only ever ADDS badges, so a size change is the
+    # signal; called from `Dispatch.bundle_token` on each new config, which
+    # happens after config resolution and before any correction round.
+    def self.align_if_registry_grew!
+      size = RuboCop::Cop::Registry.global.cops.size
+      return if @aligned_registry_size == size
+
+      align_autocorrect_incompatibilities!
     end
 
     # The stock class whose badge `klass` took over, or nil when the stock
