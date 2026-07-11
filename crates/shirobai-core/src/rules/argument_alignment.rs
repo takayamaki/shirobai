@@ -137,10 +137,19 @@ impl Visitor<'_> {
     /// `multiple_arguments?` + `flattened_arguments`: the list of item ranges to
     /// align, or `None` when the call does not qualify.
     fn flattened_arguments(&self, call: &CallNode<'_>) -> Option<Vec<(usize, usize)>> {
-        let args: Vec<Node<'_>> = call
+        let mut args: Vec<Node<'_>> = call
             .arguments()
             .map(|a| a.arguments().iter().collect())
             .unwrap_or_default();
+        // parser-gem's `send.arguments` includes the block-pass argument
+        // (`&blk`, bare `&`) as the LAST argument; prism keeps it in
+        // `block()`. Append it so it both counts for `multiple_arguments?`
+        // and gets aligned like stock does.
+        if let Some(block) = call.block()
+            && block.as_block_argument_node().is_some()
+        {
+            args.push(block);
+        }
 
         // multiple_arguments?
         let qualifies = args.len() >= 2
