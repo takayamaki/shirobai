@@ -448,6 +448,15 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # must not shift.
     "Layout/InitialIndentation" =>
       "  puts \"あ\"\n",
+    # A `\r\n` line after the multibyte comment. The offense sits at column 0 of
+    # the CR+LF line; its begin_pos must land on that line's start after the
+    # multibyte prefix (the range comes from stock's own `source_range`).
+    "Layout/EndOfLine" =>
+      "x = 1\r\n",
+    # The interpolation offense ranges AND the autocorrect edits are Rust byte
+    # offsets, so they must convert to char offsets after the multibyte prefix.
+    "Layout/SpaceInsideStringInterpolation" =>
+      "x = \"\#{ y }\"\n",
     # The `=` offense range `[arg.end, value.begin)` sits after the multibyte
     # prefix comment, so its prism byte offsets must map to char offsets, and
     # the `/=\s*(\S+)/` autocorrect must round-trip a multibyte default value.
@@ -497,6 +506,46 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
       offenses = expect_parity(
         "Style/FileNull",
         "#{prefix}x = '/dev/null'\ny = 'nul'\n",
+        enabled_config
+      )
+      expect(offenses).not_to be_empty, "fixture produced no stock offense; fix the source"
+    end
+  end
+
+  # `Style/EmptyLiteral`'s only Rust part is the token-free frozen-string scan
+  # (String.new path), which walks the leading comments. With the multibyte
+  # prefix as the (non-frozen) leading comment, the scan must still decide the
+  # file is not frozen so `String.new` offends. `Style/FrozenStringLiteralComment`
+  # is forced off so the offense does not depend on that cop's default state.
+  describe "Style/EmptyLiteral (String.new frozen scan)" do
+    it "matches stock offenses and autocorrect output after a multibyte comment" do
+      cfg = RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new(
+          { "Style/FrozenStringLiteralComment" => { "Enabled" => false } }, "(test)"
+        ),
+        "(test)"
+      )
+      offenses = expect_parity("Style/EmptyLiteral", "#{prefix}x = String.new\n", cfg)
+      expect(offenses).not_to be_empty, "fixture produced no stock offense; fix the source"
+    end
+  end
+
+  # `Layout/LineContinuationSpacing` is `Enabled: pending`, so the Team-based
+  # runs would drop it under the default config (vacuously green); force-enable
+  # it. The wrapper builds the offense/autocorrect ranges from stock's own
+  # `source_range` (no Rust byte offsets), but the multibyte leading comment
+  # still guards the line accounting after a non-ASCII prefix.
+  describe "Layout/LineContinuationSpacing (pending cop, force-enabled)" do
+    it "matches stock offenses and autocorrect output after a multibyte comment" do
+      enabled_config = RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new(
+          { "Layout/LineContinuationSpacing" => { "Enabled" => true } }, "(test)"
+        ),
+        "(test)"
+      )
+      offenses = expect_parity(
+        "Layout/LineContinuationSpacing",
+        "#{prefix}x = 'あ'  \\\n'b'\n",
         enabled_config
       )
       expect(offenses).not_to be_empty, "fixture produced no stock offense; fix the source"

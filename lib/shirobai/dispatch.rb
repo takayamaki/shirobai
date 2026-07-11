@@ -123,12 +123,15 @@ module Shirobai
       frozen_string_literal_comment: [0, 91].freeze,
       arguments_forwarding: [0, 92].freeze,
       space_around_operators: [0, 93].freeze,
-      # toucher-batch-1 core slots (94-96). ExtraSpacing takes the next free
-      # slot (97) after the merge.
+      # toucher-batch-1 core slots (94-96). ExtraSpacing (#55) takes slot 97,
+      # then toucher-batch-2 appends slots 98-100.
       ordered_magic_comments: [0, 94].freeze,
       initial_indentation: [0, 95].freeze,
       space_around_equals_in_parameter_default: [0, 96].freeze,
       extra_spacing: [0, 97].freeze,
+      end_of_line: [0, 98].freeze,
+      line_continuation_spacing: [0, 99].freeze,
+      space_inside_string_interpolation: [0, 100].freeze,
       # shirobai-performance plugin slots (origin 1). Always present in the
       # wire format; the Rust side leaves them empty unless the plugin gem
       # registered its packed segment (`Dispatch.register_plugin_packer`).
@@ -410,6 +413,7 @@ module Shirobai
         sao = Cop::Layout::SpaceAroundOperators.bundle_args(config)
         saepd = Cop::Layout::SpaceAroundEqualsInParameterDefault.bundle_args(config)
         es = Cop::Layout::ExtraSpacing.bundle_args(config)
+        sisi = Cop::Layout::SpaceInsideStringInterpolation.bundle_args(config)
 
         nums = [
           bl[0], num(bl[1]), 1, # BlockLength Max / CountComments / filtered (eligibility implies the fast path)
@@ -477,7 +481,8 @@ module Shirobai
           # (3 nums, indices 128/129/130). Its `ForceEqualSignAlignment` is NOT
           # re-packed here: SpaceAroundOperators already packs that flag at num 126,
           # the single wire source both cops read.
-          es[0][0], es[0][1], es[0][2]
+          es[0][0], es[0][1], es[0][2],
+          *sisi[0] # SpaceInsideStringInterpolation style (1 num, index 131)
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0], aba[0],

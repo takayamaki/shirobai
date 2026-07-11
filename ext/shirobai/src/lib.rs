@@ -1896,7 +1896,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         })?;
         let r = shirobai_core::rules::bundle::check_all_bundle(bytes(&source), cfg);
         // Core origin (result[0]).
-        let ary = ruby.ary_new_capa(98);
+        let ary = ruby.ary_new_capa(101);
         ary.push(map_debugger(r.debugger))?;
         ary.push(map_block_length(r.block_length))?;
         ary.push(map_block_nesting(r.block_nesting))?;
@@ -2034,14 +2034,25 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(r.frozen_string_literal_comment)?;
         ary.push(map_arguments_forwarding(r.arguments_forwarding))?;
         ary.push(map_space_around_operators(r.space_around_operators))?;
-        // toucher-batch-1 core slots (94-96); ExtraSpacing lands on the next
-        // free slot (97) after the merge.
+        // toucher-batch-1 core slots (94-96); ExtraSpacing (#55) lands on
+        // slot 97, then batch-2 appends slots 98-100.
         ary.push(map_ordered_magic_comments(r.ordered_magic_comments))?;
         ary.push(r.initial_indentation)?;
         ary.push(map_space_around_equals_in_parameter_default(
             r.space_around_equals_in_parameter_default,
         ))?;
+        // core slot 97: `Layout/ExtraSpacing` (#55).
         ary.push(map_extra_spacing(r.extra_spacing))?;
+        // toucher-batch-2 core slot 98: `Layout/EndOfLine` (stock's `last_line`
+        // as a plain Integer).
+        ary.push(r.end_of_line)?;
+        // toucher-batch-2 core slot 99: `Layout/LineContinuationSpacing`
+        // (stock's `last_line`, same value as slot 98).
+        ary.push(r.line_continuation_spacing)?;
+        // toucher-batch-2 core slot 100: `Layout/SpaceInsideStringInterpolation`.
+        ary.push(map_space_inside_string_interpolation(
+            r.space_inside_string_interpolation,
+        ))?;
         // Performance origin (result[1]).
         let perf = ruby.ary_new_capa(5);
         perf.push(map_perf_detect(r.perf_detect))?;
@@ -2193,6 +2204,23 @@ fn map_space_around_equals_in_parameter_default(
     v: Vec<shirobai_core::rules::space_around_equals_in_parameter_default::SpaceAroundEqualsOffense>,
 ) -> Vec<(usize, usize)> {
     v.into_iter().map(|o| (o.start, o.end)).collect()
+}
+
+/// `Layout/SpaceInsideStringInterpolation`: `[[start, end, command, [[edit_start,
+/// edit_end, insert?], ...]], ...]`. `command`: 0 = "Do not use", 1 = "Use".
+/// Each edit removes `[start, end)` (`insert?` false) or inserts one space at
+/// `start` (`insert?` true). The edits are attached to the first offense of each
+/// interpolation.
+type SpaceInsideInterpTuple = (usize, usize, u8, Vec<(usize, usize, bool)>);
+fn map_space_inside_string_interpolation(
+    v: Vec<shirobai_core::rules::space_inside_string_interpolation::SpaceInsideInterpOffense>,
+) -> Vec<SpaceInsideInterpTuple> {
+    v.into_iter()
+        .map(|o| {
+            let edits = o.edits.into_iter().map(|e| (e.start, e.end, e.insert)).collect();
+            (o.start, o.end, o.command, edits)
+        })
+        .collect()
 }
 
 type IfUnlessModifierOps = Vec<(u8, usize, usize, String)>;
@@ -3365,6 +3393,41 @@ fn check_initial_indentation(source: RString) -> bool {
     shirobai_core::rules::initial_indentation::check_initial_indentation(bytes(&source))
 }
 
+/// Ruby entry point for `Layout/EndOfLine` (standalone fallback, no config).
+/// Returns stock's `last_line`; the wrapper runs stock's own scan body.
+fn check_end_of_line(source: RString) -> usize {
+    shirobai_core::rules::end_of_line::check_end_of_line(bytes(&source))
+}
+
+/// `Style/EmptyLiteral`'s `frozen_string_literals_enabled?` (String.new path),
+/// computed from the leading comment scan without materializing the parser-gem
+/// token stream. `sfbd`: `AllCops/StringLiteralsFrozenByDefault` is literally
+/// `true` (the fallback when no magic comment specifies a value).
+fn check_frozen_string_literals_enabled(source: RString, sfbd: bool) -> bool {
+    shirobai_core::rules::duplicate_magic_comment::frozen_string_literals_enabled(bytes(&source), sfbd)
+}
+
+/// `Style/EmptyLiteral`'s `frozen_string_literals_disabled?` (any leading
+/// `# frozen_string_literal: false`), token-free.
+fn check_frozen_string_literals_disabled(source: RString) -> bool {
+    shirobai_core::rules::duplicate_magic_comment::frozen_string_literals_disabled(bytes(&source))
+}
+
+/// Ruby entry point for `Layout/SpaceInsideStringInterpolation` (standalone
+/// fallback). `style`: 0 = no_space, 1 = space. See
+/// `map_space_inside_string_interpolation` for the returned shape.
+fn check_space_inside_string_interpolation(
+    source: RString,
+    style: u8,
+) -> Vec<SpaceInsideInterpTuple> {
+    map_space_inside_string_interpolation(
+        shirobai_core::rules::space_inside_string_interpolation::check_space_inside_string_interpolation(
+            bytes(&source),
+            shirobai_core::rules::space_inside_string_interpolation::Config { style },
+        ),
+    )
+}
+
 /// Ruby entry point for `Layout/SpaceAroundEqualsInParameterDefault`
 /// (standalone fallback). `style`: 0 = space, 1 = no_space. Returns one
 /// `[start, end]` byte range per offense.
@@ -4360,6 +4423,19 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_initial_indentation",
         function!(check_initial_indentation, 1),
+    )?;
+    module.define_module_function("check_end_of_line", function!(check_end_of_line, 1))?;
+    module.define_module_function(
+        "check_frozen_string_literals_enabled",
+        function!(check_frozen_string_literals_enabled, 2),
+    )?;
+    module.define_module_function(
+        "check_frozen_string_literals_disabled",
+        function!(check_frozen_string_literals_disabled, 1),
+    )?;
+    module.define_module_function(
+        "check_space_inside_string_interpolation",
+        function!(check_space_inside_string_interpolation, 2),
     )?;
     module.define_module_function(
         "check_space_around_equals_in_parameter_default",

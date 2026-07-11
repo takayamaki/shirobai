@@ -4,14 +4,14 @@ This document tracks which RuboCop cops shirobai has reimplemented in Rust,
 and which cops were attempted but reverted because they did not meet the
 project's drop-in compatibility and speed requirements together.
 
-## Implemented (98 cops)
+## Implemented (102 cops)
 
 shirobai replaces these cops with Rust implementations.
 Every offense position, message, and autocorrected byte matches stock RuboCop
 on all five verification corpora (Mastodon, Discourse, Redmine, fluentd,
 and RuboCop itself).
 
-### Layout (53)
+### Layout (56)
 
 - `Layout/AccessModifierIndentation`
 - `Layout/ArgumentAlignment`
@@ -35,6 +35,7 @@ and RuboCop itself).
 - `Layout/EmptyLinesAroundMethodBody`
 - `Layout/EmptyLinesAroundModuleBody`
 - `Layout/EndAlignment`
+- `Layout/EndOfLine`
 - `Layout/ExtraSpacing`
 - `Layout/FirstArgumentIndentation`
 - `Layout/FirstArrayElementIndentation`
@@ -44,6 +45,7 @@ and RuboCop itself).
 - `Layout/IndentationWidth`
 - `Layout/InitialIndentation`
 - `Layout/LeadingEmptyLines`
+- `Layout/LineContinuationSpacing`
 - `Layout/LineLength`
 - `Layout/MultilineMethodCallBraceLayout`
 - `Layout/MultilineMethodCallIndentation`
@@ -65,6 +67,7 @@ and RuboCop itself).
 - `Layout/SpaceInsideHashLiteralBraces`
 - `Layout/SpaceInsideParens`
 - `Layout/SpaceInsideReferenceBrackets`
+- `Layout/SpaceInsideStringInterpolation`
 - `Layout/TrailingEmptyLines`
 
 ### Lint (12)
@@ -99,11 +102,12 @@ and RuboCop itself).
 - `Naming/PredicatePrefix`
 - `Naming/VariableNumber`
 
-### Style (22)
+### Style (23)
 
 - `Style/ArgumentsForwarding`
 - `Style/BlockDelimiters`
 - `Style/ColonMethodCall`
+- `Style/EmptyLiteral`
 - `Style/FileNull`
 - `Style/FrozenStringLiteralComment`
 - `Style/HashEachMethods`
@@ -123,6 +127,39 @@ and RuboCop itself).
 - `Style/TrailingCommaInArguments`
 - `Style/TrailingCommaInArrayLiteral`
 - `Style/TrailingCommaInHashLiteral`
+
+### Known limitation: `Layout/EndOfLine` last_line (heredoc tail)
+
+`Layout/EndOfLine` scans `raw_source` line by line up to stock's `last_line`
+(`processed_source.tokens.last.line`). shirobai supplies `last_line` from the
+shared parse (the end line of the last top-level statement) instead of
+materializing the parser-gem token stream. These agree everywhere except one
+prism/parser structural difference: when the file's LAST top-level statement
+ENDS with a heredoc, parser-gem puts the final `tNL` on the heredoc OPENER line,
+while prism's node end is the terminator line, so shirobai's `last_line` is
+higher and scans the heredoc body/terminator lines. This can only change the
+result on a file with MIXED line endings whose sole bad EOL sits on such a
+heredoc body — a shape that never occurs in the LF-only verification corpora
+(`EndOfLine` reports nothing on all five) and is not exercised by the vendor
+spec. Same family as the README `TargetRubyVersion` notes: disable shirobai's
+replacement for byte-exact behavior on that pathological input.
+
+### Note: `Style/EmptyLiteral` (frozen-scan-only Rust)
+
+`Style/EmptyLiteral` is almost entirely AST work — the const-receiver
+`Array.new` / `Hash.new` / `String.new` / `Array[]` matchers and the
+parenless-argument-wrapping autocorrect — which stock already does cheaply and
+which depends on the `block` / `numblock` exclusion asymmetry between Array and
+Hash. shirobai runs ALL of that (stock's `on_send` + matchers + autocorrect)
+VERBATIM on the real parser AST, so detection and `-A` bytes match stock by
+construction. The ONE part that reaches the parser-gem token stream — the
+`String.new` branch's `frozen_strings?`, via
+`FrozenStringLiteral#leading_comment_lines` -> `processed_source.tokens` — is
+the only thing replaced: Rust does the same leading-comment scan (shared with
+`Lint/DuplicateMagicComment` / `Style/FrozenStringLiteralComment`) from the
+prism parse, and the config half runs Ruby-side. So this cop joins neither the
+bundle wire nor the shared walk; it is stock's cop with a token-free
+`frozen_strings?`.
 
 ## Plugin cops: shirobai-performance (proof of concept)
 
