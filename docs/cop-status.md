@@ -4,7 +4,7 @@ This document tracks which RuboCop cops shirobai has reimplemented in Rust,
 and which cops were attempted but reverted because they did not meet the
 project's drop-in compatibility and speed requirements together.
 
-## Implemented (103 cops)
+## Implemented (104 cops)
 
 shirobai replaces these cops with Rust implementations.
 Every offense position, message, and autocorrected byte matches stock RuboCop
@@ -102,7 +102,7 @@ and RuboCop itself).
 - `Naming/PredicatePrefix`
 - `Naming/VariableNumber`
 
-### Style (24)
+### Style (25)
 
 - `Style/ArgumentsForwarding`
 - `Style/BlockDelimiters`
@@ -116,6 +116,7 @@ and RuboCop itself).
 - `Style/IfUnlessModifier`
 - `Style/LineEndConcatenation`
 - `Style/MagicCommentFormat`
+- `Style/MutableConstant`
 - `Style/NestedParenthesizedCalls`
 - `Style/PercentLiteralDelimiters`
 - `Style/RedundantFreeze`
@@ -161,6 +162,31 @@ the only thing replaced: Rust does the same leading-comment scan (shared with
 prism parse, and the config half runs Ruby-side. So this cop joins neither the
 bundle wire nor the shared walk; it is stock's cop with a token-free
 `frozen_strings?`.
+
+### Note: `Style/MutableConstant` (frozen-scan-only Rust)
+
+Same shape as `Style/EmptyLiteral`. The whole cop body — the `on_casgn`
+mutability check (`literal_check` / `strict_check`, both `EnforcedStyle`
+axes), the `shareable_constant_value` scope scan (which reads
+`processed_source.lines`, NOT the token stream, so it is not a toucher), and
+the wide `.freeze` autocorrect (splat expansion, array bracketing, range /
+dotless-send parenthesizing, recursive nested freezing) — runs stock's own
+code VERBATIM on the real parser AST, so detection and `-A` bytes match stock
+by construction, including target-Ruby-dependent behavior (frozen regexp/range
+from 3.0, the `range_enclosed_in_parentheses?` `<= 2.7` branch). The ONE place
+stock reaches the parser-gem token stream (the toucher cost) is the
+`FrozenStringLiteral` mixin's `frozen_string_literals_enabled?`, via
+`leading_comment_lines` -> `processed_source.tokens`. This wrapper overrides
+just that one method with the shared token-free Rust leading-comment scan
+(`check_frozen_string_literals_enabled`, the same one behind `EmptyLiteral` /
+`Lint/DuplicateMagicComment` / `Style/FrozenStringLiteralComment`): it returns
+the first leading magic comment's `frozen_string_literal` value, or the
+`StringLiteralsFrozenByDefault` fallback when none (`nil`/`false` both map to
+`false`, exactly matching stock's `string_literals_frozen_by_default?.nil?`
+guard). So this cop joins neither the bundle wire nor the shared walk (no slot,
+no packed-config num); it is stock's cop with a token-free
+`frozen_string_literals_enabled?`. Real-fire parity verified against stock at
+zero diff on Mastodon (27), Redmine (162), and RuboCop itself (17).
 
 ### Note: `Style/MagicCommentFormat` (leading-line-only Rust)
 

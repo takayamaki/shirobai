@@ -462,6 +462,12 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # comment. No autocorrect.
     "Naming/AsciiIdentifiers" =>
       "даль = 1\n",
+    # The offense range (the array node) and the `.freeze` insert position both
+    # come from stock's own code on the parser-gem AST (char offsets), never
+    # through Rust; the only Rust output is the token-free frozen-string
+    # boolean. Kept in the sweep as a regression guard on that boundary.
+    "Style/MutableConstant" =>
+      "CONST = [\"日本語\", :あ]\n",
   }
 
   cases.each do |cop_name, body|

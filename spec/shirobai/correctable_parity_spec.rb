@@ -702,6 +702,15 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Naming::AsciiIdentifiers,
       "älg = 1\n"
     ],
+    # `Style/MutableConstant` runs stock's `on_casgn` + autocorrect verbatim;
+    # the offense carries a `.freeze` corrector (correctable). The only replaced
+    # method is the token-free `frozen_string_literals_enabled?`, which does not
+    # touch the corrector, so the lint-mode status must match stock.
+    "Style/MutableConstant" => [
+      RuboCop::Cop::Style::MutableConstant,
+      Shirobai::Cop::Style::MutableConstant,
+      "CONST = [1, 2, 3]\n"
+    ],
   }
 
   cases.each do |name, (stock_klass, shirobai_klass, source)|
