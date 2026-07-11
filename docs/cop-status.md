@@ -4,7 +4,7 @@ This document tracks which RuboCop cops shirobai has reimplemented in Rust,
 and which cops were attempted but reverted because they did not meet the
 project's drop-in compatibility and speed requirements together.
 
-## Implemented (102 cops)
+## Implemented (104 cops)
 
 shirobai replaces these cops with Rust implementations.
 Every offense position, message, and autocorrected byte matches stock RuboCop
@@ -96,13 +96,14 @@ and RuboCop itself).
 - `Metrics/ModuleLength`
 - `Metrics/PerceivedComplexity`
 
-### Naming (3)
+### Naming (4)
 
+- `Naming/AsciiIdentifiers`
 - `Naming/MethodName`
 - `Naming/PredicatePrefix`
 - `Naming/VariableNumber`
 
-### Style (23)
+### Style (24)
 
 - `Style/ArgumentsForwarding`
 - `Style/BlockDelimiters`
@@ -115,6 +116,7 @@ and RuboCop itself).
 - `Style/HashTransformKeys`
 - `Style/IfUnlessModifier`
 - `Style/LineEndConcatenation`
+- `Style/MagicCommentFormat`
 - `Style/NestedParenthesizedCalls`
 - `Style/PercentLiteralDelimiters`
 - `Style/RedundantFreeze`
@@ -160,6 +162,72 @@ the only thing replaced: Rust does the same leading-comment scan (shared with
 prism parse, and the config half runs Ruby-side. So this cop joins neither the
 bundle wire nor the shared walk; it is stock's cop with a token-free
 `frozen_strings?`.
+
+### Note: `Style/MagicCommentFormat` (leading-line-only Rust)
+
+Same shape as `Style/EmptyLiteral`. The cop's whole body — the `CommentRange`
+`DIRECTIVE_REGEXP` / `VALUE_REGEXP` scan, the separator/capitalization offense
+predicates, the messages, and the `.tr`/`.downcase`/`.upcase` corrections — runs
+on the parser-gem *comment* objects (`each_comment_in_lines`, backed by
+`processed_source.comments` from the parse, not the token stream). The ONLY
+place stock touches the parser-gem token stream is `leading_comment_lines`'
+`processed_source.tokens.find { |t| !t.comment? }` (the "toucher" cost). shirobai
+replaces just that: Rust returns the first-non-comment-token line (the shared
+leading-comment front scan, BOM-aware), and the wrapper reuses stock's
+`CommentRange` verbatim and copies the offense/message/correction helpers, so
+detection, messages, and autocorrect are stock's own code — byte-identical by
+construction, including non-ASCII offsets (offense ranges come from
+`CommentRange`'s `loc.expression` char offsets, never through Rust, so no
+`SourceOffsets` conversion is needed). Wired into the bundle (slot `[0, 101]`)
+for the shared parse; config-less on the Rust side.
+
+The shared front scan (`first_token_pos`) gained a leading-UTF-8-BOM skip here:
+prism reports every comment/token offset after the BOM, so the scan must start
+past it or it would mistake the BOM's first byte for the first token (which hid
+leading magic comments). This also fixes a latent divergence in
+`Lint/DuplicateMagicComment` / `Lint/OrderedMagicComments` on BOM files with more
+than one leading magic comment; the verification corpora contain no BOM Ruby
+files, so it never surfaced there.
+
+### Note: `Naming/AsciiIdentifiers` (ASCII fast-path, full-Rust)
+
+Only a file that HAS a non-ASCII byte can produce an offense (stock's
+`token.text.ascii_only?` skips every token otherwise). So the Rust rule
+fast-paths every all-ASCII file with one `is_ascii` scan and builds NO token
+stream — the whole point, since stock's `processed_source.tokens` materializes
+the parser-gem token stream on every file (the toucher cost). Only the rare
+non-ASCII file falls through to a lex. To keep it the first parse-cache toucher
+on those files (so the shared walk reuses one parse), it is computed before the
+walk and gated off when the cop is disabled.
+
+On a non-ASCII file it reads prism's own lex tokens (not the parser-gem
+translation) and maps them to the `tIDENTIFIER` / `tCONSTANT` distinction stock
+tests: flag `IDENTIFIER` / `CONSTANT` unless preceded by `SYMBOL_BEGIN` (a symbol
+body is `tSYMBOL`), plus a `METHOD_NAME` preceded by `KEYWORD_DEF` (an
+instance-method def name `def foo!` is parser-gem `tIDENTIFIER`). Two token-name
+subtleties, each pinned by an edge spec after a synthetic-corpus divergence:
+
+- A prism `CONSTANT` is a parser-gem `tCONSTANT` (gated by `AsciiConstants`)
+  only when it starts with an ASCII `A`-`Z`. A Unicode-uppercase (non-ASCII)
+  start — Cyrillic `Ф`, Greek `Ω`, full-width `Ａ` — is a `tIDENTIFIER` for
+  parser-gem (flagged with the identifier message, and regardless of
+  `AsciiConstants`), while prism lexes it as `CONSTANT`. So a prism `CONSTANT`
+  with a non-ASCII first byte is re-mapped to an identifier.
+
+The offense is the first non-ASCII byte run inside the token; the wrapper
+converts it to a char range with `SourceOffsets` and builds stock's exact
+`range_between` offense (no autocorrect). Validated stock-vs-shirobai over every
+non-ASCII file in all five corpora and a synthetic non-ASCII-identifier corpus
+(both `AsciiConstants` states) at 0 divergences.
+
+Known limitation (documented, same family as the README `TargetRubyVersion`
+notes): parser-gem tokenizes a `!` / `?` method NAME by `TargetRubyVersion`.
+Under the default target (2.7) `def self.foo!`, `undef foo!` and `alias foo!`
+are `tIDENTIFIER` (a non-ASCII name is flagged); under prism's Latest grammar
+(what shirobai always uses) they are `tFID` (skipped). The instance-method def
+name `def foo!` is `tIDENTIFIER` under both, so it never diverges. No real code
+has a non-ASCII `!` / `?` method name, so this never affects corpus parity
+(verified 0 divergences under the default target).
 
 ## Plugin cops: shirobai-performance (proof of concept)
 

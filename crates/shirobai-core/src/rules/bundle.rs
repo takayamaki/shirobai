@@ -31,7 +31,7 @@ use super::{
     initial_indentation,
     leading_empty_lines,
     line_end_concatenation, line_length,
-    line_length_breakable, method_length, method_name, module_length,
+    line_length_breakable, magic_comment_format, method_length, method_name, module_length,
     multiline_method_call_brace_layout, nested_parenthesized_calls,
     ordered_magic_comments,
     parentheses_as_grouped_expression,
@@ -41,6 +41,7 @@ use super::{
     rails_pluck, rails_unknown_env, redundant_freeze,
     redundant_self,
     redundant_self_assignment,
+    ascii_identifiers,
     require_parentheses, rspec_dispatcher, rspec_empty_line, rspec_language, safe_navigation_chain,
     self_assignment,
     semicolon,
@@ -193,6 +194,7 @@ pub fn check_multiline_bundle(
 /// | 129 | extra_spacing allow_for_alignment (`AllowForAlignment`, default true) |
 /// | 130 | extra_spacing allow_before_trailing_comments (`AllowBeforeTrailingComments`, default false) |
 /// | 131 | space_inside_string_interpolation style (`Layout/SpaceInsideStringInterpolation` `EnforcedStyle`: 0 = no_space, 1 = space) — toucher-batch-2's first core index |
+/// | 132 | ascii_identifiers (`Naming/AsciiIdentifiers`): 0 = disabled, 1 = enabled with `AsciiConstants` off, 2 = enabled with `AsciiConstants` on — toucher-batch-3's core index |
 ///
 /// Core segment `lists[0]` (`Vec<String>`):
 ///
@@ -397,6 +399,12 @@ pub struct BundleConfig {
     /// `Layout/SpaceInsideStringInterpolation` `EnforcedStyle`
     /// (0 = no_space, 1 = space).
     pub space_inside_string_interpolation: space_inside_string_interpolation::Config,
+    /// `Naming/AsciiIdentifiers` enabled gate: `false` skips the (non-ASCII
+    /// only) lex entirely so a config that turns the cop off pays nothing.
+    pub ascii_identifiers_enabled: bool,
+    /// `Naming/AsciiIdentifiers` `AsciiConstants` (whether `tCONSTANT` tokens
+    /// are checked as well as identifiers).
+    pub ascii_identifiers_constants: bool,
     pub duplicate_methods: duplicate_methods::Config,
     /// `Style/RedundantFreeze`: `AllCops/TargetRubyVersion >= 3.0`.
     pub redundant_freeze_target_30_plus: bool,
@@ -470,7 +478,7 @@ pub const ORIGIN_RSPEC: usize = 2;
 pub const ORIGIN_RAILS: usize = 3;
 pub const N_ORIGINS: usize = 4;
 
-const CORE_NUMS_LEN: usize = 132;
+const CORE_NUMS_LEN: usize = 133;
 const CORE_LISTS_LEN: usize = 28;
 const PERF_NUMS_LEN: usize = 3;
 const PERF_LISTS_LEN: usize = 1;
@@ -698,18 +706,23 @@ impl BundleConfig {
             stabby_lambda_parentheses: stabby_lambda_parentheses::Config {
                 style: nums[85] as u8,
             },
-            // toucher-batch-1: nums[127] is its core index; ExtraSpacing appends
-            // its own nums at 128-130 right after it.
+            // toucher-batch-1: nums[127] is its core index; ExtraSpacing (#55)
+            // packs its own nums at 128-130 right after it.
             space_around_equals_in_parameter_default:
                 space_around_equals_in_parameter_default::Config {
                     style: nums[127] as u8,
                 },
-            // nums[128..=130] are RESERVED for the parallel `Layout/ExtraSpacing`
-            // PR (#55) renumber (zero-filled here, read by nobody).
+            // nums[128..=130] hold `Layout/ExtraSpacing`'s config; its Config is
+            // assembled below next to `space_around_operators` (they share the
+            // force_equal_sign_alignment flag at num 126).
             space_inside_string_interpolation:
                 space_inside_string_interpolation::Config {
                     style: nums[131] as u8,
                 },
+            // `Naming/AsciiIdentifiers` (3-state): 0 disabled, 1 enabled with
+            // AsciiConstants off, 2 enabled with AsciiConstants on.
+            ascii_identifiers_enabled: nums[132] != 0,
+            ascii_identifiers_constants: nums[132] == 2,
             ambiguous_block_association: ambiguous_block_association::Config {
                 allowed_methods: next_list(),
             },
@@ -991,6 +1004,15 @@ pub struct BundleResult {
     /// each interpolation.
     pub space_inside_string_interpolation:
         Vec<space_inside_string_interpolation::SpaceInsideInterpOffense>,
+    /// `Style/MagicCommentFormat`: stock's `leading_comment_lines` boundary (the
+    /// 1-based line of the first non-comment token, or `0` for none). The
+    /// wrapper builds the leading-line range from it and runs stock's own
+    /// `magic_comments` + offense/correction logic unchanged.
+    pub magic_comment_format: usize,
+    /// `Naming/AsciiIdentifiers`: one `(is_constant, start, end)` per offense
+    /// (the first non-ASCII byte run inside a flagged identifier/constant
+    /// token). Empty for every all-ASCII file (the fast path).
+    pub ascii_identifiers: Vec<ascii_identifiers::AsciiIdentOffense>,
     pub space_inside_hash_literal_braces:
         Vec<space_inside_hash_literal_braces::SpaceInsideHashLiteralBracesOffense>,
     pub space_inside_array_literal_brackets:
@@ -1142,6 +1164,18 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         }))
     } else {
         None
+    };
+
+    // `Naming/AsciiIdentifiers`: computed here, BEFORE the shared walk, so that
+    // on the rare non-ASCII file it is the first cop to touch the parse cache
+    // and builds the (raw prism) token stream once — every later `with_parsed`
+    // reuses that token-bearing entry. On an all-ASCII file the fast path
+    // returns without a lex, so the walk keeps its token-free parse. Gated off
+    // entirely when the cop is disabled.
+    let ascii_identifiers = if cfg.ascii_identifiers_enabled {
+        ascii_identifiers::check_ascii_identifiers(source, cfg.ascii_identifiers_constants)
+    } else {
+        Vec::new()
     };
 
     // --- Shared-walk rules, one per merged cop. ---
@@ -1630,6 +1664,10 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // `Layout/LineContinuationSpacing`: same `last_line` definition as
     // `Layout/EndOfLine`, so it reuses the single computation.
     let line_continuation_spacing = end_of_line;
+    // `Style/MagicCommentFormat`: stock's `leading_comment_lines` boundary (the
+    // first non-comment token line) from the cached parse, so the wrapper avoids
+    // `processed_source.tokens`. The rest of the cop is stock Ruby.
+    let magic_comment_format = magic_comment_format::check_magic_comment_format(source);
     // `Lint/DuplicateMagicComment` is a leading-line scan (comments + the
     // first non-comment token position from the cached parse), no AST walk.
     let duplicate_magic_comment =
@@ -1752,6 +1790,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         end_of_line,
         line_continuation_spacing,
         space_inside_string_interpolation,
+        magic_comment_format,
+        ascii_identifiers,
         space_inside_hash_literal_braces,
         space_inside_array_literal_brackets,
         space_before_block_braces,
@@ -1902,6 +1942,7 @@ mod tests {
             0, // space_around_equals_in_parameter_default: style (space) — index 127
             1, 1, 0, // extra_spacing: enabled(128) / allow_for_alignment(129, true) / allow_before_trailing_comments(130, false)
             0, // space_inside_string_interpolation: style (no_space) — index 131
+            2, // ascii_identifiers: enabled + AsciiConstants on (default) — index 132
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -4440,6 +4481,29 @@ mod tests {
             super::initial_indentation::check_initial_indentation(src.as_bytes());
         assert!(alone);
         assert_eq!(bundle.initial_indentation, alone);
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_ascii_identifiers() {
+        let src = "def кир!; Foö = älg; end\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone = super::ascii_identifiers::check_ascii_identifiers(src.as_bytes(), true);
+        assert!(!alone.is_empty());
+        assert_eq!(bundle.ascii_identifiers, alone);
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_magic_comment_format() {
+        let src = "# frozen-string-literal: true\n# encoding: utf-8\nputs 1\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone =
+            super::magic_comment_format::check_magic_comment_format(src.as_bytes());
+        assert_eq!(alone, 3);
+        assert_eq!(bundle.magic_comment_format, alone);
     }
 
     #[test]
