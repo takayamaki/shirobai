@@ -443,6 +443,11 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     # must not shift.
     "Layout/InitialIndentation" =>
       "  puts \"あ\"\n",
+    # The `=` offense range `[arg.end, value.begin)` sits after the multibyte
+    # prefix comment, so its prism byte offsets must map to char offsets, and
+    # the `/=\s*(\S+)/` autocorrect must round-trip a multibyte default value.
+    "Layout/SpaceAroundEqualsInParameterDefault" =>
+      "def f(x, y=:あ); end\n",
   }
 
   cases.each do |cop_name, body|

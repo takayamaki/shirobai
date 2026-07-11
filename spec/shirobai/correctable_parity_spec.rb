@@ -448,6 +448,13 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Style::StabbyLambdaParentheses,
       "->a,b,c { a + b + c }\n"
     ],
+    # `=`-replace corrector (default EnforcedStyle: space); the offense must
+    # stay correctable in lint mode.
+    "Layout/SpaceAroundEqualsInParameterDefault" => [
+      RuboCop::Cop::Layout::SpaceAroundEqualsInParameterDefault,
+      Shirobai::Cop::Layout::SpaceAroundEqualsInParameterDefault,
+      "def f(x, y=0); end\n"
+    ],
     # `each_with_object({}) {|(k,v),h| h[transform(k)] = v}`: stock builds a
     # multi-step corrector block (selector / args / body rewrites + the
     # `Hash[..]` strip in the brackets shape). In lint mode the offense must
