@@ -123,15 +123,12 @@ module Shirobai
       frozen_string_literal_comment: [0, 91].freeze,
       arguments_forwarding: [0, 92].freeze,
       space_around_operators: [0, 93].freeze,
-      # toucher-batch-1 core slots (94-96). ExtraSpacing takes the next free
-      # slot on its own branch; a merge reconciles any overlap.
+      # toucher-batch-1 core slots (94-96). ExtraSpacing (#55) takes slot 97,
+      # then toucher-batch-2 appends slots 98-100.
       ordered_magic_comments: [0, 94].freeze,
       initial_indentation: [0, 95].freeze,
       space_around_equals_in_parameter_default: [0, 96].freeze,
-      # Slot 97 is RESERVED for the parallel `Layout/ExtraSpacing` PR (#55)
-      # renumber (its Rust result lands there when it rebases onto this branch);
-      # toucher-batch-2 therefore starts at slot 98. The Rust side pushes an
-      # empty placeholder at 97 (see `ext/shirobai/src/lib.rs`).
+      extra_spacing: [0, 97].freeze,
       end_of_line: [0, 98].freeze,
       line_continuation_spacing: [0, 99].freeze,
       space_inside_string_interpolation: [0, 100].freeze,
@@ -418,6 +415,7 @@ module Shirobai
         af = Cop::Style::ArgumentsForwarding.bundle_args(config)
         sao = Cop::Layout::SpaceAroundOperators.bundle_args(config)
         saepd = Cop::Layout::SpaceAroundEqualsInParameterDefault.bundle_args(config)
+        es = Cop::Layout::ExtraSpacing.bundle_args(config)
         sisi = Cop::Layout::SpaceInsideStringInterpolation.bundle_args(config)
         aid = Cop::Naming::AsciiIdentifiers.bundle_args(config)
 
@@ -482,14 +480,14 @@ module Shirobai
           *fslc[0], # FrozenStringLiteralComment style (1 num)
           *af[0], # ArgumentsForwarding target_ruby / allow_only_rest / use_anon / explicit_block (4 nums)
           *sao[0], # SpaceAroundOperators enabled / exponent / rational / allow / table / force (6 nums)
-          # toucher-batch-1 next-free core index (127).
-          *saepd[0], # SpaceAroundEqualsInParameterDefault style (1 num) [127]
-          # 128-130 RESERVED for the parallel Layout/ExtraSpacing PR (#55)
-          # renumber (enabled / allow_for_alignment / allow_before_trailing).
-          # Zero-filled placeholders; #55's merge replaces them in place.
-          0, 0, 0,
-          *sisi[0], # SpaceInsideStringInterpolation style (1 num) [131]
-          *aid[0] # AsciiIdentifiers 0=disabled / 1=enabled,AsciiConstants off / 2=enabled,on (1 num) [132]
+          *saepd[0], # SpaceAroundEqualsInParameterDefault style (1 num, index 127)
+          # ExtraSpacing enabled / allow_for_alignment / allow_before_trailing_comments
+          # (3 nums, indices 128/129/130). Its `ForceEqualSignAlignment` is NOT
+          # re-packed here: SpaceAroundOperators already packs that flag at num 126,
+          # the single wire source both cops read.
+          es[0][0], es[0][1], es[0][2],
+          *sisi[0], # SpaceInsideStringInterpolation style (1 num, index 131)
+          *aid[0] # AsciiIdentifiers 0=disabled / 1=enabled,AsciiConstants off / 2=enabled,on (1 num, index 132)
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0], aba[0],

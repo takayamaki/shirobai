@@ -22,7 +22,7 @@ use super::{
     empty_line_between_defs,
     empty_lines,
     block_alignment, else_alignment, empty_lines_around_arguments, empty_lines_around_body,
-    end_alignment, end_of_line,
+    end_alignment, end_of_line, extra_spacing,
     first_argument_indentation, first_array_element_indentation, first_hash_element_indentation,
     frozen_string_literal_comment,
     hash_alignment, hash_each_methods, hash_syntax, hash_transform_keys,
@@ -188,9 +188,11 @@ pub fn check_multiline_bundle(
 /// | 123 | space_around_operators rational_style (`EnforcedStyleForRationalLiterals`: 0 = no_space, 1 = space) |
 /// | 124 | space_around_operators allow_for_alignment (`AllowForAlignment`) |
 /// | 125 | space_around_operators hash_table_style (`Layout/HashAlignment` `EnforcedHashRocketStyle` includes `table`) |
-/// | 126 | space_around_operators force_equal_sign_alignment (`Layout/ExtraSpacing` `ForceEqualSignAlignment`) |
-/// | 127 | space_around_equals_in_parameter_default style (`Layout/SpaceAroundEqualsInParameterDefault` `EnforcedStyle`: 0 = space, 1 = no_space) — toucher-batch-1's next-free core index |
-/// | 128-130 | RESERVED for the parallel `Layout/ExtraSpacing` PR (#55) renumber (enabled / allow_for_alignment / allow_before_trailing_comments). Zero-filled placeholders on this branch; #55's merge replaces them in place, so no renumber is needed. |
+/// | 126 | force_equal_sign_alignment (`Layout/ExtraSpacing` `ForceEqualSignAlignment`) — the single wire source for this flag, read by BOTH `Layout/SpaceAroundOperators` (its autocorrect collision avoidance) and `Layout/ExtraSpacing` (its own `ForceEqualSignAlignment` check). `Layout/ExtraSpacing` does not re-pack it |
+/// | 127 | space_around_equals_in_parameter_default style (`Layout/SpaceAroundEqualsInParameterDefault` `EnforcedStyle`: 0 = space, 1 = no_space) — toucher-batch-1's core index |
+/// | 128 | extra_spacing enabled — ORed into the token-cop gate above (`1` also makes the bundle collect the token stream). `Layout/ExtraSpacing` `Enabled` is not literally `false` |
+/// | 129 | extra_spacing allow_for_alignment (`AllowForAlignment`, default true) |
+/// | 130 | extra_spacing allow_before_trailing_comments (`AllowBeforeTrailingComments`, default false) |
 /// | 131 | space_inside_string_interpolation style (`Layout/SpaceInsideStringInterpolation` `EnforcedStyle`: 0 = no_space, 1 = space) — toucher-batch-2's first core index |
 /// | 132 | ascii_identifiers (`Naming/AsciiIdentifiers`): 0 = disabled, 1 = enabled with `AsciiConstants` off, 2 = enabled with `AsciiConstants` on — toucher-batch-3's core index |
 ///
@@ -416,13 +418,20 @@ pub struct BundleConfig {
     /// `Layout/SpaceAroundOperators` config (only consulted when
     /// `space_around_operators_enabled`).
     pub space_around_operators: space_around_operators::Config,
-    /// The token-cop gate: `true` when `Layout/SpaceAroundOperators` is enabled
-    /// in the config. It is the sole trigger for collecting the parser-gem token
-    /// stream in [`check_all_bundle`]; when no token cop is active the bundle
-    /// keeps the token-free parse path (no `with_parsed_and_tokens` pass). The
-    /// next token cop (`Layout/ExtraSpacing`) will OR its own enable flag into
-    /// the same gate.
+    /// The token-cop gate contribution for `Layout/SpaceAroundOperators`: `true`
+    /// when that cop is enabled in the config. Together with
+    /// [`Self::extra_spacing_enabled`] it triggers collecting the parser-gem
+    /// token stream in [`check_all_bundle`]; when no token cop is active the
+    /// bundle keeps the token-free parse path (no `with_parsed_and_tokens` pass).
     pub space_around_operators_enabled: bool,
+    /// `Layout/ExtraSpacing` config (only consulted when
+    /// [`Self::extra_spacing_enabled`]). Its `force_equal_sign_alignment` is the
+    /// same wire num (126) that `space_around_operators` reads — a single source.
+    pub extra_spacing: extra_spacing::Config,
+    /// The token-cop gate contribution for `Layout/ExtraSpacing`: ORed with
+    /// [`Self::space_around_operators_enabled`] to decide whether the bundle
+    /// collects the token stream.
+    pub extra_spacing_enabled: bool,
     /// `Some` only when the shirobai-performance plugin gem is loaded on the
     /// Ruby side (`performance_enabled` num is 1). `None` keeps the
     /// Performance rules out of the shared walk entirely — their slots are
@@ -697,14 +706,15 @@ impl BundleConfig {
             stabby_lambda_parentheses: stabby_lambda_parentheses::Config {
                 style: nums[85] as u8,
             },
-            // toucher-batch-1: nums[127] is the next free core index; ExtraSpacing
-            // takes its own next-free index on its branch (a merge reconciles).
+            // toucher-batch-1: nums[127] is its core index; ExtraSpacing (#55)
+            // packs its own nums at 128-130 right after it.
             space_around_equals_in_parameter_default:
                 space_around_equals_in_parameter_default::Config {
                     style: nums[127] as u8,
                 },
-            // nums[128..=130] are RESERVED for the parallel `Layout/ExtraSpacing`
-            // PR (#55) renumber (zero-filled here, read by nobody).
+            // nums[128..=130] hold `Layout/ExtraSpacing`'s config; its Config is
+            // assembled below next to `space_around_operators` (they share the
+            // force_equal_sign_alignment flag at num 126).
             space_inside_string_interpolation:
                 space_inside_string_interpolation::Config {
                     style: nums[131] as u8,
@@ -796,6 +806,13 @@ impl BundleConfig {
                 redundant_kwrest: next_list(),
                 redundant_block: next_list(),
             },
+            extra_spacing: extra_spacing::Config {
+                allow_for_alignment: nums[129] != 0,
+                allow_before_trailing_comments: nums[130] != 0,
+                // Shared with `space_around_operators` (num 126), a single source.
+                force_equal_sign_alignment: nums[126] != 0,
+            },
+            extra_spacing_enabled: nums[128] != 0,
             space_around_operators: space_around_operators::Config {
                 exponent_style: nums[122] as u8,
                 rational_style: nums[123] as u8,
@@ -1029,6 +1046,10 @@ pub struct BundleResult {
     /// `Layout/SpaceAroundOperators`: one record per offense (the hybrid AST +
     /// token-alignment cop). Empty when the token-cop gate is off.
     pub space_around_operators: Vec<space_around_operators::SpaceAroundOperatorsOffense>,
+    /// `Layout/ExtraSpacing`: one record per offense (the token-scan cop). Empty
+    /// when the token-cop gate is off or `Layout/ExtraSpacing` is disabled. The
+    /// `ignored_range?` filter is applied by the Ruby wrapper, not here.
+    pub extra_spacing: Vec<extra_spacing::ExtraSpacingOffense>,
     /// shirobai-performance plugin slots. Always present in the wire format;
     /// empty when `BundleConfig::performance` is `None` (plugin not loaded).
     pub perf_detect: Vec<perf_detect::PerfDetectOffense>,
@@ -1134,9 +1155,9 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // and every later `with_parsed` on this file (the shared `dispatch::run`
     // below, the walk-outer cops, the hybrid cop's own `run_walk`) reuses it
     // with no re-parse. The gate keeps this off entirely when no token cop is
-    // active, so a token-free run never pays the collection pass. A future token
-    // cop ORs its enable flag into `collect_tokens`.
-    let collect_tokens = cfg.space_around_operators_enabled;
+    // active, so a token-free run never pays the collection pass. Each token cop
+    // ORs its enable flag into `collect_tokens`.
+    let collect_tokens = cfg.space_around_operators_enabled || cfg.extra_spacing_enabled;
     let bundle_tokens: Option<Vec<super::tokens::Token>> = if collect_tokens {
         Some(super::parse_cache::with_parsed_and_tokens(source, |owner, _root, raw| {
             super::tokens::translate_tokens(owner, raw)
@@ -1524,14 +1545,25 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // `with_parsed`, sharing the cached parse — the shared `dispatch::run` above
     // has already released the parse-cache borrow) collects operator offense
     // candidates, then the token-based `AllowForAlignment` filter resolves the
-    // excess-space ones against the token stream collected up front. Both are
-    // skipped when the token-cop gate is off.
+    // excess-space ones against the token stream collected up front. The
+    // per-cop enable guard matters now that the token stream can be collected
+    // for the sibling token cop alone (`Layout/ExtraSpacing`).
     let space_around_operators = match &bundle_tokens {
-        Some(tokens) => {
+        Some(tokens) if cfg.space_around_operators_enabled => {
             let walk = space_around_operators::run_walk(source, cfg.space_around_operators);
             space_around_operators::resolve(source, cfg.space_around_operators, walk, tokens)
         }
-        None => Vec::new(),
+        _ => Vec::new(),
+    };
+    // `Layout/ExtraSpacing` is a token-scan cop with an AST side input: it walks
+    // the token stream collected up front as adjacent pairs, and its own
+    // `with_parsed` (`collect_def_equals`, sharing the cached parse) supplies the
+    // `remove_equals_in_def` positions the alignment / assignment logic needs.
+    let extra_spacing = match &bundle_tokens {
+        Some(tokens) if cfg.extra_spacing_enabled => {
+            extra_spacing::check_with_tokens(source, cfg.extra_spacing, tokens)
+        }
+        _ => Vec::new(),
     };
     let first_argument_indentation = fa_rule.map(|r| r.offenses).unwrap_or_default();
     let perf_detect = pd_rule.map(|r| r.offenses).unwrap_or_default();
@@ -1776,6 +1808,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         frozen_string_literal_comment,
         arguments_forwarding,
         space_around_operators,
+        extra_spacing,
         perf_detect,
         perf_string_include,
         perf_end_with,
@@ -1907,7 +1940,7 @@ mod tests {
             34, 1, 1, 0, // arguments_forwarding: target_ruby / allow_only_rest / use_anon / explicit_block
             1, 0, 0, 1, 0, 0, // space_around_operators: enabled / exponent / rational / allow_for_alignment(true) / hash_table / force_equal
             0, // space_around_equals_in_parameter_default: style (space) — index 127
-            0, 0, 0, // 128-130 RESERVED for Layout/ExtraSpacing PR (#55)
+            1, 1, 0, // extra_spacing: enabled(128) / allow_for_alignment(129, true) / allow_before_trailing_comments(130, false)
             0, // space_inside_string_interpolation: style (no_space) — index 131
             2, // ascii_identifiers: enabled + AsciiConstants on (default) — index 132
         ];
@@ -4655,6 +4688,41 @@ mod tests {
         let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
         let bundle = check_all_bundle(src.as_bytes(), &cfg);
         assert!(bundle.space_around_operators.is_empty());
+    }
+
+    /// `Layout/ExtraSpacing` (the token-scan cop in the walk-outer phase) must
+    /// report through the bundle exactly what its standalone entry reports. The
+    /// source exercises a same-line extra gap, an aligned pair (AllowForAlignment
+    /// keeps it silent), and a trailing-comment gap. Both paths translate the same
+    /// pm_lex token stream and collect the same `def_equals`, so this pins the
+    /// token-cop wiring (the shared gate, the up-front collection,
+    /// `check_with_tokens`) to the fallback.
+    #[test]
+    fn check_all_bundle_matches_standalone_extra_spacing() {
+        let src = "x =  1\na   = 1\nbbb = 2\ny = 3  # c\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone = extra_spacing::check_extra_spacing(src.as_bytes(), cfg.extra_spacing);
+        assert!(!alone.is_empty());
+        assert_eq!(bundle.extra_spacing.len(), alone.len());
+        for (a, b) in bundle.extra_spacing.iter().zip(&alone) {
+            assert_eq!(a, b);
+        }
+    }
+
+    /// With `Layout/ExtraSpacing` disabled its slot is empty even on a source that
+    /// would fire it, and — when it is the sole token cop — the token stream is
+    /// not collected at all.
+    #[test]
+    fn check_all_bundle_skips_extra_spacing_when_gate_off() {
+        let src = "x =  1\n";
+        let (mut nums, lists) = default_packed();
+        // core-origin num 128 is the extra_spacing enable gate.
+        nums[0][128] = 0;
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        assert!(bundle.extra_spacing.is_empty());
     }
 
     #[test]

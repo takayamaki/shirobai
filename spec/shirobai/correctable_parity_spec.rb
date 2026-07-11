@@ -686,6 +686,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Layout::SpaceAroundOperators,
       "x=1+2\n"
     ],
+    # A same-line extra gap: the offense carries a `remove` corrector
+    # (correctable). Guards that the wrapper attaches the corrector block in lint
+    # mode like stock (the `ignored_range?` filter must not run away with it).
+    "Layout/ExtraSpacing" => [
+      RuboCop::Cop::Layout::ExtraSpacing,
+      Shirobai::Cop::Layout::ExtraSpacing,
+      "x =  1\n"
+    ],
     # A leading kebab magic comment (default EnforcedStyle snake_case): the
     # directive offense carries a `replace` corrector (correctable). The wrapper
     # runs stock's `fix_directives` verbatim, so the corrector is attached in
