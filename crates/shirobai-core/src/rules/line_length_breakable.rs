@@ -1039,6 +1039,17 @@ impl<'pr> BreakableVisitor<'_> {
     }
 
     fn already_on_multiple_lines(&self, node: &Node<'pr>, is_def: bool) -> bool {
+        if let Some(call) = node.as_call_node() {
+            // Stock asks `multiline?` on the parser-gem SEND node, which stops
+            // before an attached block; prism's `CallNode` spans through the
+            // block's `end`. Measure the send part only, so a single-line call
+            // that carries a multi-line block stays breakable.
+            let (first_line, _) = node_lines(self.line_index, node);
+            let send_last_line = self
+                .line_index
+                .line_of(super::send_range::send_node_end_offset(&call));
+            return first_line != send_last_line;
+        }
         if is_def {
             let def = node.as_def_node().unwrap();
             let (first_line, _) = node_lines(self.line_index, node);
