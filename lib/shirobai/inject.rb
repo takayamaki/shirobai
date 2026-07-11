@@ -21,6 +21,56 @@ module Shirobai
         end
       end
     end
+
+    # `Team#each_corrector` skips a cop's corrector for the round when an
+    # earlier-merged cop's `autocorrect_incompatible_with` includes the cop's
+    # CLASS. Badge replacement breaks that identity check in both directions:
+    # a wrapper copying stock's list still names the dismissed stock class,
+    # and a stock cop that stays stock (Style/SymbolProc) names a class whose
+    # registry slot a wrapper took over. Either way `skips.include?(cop.class)`
+    # misses, the skip never fires, and the `-a` round applies corrections
+    # stock would have dropped — the corrected trees then drift (fluentd
+    # types.rb / log.rb: SpaceInsideBlockBraces lists BlockDelimiters).
+    #
+    # Rewrite every active cop's list through the stock-to-shirobai map:
+    # wrappers get stock's list (the drop-in truth) translated, and remaining
+    # stock cops get their own list translated. Runs once, after all wrapper
+    # classes are defined (each auto-enlists via `Base.inherited`).
+    def self.align_autocorrect_incompatibilities!
+      registry = RuboCop::Cop::Registry.global
+      replacements = {}
+      registry.cops.each do |cop|
+        next unless cop.name&.start_with?("Shirobai::")
+
+        stock = stock_counterpart(cop)
+        replacements[stock] = cop if stock
+      end
+
+      replacements.each do |stock, wrapper|
+        list = stock.autocorrect_incompatible_with
+                    .map { |klass| replacements.fetch(klass, klass) }.freeze
+        wrapper.define_singleton_method(:autocorrect_incompatible_with) { list }
+      end
+      registry.cops.each do |cop|
+        next if replacements.value?(cop)
+
+        list = cop.autocorrect_incompatible_with
+        mapped = list.map { |klass| replacements.fetch(klass, klass) }
+        next if mapped == list
+
+        mapped.freeze
+        cop.define_singleton_method(:autocorrect_incompatible_with) { mapped }
+      end
+    end
+
+    # The stock class whose badge `klass` took over, or nil when the stock
+    # constant does not exist (a shirobai-only cop).
+    def self.stock_counterpart(klass)
+      department, name = klass.cop_name.split("/")
+      RuboCop::Cop.const_get(department, false).const_get(name, false)
+    rescue NameError
+      nil
+    end
   end
 end
 
@@ -134,3 +184,5 @@ require_relative "cop/style/stabby_lambda_parentheses"
 require_relative "cop/style/if_unless_modifier"
 require_relative "cop/style/semicolon"
 require_relative "cop/style/arguments_forwarding"
+
+Shirobai::Inject.align_autocorrect_incompatibilities!

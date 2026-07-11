@@ -234,26 +234,13 @@ RSpec.describe Shirobai::Cop::Layout::LineLength do
           ":cccccccccccccccccccccc => 1, :dddddddddddddddddddddd => 'pad_pad_pad_pad_pad'\n"
     expect(src.chomp.length).to be > 120 # the fixture must be a LineLength candidate
     stock = one_team_round(
-      [RuboCop::Cop::Layout::LineLength, RuboCop::Cop::Style::HashSyntax], src
+      [RuboCop::Cop::Layout::LineLength, RuboCop::Cop::Style::HashSyntax], src, default_config
     )
     shirobai = one_team_round(
-      [Shirobai::Cop::Layout::LineLength, Shirobai::Cop::Style::HashSyntax], src
+      [Shirobai::Cop::Layout::LineLength, Shirobai::Cop::Style::HashSyntax], src, default_config
     )
     expect(stock).to include("cccccccccccccccccccccc: 1") # HashSyntax survived
     expect(shirobai).to eq(stock)
-  end
-
-  # One CLI-like correction round: a fresh team of `cop_classes`, autocorrect
-  # on, single investigate. Returns the rewritten source (via the stdin path).
-  def one_team_round(cop_classes, source, config = default_config)
-    options = { autocorrect: true, stdin: source.dup, raise_error: true }
-    cops = cop_classes.map { |klass| klass.new(config, options) }
-    team = RuboCop::Cop::Team.new(cops, config, options)
-    processed = RuboCop::ProcessedSource.new(source, RuboCop::TargetRuby::DEFAULT_VERSION)
-    processed.config = config
-    processed.registry = RuboCop::Cop::Registry.global
-    team.investigate(processed)
-    options[:stdin]
   end
 
   def trailing_space
