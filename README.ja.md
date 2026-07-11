@@ -34,7 +34,7 @@ shirobaiは日本語話者なら当然わかるでしょう、白バイです。
 
 ## 現状
 
-- **93 cop** を Rust 実装済み（Lint / Layout / Metrics / Naming / Style）。
+- **106 cop** を Rust 実装済み（Lint / Layout / Metrics / Naming / Style）。
 - **プラグイン cop gem**（共有 native extension 経由でさらに 37 cop、
   cargo build の追加なし）: `gems/shirobai-rspec` が rubocop-rspec の 21 cop を、
   `gems/shirobai-rails` が rubocop-rails の 11 cop を、
@@ -50,26 +50,26 @@ shirobaiは日本語話者なら当然わかるでしょう、白バイです。
 
   | コーパス | files | offenses | stock | shirobai (core のみ) | + plugin gem |
   |---|---|---|---|---|---|
-  | Mastodon | 3,206 | 0 | 110.19s | 80.08s (-27.3%) | 67.83s (**-38.4%**) |
-  | Discourse | 10,229 | 16 | 232.81s | 181.20s (-22.2%) | 170.35s (**-26.8%**) |
-  | Redmine | 1,058 | 2 | 55.14s | 39.18s (-28.9%) | 39.07s (**-29.1%**) |
-  | fluentd | 456 | 0 | 7.00s | 7.25s (+3.6%) | 7.96s (+13.8%) |
+  | Mastodon | 3,206 | 0 | 110.98s | 80.18s (-27.8%) | 66.96s (**-39.7%**) |
+  | Discourse | 10,229 | 16 | 242.62s | 198.42s (-18.2%) | 186.99s (**-22.9%**) |
+  | Redmine | 1,058 | 2 | 54.87s | 36.95s (-32.7%) | 36.10s (**-34.2%**) |
+  | fluentd | 456 | 0 | 8.06s | 8.10s (+0.5%) | 9.19s (+14.0%) |
 
   「shirobai (core のみ)」列は core gem 単体、「+ plugin gem」列はその上に
   shirobai-rspec / shirobai-rails / shirobai-performance を足した値
   （各 shell は、対象コーパスの config が該当 stock plugin を実際に load する
   ときだけ require する。実ユーザーと同じ入れ方）。
   計測環境: GitHub Actions `ubuntu-latest`（4-vCPU 共有 runner）、
-  shirobai は [`1e5a54c`](https://github.com/takayamaki/shirobai/commit/1e5a54c) 時点。
+  shirobai は [`1c489ad`](https://github.com/takayamaki/shirobai/commit/1c489ad) 時点。
   各実行はまず stock と shirobai が **同じ offense 集合** を報告することを検証してから、
   同じコードを lint する中央値時間を測る。
   任意のコミットで再実行するには `gh workflow run bench.yml`
   （`.github/workflows/bench.yml`）。
 
   plugin cop に時間を使うプロジェクトは、core gem 単体では届かない分を
-  plugin gem で取り返せる（plugin 依存の大きい Discourse は core -22.2% →
-  plugin gem 込み -26.8%。spec の重い Mastodon は shirobai-rspec/-rails で
-  11 ポイント上乗せ）。
+  plugin gem で取り返せる（plugin 依存の大きい Discourse は core -18.2% →
+  plugin gem 込み -22.9%。spec の重い Mastodon は shirobai-rspec/-rails で
+  12 ポイント上乗せ）。
   fluentd は正直な注意書きで、config がほとんどの default cop を無効化して
   いるため置き換え対象が少なく、native extension の固定ロードコストが削減分を
   わずかに上回る。plugin shell はそこに固定費を足すだけになる。
