@@ -194,6 +194,41 @@ RSpec.describe Shirobai::Cop::Layout::LineLength do
     expect(expect_autocorrect_parity(*klasses, src, max40_config)).to eq(src)
   end
 
+  it "spans the whole breakable element so same-round edits inside it survive the merge" do
+    # `Team#autocorrect` merges every cop's corrector into one TreeRewriter.
+    # Stock's breakable insertion is recorded against the chosen element
+    # node's FULL source range, so another cop's edit inside the element
+    # (here Style/HashSyntax rewriting the rocket) nests as a compatible
+    # child. A 1-byte insertion range instead sits inside the HashSyntax
+    # replacement and raises ClobberingError, dropping the whole HashSyntax
+    # corrector for the round — the `-a` trees then drift (redmine
+    # watchers_controller GuardClause/IfUnlessModifier flip).
+    src = "foo :aaaaaaaaaaaaaaaaaaaaaa, :bbbbbbbbbbbbbbbbbbbbbb, " \
+          ":cccccccccccccccccccccc => 1, :dddddddddddddddddddddd => 'pad_pad_pad_pad_pad'\n"
+    expect(src.chomp.length).to be > 120 # the fixture must be a LineLength candidate
+    stock = one_team_round(
+      [RuboCop::Cop::Layout::LineLength, RuboCop::Cop::Style::HashSyntax], src
+    )
+    shirobai = one_team_round(
+      [Shirobai::Cop::Layout::LineLength, Shirobai::Cop::Style::HashSyntax], src
+    )
+    expect(stock).to include("cccccccccccccccccccccc: 1") # HashSyntax survived
+    expect(shirobai).to eq(stock)
+  end
+
+  # One CLI-like correction round: a fresh team of `cop_classes`, autocorrect
+  # on, single investigate. Returns the rewritten source (via the stdin path).
+  def one_team_round(cop_classes, source, config = default_config)
+    options = { autocorrect: true, stdin: source.dup, raise_error: true }
+    cops = cop_classes.map { |klass| klass.new(config, options) }
+    team = RuboCop::Cop::Team.new(cops, config, options)
+    processed = RuboCop::ProcessedSource.new(source, RuboCop::TargetRuby::DEFAULT_VERSION)
+    processed.config = config
+    processed.registry = RuboCop::Cop::Registry.global
+    team.investigate(processed)
+    options[:stdin]
+  end
+
   def trailing_space
     " "
   end

@@ -82,19 +82,27 @@ module Shirobai
           @uri_regexp ||= self.class.uri_regexp_for(cop_config)
         end
 
-        # Install the per-line autocorrection data (insertion byte offset and,
+        # Install the per-line autocorrection data (breakable byte range and,
         # for `SplitStrings`, the string delimiter). Mirrors upstream's
         # `breakable_range_by_line_index` / `breakable_string_delimiters`.
+        #
+        # The range WIDTH must match stock: node claims span the chosen
+        # element node's full `source_range` (stock stores
+        # `breakable_node.source_range`), the rest are 1-byte ranges. The
+        # inserted text is the same either way, but `Team#autocorrect` merges
+        # every cop's corrector into one `TreeRewriter`, and whether another
+        # cop's edit lands INSIDE the insertion's range (compatible child) or
+        # CONTAINS it (clobbering) decides which cop survives the round — a
+        # 1-byte range flips those merge outcomes and the `-a` trees drift.
         def install_breakables(breakables)
           buffer = processed_source.buffer
           off = SourceOffsets.for(processed_source.raw_source)
           @breakable_range_by_line_index = {}
           @breakable_string_delimiters = {}
           breakables.each do |entry|
-            line_index, insert_offset, delimiter = entry
-            insert = off[insert_offset]
+            line_index, insert_offset, end_offset, delimiter = entry
             @breakable_range_by_line_index[line_index] =
-              Parser::Source::Range.new(buffer, insert, insert + 1)
+              Parser::Source::Range.new(buffer, off[insert_offset], off[end_offset])
             @breakable_string_delimiters[line_index] = delimiter unless delimiter.empty?
           end
         end

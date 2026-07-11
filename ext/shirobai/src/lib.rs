@@ -272,9 +272,9 @@ fn map_line_length(
 
 fn map_line_length_breakables(
     v: Vec<shirobai_core::rules::line_length_breakable::Breakable>,
-) -> Vec<(usize, usize, String)> {
+) -> Vec<(usize, usize, usize, String)> {
     v.into_iter()
-        .map(|b| (b.line_index, b.insert_offset, b.delimiter))
+        .map(|b| (b.line_index, b.insert_offset, b.end_offset, b.delimiter))
         .collect()
 }
 
@@ -2606,8 +2606,10 @@ fn check_line_length(
 
 /// Ruby entry point for `Layout/LineLength` auto-correction. Returns one entry
 /// per source line that can be broken: `[[line_index, insert_offset,
-/// delimiter], ...]`. `insert_offset` is the byte offset before which a break is
-/// inserted; `delimiter` is empty for an ordinary newline break or the string
+/// end_offset, delimiter], ...]`. `insert_offset` / `end_offset` bound the
+/// stock breakable RANGE (the chosen element node's full range for node
+/// claims; a 1-byte range otherwise) and the break is inserted before it;
+/// `delimiter` is empty for an ordinary newline break or the string
 /// quote for a `SplitStrings` continuation. `candidate_lines` is the set of
 /// 0-based line indexes that exceed `Max` (the `LineLength` candidates); only
 /// those lines' breakables are computed, since a non-candidate line can never
@@ -2617,7 +2619,7 @@ fn check_line_length_breakables(
     max: usize,
     split_strings: bool,
     candidate_lines: Vec<usize>,
-) -> Vec<(usize, usize, String)> {
+) -> Vec<(usize, usize, usize, String)> {
     let candidates: std::collections::HashSet<usize> = candidate_lines.into_iter().collect();
     map_line_length_breakables(
         shirobai_core::rules::line_length_breakable::compute_breakables_filtered(
