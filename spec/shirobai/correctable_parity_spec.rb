@@ -87,6 +87,21 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Layout::IndentationConsistency,
       "describe A do\n  render_views\n    describe B do\n        it C do\n      end\n    end\nend\n"
     ],
+    # Nested over-indentation (a block body holding a mis-indented `case`,
+    # whose branches are mis-indented again). Unlike the Alignment mixin,
+    # `IndentationWidth` gates its `other_offense_in_same_range?` suppression on
+    # `autocorrect?`, so in LINT mode stock never nils the corrected node and
+    # EVERY offense stays correctable — including the three nested ones the Rust
+    # side flags `autocorrect: false`. A wrapper that skipped the correction on
+    # that flag in lint mode would flip those three to `:unsupported` while
+    # keeping the count identical (the exact hidden divergence this file
+    # guards). All four statuses must match stock.
+    "Layout/IndentationWidth" => [
+      RuboCop::Cop::Layout::IndentationWidth,
+      Shirobai::Cop::Layout::IndentationWidth,
+      "def m\n    x.collect do |r|\n        case r\n        when 1\n" \
+      "            a\n        else\n            b\n        end\n    end\nend\n"
+    ],
     "Style/HashEachMethods" => [
       RuboCop::Cop::Style::HashEachMethods,
       Shirobai::Cop::Style::HashEachMethods,

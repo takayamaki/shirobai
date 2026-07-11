@@ -50,17 +50,17 @@ module Shirobai
           off = SourceOffsets.for(processed_source.raw_source)
           offenses.each do |start, fin, column_delta, autocorrect|
             range = Parser::Source::Range.new(buffer, off[start], off[fin])
-            # Split on the per-offense correctability flag (the mixin's
-            # `within?` rule maps to `autocorrect: false`), exactly like
-            # argument_alignment: the block must run for correctable offenses
-            # even in lint mode so a non-empty corrector marks the offense
-            # `:uncorrected` (correctable) to match stock.
-            unless autocorrect
-              add_offense(range, message: message)
-              next
-            end
-
+            # Always pass a block so the offense is correctable, matching stock:
+            # the Alignment mixin's `register_offense` always hands `add_offense`
+            # a block, even for the `within?` case (`autocorrect: false`) where it
+            # passes a nil node and the corrector ends up empty. A blockless
+            # `add_offense` would instead mark the offense uncorrectable. When
+            # `autocorrect` is false the block returns early, leaving an empty
+            # (no-op) corrector, so the offense stays correctable but is not
+            # rewritten this pass.
             add_offense(range, message: message) do |corrector|
+              next unless autocorrect
+
               # Stock passes the element NODE, whose string/heredoc interiors
               # `AlignmentCorrector` marks taboo. A bare range would realign
               # heredoc bodies inside the element.

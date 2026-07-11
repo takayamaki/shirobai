@@ -54,15 +54,16 @@ module Shirobai
           off = SourceOffsets.for(processed_source.raw_source)
           offenses.each do |start, fin, column_delta, message, autocorrect, cs, ce|
             range = Parser::Source::Range.new(buffer, off[start], off[fin])
-            # Key the split on the per-offense flag, not `autocorrect?` mode: the
-            # block runs in lint mode too and the non-empty corrector is what
-            # keeps the offense correctable to match stock (see argument_alignment).
-            unless autocorrect
-              add_offense(range, message: message)
-              next
-            end
-
+            # Always pass a block so the offense is correctable, matching stock:
+            # the Alignment mixin's `register_offense` always hands `add_offense`
+            # a block, even for the `within?` case (`autocorrect: false`). A
+            # blockless `add_offense` would mark the offense uncorrectable. When
+            # `autocorrect` is false the block returns early, leaving an empty
+            # (no-op) corrector, so the offense stays correctable but is not
+            # rewritten this pass (see argument_alignment).
             add_offense(range, message: message) do |corrector|
+              next unless autocorrect
+
               correct_range = Parser::Source::Range.new(buffer, off[cs], off[ce])
               RuboCop::Cop::AlignmentCorrector.correct(
                 corrector, processed_source, correct_range, column_delta
