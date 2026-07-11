@@ -448,6 +448,13 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Style::StabbyLambdaParentheses,
       "->a,b,c { a + b + c }\n"
     ],
+    # `=`-replace corrector (default EnforcedStyle: space); the offense must
+    # stay correctable in lint mode.
+    "Layout/SpaceAroundEqualsInParameterDefault" => [
+      RuboCop::Cop::Layout::SpaceAroundEqualsInParameterDefault,
+      Shirobai::Cop::Layout::SpaceAroundEqualsInParameterDefault,
+      "def f(x, y=0); end\n"
+    ],
     # `each_with_object({}) {|(k,v),h| h[transform(k)] = v}`: stock builds a
     # multi-step corrector block (selector / args / body rewrites + the
     # `Hash[..]` strip in the brackets shape). In lint mode the offense must
@@ -497,6 +504,12 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Layout::LeadingEmptyLines,
       Shirobai::Cop::Layout::LeadingEmptyLines,
       "\nclass Foo\nend\n"
+    ],
+    # Leading-space removal corrector; the offense must stay correctable.
+    "Layout/InitialIndentation" => [
+      RuboCop::Cop::Layout::InitialIndentation,
+      Shirobai::Cop::Layout::InitialIndentation,
+      "  def f\n  end\n"
     ],
     # Both directions are correctable in lint mode; the same-line-modifier
     # correction skip must leave an EMPTY corrector (`:unsupported`), exactly
@@ -586,6 +599,12 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       RuboCop::Cop::Lint::DuplicateMagicComment,
       Shirobai::Cop::Lint::DuplicateMagicComment,
       "# encoding: utf-8\n# encoding: ascii\nx = 1\n"
+    ],
+    # Line-swap corrector; the offense must stay correctable on both sides.
+    "Lint/OrderedMagicComments" => [
+      RuboCop::Cop::Lint::OrderedMagicComments,
+      Shirobai::Cop::Lint::OrderedMagicComments,
+      "# frozen_string_literal: true\n# encoding: ascii\nx = 1\n"
     ],
     # No autocorrect at all: the offense must stay non-correctable
     # (:unsupported) on both sides.

@@ -688,6 +688,150 @@ fn simple_fsl_value(line: &[u8]) -> Option<FslValue> {
     Some(fsl_value_of(value))
 }
 
+/// Which `Lint/OrderedMagicComments` bucket a leading line falls into. Stock's
+/// `magic_comment_lines` scan uses `MagicComment.parse(line)` and an
+/// `if encoding_specified? / elsif valid?` split:
+///
+/// - [`OrderedBucket::Encoding`] — `encoding_specified?` (the `if` arm; no
+///   `#`-prefix requirement, since `encoding` extraction allows leading space).
+/// - [`OrderedBucket::OtherValid`] — reached only in the `elsif`, so encoding
+///   is already false: `valid?` = `@comment.start_with?('#')` (no leading
+///   space) AND `any?` = one of the remaining magic kinds is specified
+///   (`frozen_string_literal`, `shareable_constant_value`, `rbs_inline`,
+///   `typed`). `rbs_inline` is special: it counts only when the value is
+///   exactly `enabled`/`disabled` (`rbs_inline_specified?` ==
+///   `valid_rbs_inline_value?`).
+/// - [`OrderedBucket::None`] — neither.
+///
+/// The format dispatch mirrors `MagicComment.parse` (Emacs, else Vim, else
+/// Simple); each format only exposes the magic kinds it can carry (Vim can
+/// only carry `fileencoding`; Emacs cannot carry `rbs_inline`/`typed`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum OrderedBucket {
+    Encoding,
+    OtherValid,
+    None,
+}
+
+pub(crate) fn ordered_bucket(line: &[u8]) -> OrderedBucket {
+    // `@comment.start_with?('#')` — the raw line, no leading space allowed.
+    let hash_prefixed = line.first() == Some(&b'#');
+
+    if let Some(token) = emacs_token(line) {
+        // EmacsComment: `;`-separated tokens, each stripped. `encoding` and
+        // `frozen_string_literal`/`shareable_constant_value` are the only kinds
+        // Emacs can carry (`rbs_inline`/`typed` extraction is nil).
+        let mut encoding = false;
+        let mut other = false;
+        for tok in split_strip(token, b";") {
+            if editor_kv_matches(tok, &[b"encoding", b"coding"], b':') {
+                encoding = true;
+            } else if fsl_keyword_kv_matches(tok) || shareable_keyword_kv_matches(tok) {
+                other = true;
+            }
+        }
+        if encoding {
+            return OrderedBucket::Encoding;
+        }
+        if hash_prefixed && other {
+            return OrderedBucket::OtherValid;
+        }
+        return OrderedBucket::None;
+    }
+    if let Some(token) = vim_token(line) {
+        // VimComment: `", "`-separated tokens; `fileencoding` only counts with
+        // at least two tokens. No other magic kind is carried by Vim.
+        let toks = split_strip_str(token, ", ");
+        if toks.len() > 1
+            && toks
+                .iter()
+                .any(|t| editor_kv_matches(t, &[b"fileencoding"], b'='))
+        {
+            return OrderedBucket::Encoding;
+        }
+        return OrderedBucket::None;
+    }
+    if simple_encoding(line) {
+        return OrderedBucket::Encoding;
+    }
+    if hash_prefixed
+        && (simple_fsl(line)
+            || simple_shareable_specified(line)
+            || simple_rbs_inline_specified(line)
+            || simple_typed_specified(line))
+    {
+        return OrderedBucket::OtherValid;
+    }
+    OrderedBucket::None
+}
+
+/// Emacs editor token match for `\Ashareable[_-]constant[_-]value\s*:\s*TOKEN\z`
+/// (case-SENSITIVE keyword, like `EditorComment#match`).
+fn shareable_keyword_kv_matches(tok: &[u8]) -> bool {
+    match shareable_keyword_len(tok, false) {
+        Some(klen) => editor_kv_matches(&tok[klen..], &[b""], b':'),
+        None => false,
+    }
+}
+
+/// Length of `shareable[_-]constant[_-]value` at the start of `s`, or None.
+fn shareable_keyword_len(s: &[u8], ci: bool) -> Option<usize> {
+    let mut p = eat(s, 0, b"shareable", ci)?;
+    p = eat_one_of(s, p, b"_-")?;
+    p = eat(s, p, b"constant", ci)?;
+    p = eat_one_of(s, p, b"_-")?;
+    p = eat(s, p, b"value", ci)?;
+    Some(p)
+}
+
+/// SimpleComment anchored token match `\A\s*#\s*<keyword>:\s*TOKEN\s*\z` (/i),
+/// returning the captured TOKEN. `kw_len` matches the keyword at a slice start.
+fn simple_anchored_token(
+    line: &[u8],
+    kw_len: impl Fn(&[u8]) -> Option<usize>,
+) -> Option<&[u8]> {
+    let mut p = skip_space(line, 0);
+    if line.get(p) != Some(&b'#') {
+        return None;
+    }
+    p = skip_space(line, p + 1);
+    let klen = kw_len(&line[p..])?;
+    p += klen;
+    if line.get(p) != Some(&b':') {
+        return None;
+    }
+    p = skip_space(line, p + 1);
+    let tlen = token_len(&line[p..]);
+    if tlen == 0 {
+        return None;
+    }
+    let tok = &line[p..p + tlen];
+    p = skip_space(line, p + tlen);
+    if p != line.len() {
+        return None;
+    }
+    Some(tok)
+}
+
+/// `shareable_constant_value_specified?` for a SimpleComment line (any TOKEN).
+fn simple_shareable_specified(line: &[u8]) -> bool {
+    simple_anchored_token(line, |s| shareable_keyword_len(s, true)).is_some()
+}
+
+/// `typed_specified?` for a SimpleComment line (any TOKEN).
+fn simple_typed_specified(line: &[u8]) -> bool {
+    simple_anchored_token(line, |s| eat(s, 0, b"typed", true)).is_some()
+}
+
+/// `rbs_inline_specified?` for a SimpleComment line: the value must be exactly
+/// `enabled` or `disabled` (`valid_rbs_inline_value?`), not merely present.
+fn simple_rbs_inline_specified(line: &[u8]) -> bool {
+    match simple_anchored_token(line, |s| eat(s, 0, b"rbs_inline", true)) {
+        Some(tok) => tok.eq_ignore_ascii_case(b"enabled") || tok.eq_ignore_ascii_case(b"disabled"),
+        None => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
