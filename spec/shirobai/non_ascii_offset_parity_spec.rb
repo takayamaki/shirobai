@@ -503,6 +503,28 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     end
   end
 
+  # `Layout/LineContinuationSpacing` is `Enabled: pending`, so the Team-based
+  # runs would drop it under the default config (vacuously green); force-enable
+  # it. The wrapper builds the offense/autocorrect ranges from stock's own
+  # `source_range` (no Rust byte offsets), but the multibyte leading comment
+  # still guards the line accounting after a non-ASCII prefix.
+  describe "Layout/LineContinuationSpacing (pending cop, force-enabled)" do
+    it "matches stock offenses and autocorrect output after a multibyte comment" do
+      enabled_config = RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new(
+          { "Layout/LineContinuationSpacing" => { "Enabled" => true } }, "(test)"
+        ),
+        "(test)"
+      )
+      offenses = expect_parity(
+        "Layout/LineContinuationSpacing",
+        "#{prefix}x = 'あ'  \\\n'b'\n",
+        enabled_config
+      )
+      expect(offenses).not_to be_empty, "fixture produced no stock offense; fix the source"
+    end
+  end
+
   # `Lint/DuplicateMagicComment` is `Enabled: pending`, so the Team-based
   # runs above would drop it on BOTH sides under the default config
   # (vacuously green); force-enable it. The wrapper passes line numbers

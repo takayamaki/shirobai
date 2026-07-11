@@ -2012,6 +2012,9 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         // toucher-batch-2 core slot 98: `Layout/EndOfLine` (stock's `last_line`
         // as a plain Integer).
         ary.push(r.end_of_line)?;
+        // toucher-batch-2 core slot 99: `Layout/LineContinuationSpacing`
+        // (stock's `last_line`, same value as slot 98).
+        ary.push(r.line_continuation_spacing)?;
         // Performance origin (result[1]).
         let perf = ruby.ary_new_capa(5);
         perf.push(map_perf_detect(r.perf_detect))?;

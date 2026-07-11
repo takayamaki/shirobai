@@ -953,6 +953,11 @@ pub struct BundleResult {
     /// line scan). The wrapper runs stock's own `on_new_investigation` body
     /// with this value injected, so detection is stock's code by construction.
     pub end_of_line: usize,
+    /// `Layout/LineContinuationSpacing`: stock's `last_line`, defined IDENTICALLY
+    /// to `Layout/EndOfLine`'s (both bound their line scan by
+    /// `tokens.last.line`). Shares `end_of_line::check_end_of_line`; the wrapper
+    /// runs stock's own scan body with this value injected.
+    pub line_continuation_spacing: usize,
     pub space_inside_hash_literal_braces:
         Vec<space_inside_hash_literal_braces::SpaceInsideHashLiteralBracesOffense>,
     pub space_inside_array_literal_brackets:
@@ -1568,6 +1573,9 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // `Layout/EndOfLine`: stock's `last_line` (end line of the last top-level
     // statement) from the cached parse, so the wrapper avoids `tokens.last`.
     let end_of_line = end_of_line::check_end_of_line(source);
+    // `Layout/LineContinuationSpacing`: same `last_line` definition as
+    // `Layout/EndOfLine`, so it reuses the single computation.
+    let line_continuation_spacing = end_of_line;
     // `Lint/DuplicateMagicComment` is a leading-line scan (comments + the
     // first non-comment token position from the cached parse), no AST walk.
     let duplicate_magic_comment =
@@ -1688,6 +1696,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         leading_empty_lines,
         initial_indentation,
         end_of_line,
+        line_continuation_spacing,
         space_inside_hash_literal_braces,
         space_inside_array_literal_brackets,
         space_before_block_braces,
@@ -4383,6 +4392,18 @@ mod tests {
         let bundle = check_all_bundle(src.as_bytes(), &cfg);
         let alone = super::end_of_line::check_end_of_line(src.as_bytes());
         assert_eq!(bundle.end_of_line, alone);
+        assert_eq!(alone, 3);
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_line_continuation_spacing() {
+        // Shares `Layout/EndOfLine`'s `last_line` computation.
+        let src = "'a' \\\n'b'\nc = 3\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone = super::end_of_line::check_end_of_line(src.as_bytes());
+        assert_eq!(bundle.line_continuation_spacing, alone);
         assert_eq!(alone, 3);
     }
 

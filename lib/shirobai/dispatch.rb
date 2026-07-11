@@ -133,6 +133,7 @@ module Shirobai
       # toucher-batch-2 therefore starts at slot 98. The Rust side pushes an
       # empty placeholder at 97 (see `ext/shirobai/src/lib.rs`).
       end_of_line: [0, 98].freeze,
+      line_continuation_spacing: [0, 99].freeze,
       # shirobai-performance plugin slots (origin 1). Always present in the
       # wire format; the Rust side leaves them empty unless the plugin gem
       # registered its packed segment (`Dispatch.register_plugin_packer`).

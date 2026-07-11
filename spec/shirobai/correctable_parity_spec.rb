@@ -518,6 +518,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Layout::EndOfLine,
       "x = 1\r\ny = 2\n"
     ],
+    # `Layout/LineContinuationSpacing` (space style) has a backslash-spacing
+    # corrector; the offense must stay correctable in lint mode. (Enabled is
+    # `pending`, but the bare Commissioner here runs the cop regardless.)
+    "Layout/LineContinuationSpacing" => [
+      RuboCop::Cop::Layout::LineContinuationSpacing,
+      Shirobai::Cop::Layout::LineContinuationSpacing,
+      "'a'  \\\n'b'\n"
+    ],
     # Both directions are correctable in lint mode; the same-line-modifier
     # correction skip must leave an EMPTY corrector (`:unsupported`), exactly
     # like stock's `another_modifier_if_on_same_line?` guard.
