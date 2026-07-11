@@ -4,14 +4,14 @@ This document tracks which RuboCop cops shirobai has reimplemented in Rust,
 and which cops were attempted but reverted because they did not meet the
 project's drop-in compatibility and speed requirements together.
 
-## Implemented (105 cops)
+## Implemented (106 cops)
 
 shirobai replaces these cops with Rust implementations.
 Every offense position, message, and autocorrected byte matches stock RuboCop
 on all five verification corpora (Mastodon, Discourse, Redmine, fluentd,
 and RuboCop itself).
 
-### Layout (56)
+### Layout (57)
 
 - `Layout/AccessModifierIndentation`
 - `Layout/ArgumentAlignment`
@@ -36,6 +36,7 @@ and RuboCop itself).
 - `Layout/EmptyLinesAroundModuleBody`
 - `Layout/EndAlignment`
 - `Layout/EndOfLine`
+- `Layout/ExtraSpacing`
 - `Layout/FirstArgumentIndentation`
 - `Layout/FirstArrayElementIndentation`
 - `Layout/FirstHashElementIndentation`
@@ -943,10 +944,25 @@ path), `Layout/SpaceBeforeFirstArg`.
   separate lex pass — the "lex tax" is gone. The cop's detection / autocorrect
   logic is the original token-cluster port, unchanged; only the token input
   was reconnected to `translate_tokens`. Collection is gated: the bundle only
-  builds the token stream when a token cop (currently just this one) is
-  enabled, so a run without token cops keeps the token-free parse path. Only
-  `Layout/ExtraSpacing` still iterates the whole token stream and stays
-  reverted; it re-lands next on the same pm_lex base.
+  builds the token stream when a token cop is enabled, so a run without token
+  cops keeps the token-free parse path.
+- **Re-landed later (2026-07, pm_lex PR4)**: `Layout/ExtraSpacing`, the last
+  hold-out, shipped on the same pm_lex base. It is the only cop that walks the
+  whole token stream as adjacent pairs (`tokens.each_cons(2)`), so it consumes
+  `translate_tokens` output directly (no shared dispatcher) and its enable flag
+  ORs into the same token-cop gate. The detection / autocorrect logic is the
+  original token-cluster port, unchanged — including the wrapper's reproduction
+  of stock's `@ignored_ranges` instance memoization and the
+  `ForceEqualSignAlignment` multi-pass alignment. Its `ForceEqualSignAlignment`
+  config is the single wire num that `SpaceAroundOperators` already reads (its
+  autocorrect-collision guard), so the two cops share one source. Landing it
+  surfaced one token-translation gap the SAO port did not exercise: parser-gem
+  emits a non-interpolated string literal as a single `tSTRING`, but the pm_lex
+  translation left prism's `STRING_BEGIN` / `STRING_CONTENT` / `STRING_END`
+  split, so a bare opening `"` spuriously aligned (via `aligned_words?`) with a
+  `"` one line away and hid an offense (redmine `reposman.rb`). `rules::tokens`
+  now merges plain strings back into one token, matching whitequark — the same
+  class of fix the SAO AssocNode divergence needed in PR3.
 
 ### `Style/RedundantBegin`
 

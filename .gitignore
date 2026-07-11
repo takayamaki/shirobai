@@ -10,3 +10,4 @@
 *.o
 *.a
 Gemfile*.lock
+/.claude/worktrees/
