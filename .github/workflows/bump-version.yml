@@ -35,13 +35,16 @@ jobs:
       # rejects leading zeros in numeric segments, and Gem::Version already
       # normalizes to the same integers (gem 2026.0709.0000 == crate
       # 2026.709.0). 10# forces base-10 so "0709" is not read as octal.
+      # `cargo update --workspace` touches only the workspace members in
+      # Cargo.lock; it needs the network for the registry index, so no
+      # --offline (a fresh runner has no index cache and fails to resolve).
       - name: Update crate version (workspace.package)
         run: |
           ver="${{ steps.version.outputs.version }}"
           IFS=. read -r y md hm <<< "$ver"
           cargo_ver="$((10#$y)).$((10#$md)).$((10#$hm))"
           sed -i "s/^version = \".*\"/version = \"$cargo_ver\"/" Cargo.toml
-          cargo update --workspace --offline
+          cargo update --workspace
 
       - name: Create PR
         env:
