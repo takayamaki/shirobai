@@ -14,6 +14,21 @@ Benchmarks and the parity oracle.
   Runs the real `rubocop` CLI twice (stock vs shirobai) on a corpus
   and diffs per-cop / per-offense output plus autocorrected bytes.
   Zero diff is the only acceptable result before merging.
+- `autocorrect_audit.sh` — **The `-a` byte oracle.**
+  Copies a corpus twice (`cp -rL`), runs stock and shirobai arms with
+  `-a` sequentially (`RUBOCOP_TARGET_RUBY_VERSION` pinned to 3.1 — the
+  corpora have no `.ruby-version`, and an unpinned run falls back to the
+  2.7 parser), then byte-compares the trees with
+  `diff -rq --no-dereference`. Lint-mode parity cannot see divergences
+  that only materialize as corrections cascade across `-a` iterations;
+  this audit is the only gate that can. Zero differing files is the only
+  acceptable result. Run it before releases, on autocorrect-surface
+  branches (redmine + fluentd at minimum), and on rubocop core / plugin
+  pin bumps (all five corpora). The offense counts printed by the two
+  arms may differ by a few — intermediate cascade states are not
+  required to match; the gate is the final tree diff only.
+  Usage: `autocorrect_audit.sh .tmp/fluentd` (exit 1 + kept trees on
+  divergence, `KEEP=1` to keep them either way).
 - `parity_diff_performance.sh` — The same oracle for the
   shirobai-performance plugin gem: both sides run with
   `--plugin rubocop-performance --enable-pending-cops`
