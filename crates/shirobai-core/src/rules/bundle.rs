@@ -4824,8 +4824,8 @@ mod tests {
         assert_eq!(bundle.line_length_breakables.len(), breakables_alone.len());
         for (a, b) in bundle.line_length_breakables.iter().zip(&breakables_alone) {
             assert_eq!(
-                (a.line_index, a.insert_offset, &a.delimiter),
-                (b.line_index, b.insert_offset, &b.delimiter)
+                (a.line_index, a.insert_offset, a.end_offset, &a.delimiter),
+                (b.line_index, b.insert_offset, b.end_offset, &b.delimiter)
             );
         }
 

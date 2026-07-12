@@ -88,6 +88,22 @@ module EdgeCaseParity
     [first_offenses, src]
   end
 
+  # One CLI-like correction round: a fresh team of `cop_classes` (in the
+  # given order), autocorrect on, single investigate. Returns the rewritten
+  # source (via the stdin path). Unlike the single-cop helpers, this
+  # exercises `Team#autocorrect`'s corrector merge — clobber drops and
+  # `autocorrect_incompatible_with` skips — across several cops.
+  def one_team_round(cop_classes, source, config)
+    options = { autocorrect: true, stdin: source.dup, raise_error: true }
+    cops = cop_classes.map { |klass| klass.new(config, options) }
+    team = RuboCop::Cop::Team.new(cops, config, options)
+    processed = RuboCop::ProcessedSource.new(source, RuboCop::TargetRuby::DEFAULT_VERSION)
+    processed.config = config
+    processed.registry = RuboCop::Cop::Registry.global
+    team.investigate(processed)
+    options[:stdin]
+  end
+
   # Autocorrect differential: stock and shirobai must agree on both the
   # first-pass offenses and the fully corrected source. Returns the stock
   # corrected source.

@@ -194,6 +194,72 @@ RSpec.describe Shirobai::Cop::Layout::LineLength do
     expect(expect_autocorrect_parity(*klasses, src, max40_config)).to eq(src)
   end
 
+  it "can pick the trailing block-pass argument as the breakable element (fluentd out_forward)" do
+    # parser-gem's `send.arguments` includes the block-pass argument as the
+    # last element, so `extract_first_element_over_column_limit` can choose
+    # `&method(:x)` and stock breaks right before it. prism keeps the block
+    # argument in `CallNode#block()` — dropping it makes shirobai break one
+    # element earlier.
+    src = <<~RUBY
+      def start
+        timer_execute(:out_forward_keep_alived_socket_watcher, @keep_alive_watcher_interval, &method(:on_purge_obsolete_socks))
+      end
+    RUBY
+    expect_lint_parity(*klasses, src, default_config)
+    expect_autocorrect_parity(*klasses, src, default_config)
+  end
+
+  it "keeps the trailing kwargs hash unflattened when a block-pass follows (fluentd in_exec)" do
+    # `process_args` only splices a braceless keyword hash when it is the
+    # LAST argument. With a block-pass after it, parser-gem's last argument
+    # is the block-pass, so the hash stays one element and stock breaks
+    # before the WHOLE hash — not between its pairs.
+    src = <<~RUBY
+      child_process_execute(:exec_input, @command, interval: @run_interval, wait_timeout: @command_timeout, **options, &method(:run))
+    RUBY
+    expect_lint_parity(*klasses, src, default_config)
+    expect_autocorrect_parity(*klasses, src, default_config)
+  end
+
+  it "keeps a send inside a block breakable when the block's call has multi-line args (mastodon accounts_index)" do
+    # parser wraps a call-with-block in a `(block (send) args body)` node:
+    # from inside the block body, the SEND is NOT an ancestor, so its
+    # (multi-line) argument list cannot trigger
+    # `contained_by_multiline_collection_that_could_be_broken_up?`. prism
+    # hangs the block off the CallNode, so a naive ancestor stack sees the
+    # call's collection frame from inside the block and wrongly suppresses
+    # the inner send's breakable claim.
+    src = <<~RUBY
+      foo(aa, bb: 1, cc: lambda { |x|
+        yy
+      }) { bar :dd, ee: 222, ff: 333, gg: 444 }
+    RUBY
+    expect_lint_parity(*klasses, src, max40_config)
+    expect_autocorrect_parity(*klasses, src, max40_config)
+  end
+
+  it "spans the whole breakable element so same-round edits inside it survive the merge" do
+    # `Team#autocorrect` merges every cop's corrector into one TreeRewriter.
+    # Stock's breakable insertion is recorded against the chosen element
+    # node's FULL source range, so another cop's edit inside the element
+    # (here Style/HashSyntax rewriting the rocket) nests as a compatible
+    # child. A 1-byte insertion range instead sits inside the HashSyntax
+    # replacement and raises ClobberingError, dropping the whole HashSyntax
+    # corrector for the round — the `-a` trees then drift (redmine
+    # watchers_controller GuardClause/IfUnlessModifier flip).
+    src = "foo :aaaaaaaaaaaaaaaaaaaaaa, :bbbbbbbbbbbbbbbbbbbbbb, " \
+          ":cccccccccccccccccccccc => 1, :dddddddddddddddddddddd => 'pad_pad_pad_pad_pad'\n"
+    expect(src.chomp.length).to be > 120 # the fixture must be a LineLength candidate
+    stock = one_team_round(
+      [RuboCop::Cop::Layout::LineLength, RuboCop::Cop::Style::HashSyntax], src, default_config
+    )
+    shirobai = one_team_round(
+      [Shirobai::Cop::Layout::LineLength, Shirobai::Cop::Style::HashSyntax], src, default_config
+    )
+    expect(stock).to include("cccccccccccccccccccccc: 1") # HashSyntax survived
+    expect(shirobai).to eq(stock)
+  end
+
   def trailing_space
     " "
   end

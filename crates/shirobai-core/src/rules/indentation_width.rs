@@ -587,8 +587,10 @@ impl<'a> Visitor<'a> {
             if bn.rescue_clause().is_some() || bn.ensure_clause().is_some() {
                 let (start, _) = self.body_first_stmt(&st.as_node());
                 // parser-gem's `:ensure`/`:rescue` node range starts at the
-                // protected body, not at the implicit begin's opening.
-                let end = bn.as_node().location().end_offset();
+                // protected body, not at the implicit begin's opening, and
+                // ends at the last handler expression — NOT at the enclosing
+                // `end` keyword that prism's implicit `BeginNode` includes.
+                let end = parser_handlers_end(&bn);
                 return BodyRef {
                     start,
                     correct_range: (start, end),
@@ -860,12 +862,11 @@ impl<'a> Visitor<'a> {
                 // `node.children.first` is the whole rescue node when the
                 // begin has handlers: realigning it shifts the rescue/else/
                 // ensure keyword lines too. Extend the correction range from
-                // the protected body to the line before `end`.
+                // the protected body to the last handler expression (the
+                // parser-gem `:rescue`/`:ensure` node end); comment or blank
+                // lines between it and `end` stay outside the realignment.
                 if n.rescue_clause().is_some() || n.ensure_clause().is_some() {
-                    let end_line_start = self.line_start(end_start);
-                    if end_line_start > bref.correct_range.0 {
-                        bref.correct_range.1 = end_line_start - 1;
-                    }
+                    bref.correct_range.1 = parser_handlers_end(n);
                 }
                 self.check_indentation(end_start, Some(bref), false);
             }
@@ -1001,6 +1002,60 @@ impl<'a> Visitor<'a> {
         let first = st.body().iter().next()?;
         Some(loc(&first.location()))
     }
+}
+
+/// End offset of the parser-gem `:rescue` / `:ensure` node wrapping a begin
+/// body with handlers. parser-gem joins the protected body with the handler
+/// clauses only — the enclosing `end` keyword (of the block / def / `begin`)
+/// is NOT part of the node, unlike prism's `BeginNode` location:
+///
+///   - `:ensure` ends at its body's last statement, or at the `ensure`
+///     keyword when the ensure body is empty.
+///   - `:rescue` with an `else` ends at the else body's last statement, or
+///     at the `else` keyword when the else body is empty.
+///   - otherwise `:rescue` ends at the LAST resbody: its body's last
+///     statement, or `then` / the `=> ref` target / the last exception
+///     class / the `rescue` keyword as the clause shrinks.
+fn parser_handlers_end(bn: &ruby_prism::BeginNode<'_>) -> usize {
+    if let Some(ens) = bn.ensure_clause() {
+        if let Some(st) = ens.statements()
+            && let Some(last) = st.body().iter().last()
+        {
+            return last.location().end_offset();
+        }
+        return ens.ensure_keyword_loc().end_offset();
+    }
+    if bn.rescue_clause().is_some()
+        && let Some(els) = bn.else_clause()
+    {
+        if let Some(st) = els.statements()
+            && let Some(last) = st.body().iter().last()
+        {
+            return last.location().end_offset();
+        }
+        return els.else_keyword_loc().end_offset();
+    }
+    if let Some(mut clause) = bn.rescue_clause() {
+        while let Some(next) = clause.subsequent() {
+            clause = next;
+        }
+        if let Some(st) = clause.statements()
+            && let Some(last) = st.body().iter().last()
+        {
+            return last.location().end_offset();
+        }
+        if let Some(then_loc) = clause.then_keyword_loc() {
+            return then_loc.end_offset();
+        }
+        if let Some(reference) = clause.reference() {
+            return reference.location().end_offset();
+        }
+        if let Some(last_exc) = clause.exceptions().iter().last() {
+            return last_exc.location().end_offset();
+        }
+        return clause.keyword_loc().end_offset();
+    }
+    bn.as_node().location().end_offset()
 }
 
 /// Whether a Prism statements node's first child is a bare access modifier

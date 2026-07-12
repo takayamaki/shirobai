@@ -50,6 +50,15 @@ module Shirobai
 
           offenses = Dispatch.offenses_for(processed_source, config, :argument_alignment)
           off = SourceOffsets.for(processed_source.raw_source)
+          # Stock hands `AlignmentCorrector` the argument NODE; its
+          # `inside_string_ranges` taboo then protects multi-line string
+          # interiors from the shift. Locate the parser node for each
+          # correctable range so the bare range (no taboo) is only the
+          # fallback (fluentd test_config_parser `%()` bodies).
+          located = NodeLocator.locate(
+            processed_source,
+            offenses.filter_map { |s, f, _d, ac| [off[s], off[f]] if ac }
+          )
           offenses.each do |start, fin, column_delta, autocorrect|
             range = Parser::Source::Range.new(buffer, off[start], off[fin])
             # Always pass a block so the offense is correctable, matching stock:
@@ -63,7 +72,8 @@ module Shirobai
             add_offense(range, message: message) do |corrector|
               next unless autocorrect
 
-              RuboCop::Cop::AlignmentCorrector.correct(corrector, processed_source, range, column_delta)
+              target = located[[off[start], off[fin]]] || range
+              RuboCop::Cop::AlignmentCorrector.correct(corrector, processed_source, target, column_delta)
             end
           end
         end

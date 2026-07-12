@@ -28,6 +28,12 @@ use std::collections::HashSet;
 pub struct Breakable {
     pub line_index: usize,
     pub insert_offset: usize,
+    /// End byte offset of the stock breakable RANGE. Stock stores the chosen
+    /// element node's full `source_range` for node claims (the corrector's
+    /// `insert_before` then spans the whole element, which matters for
+    /// `TreeRewriter` merge conflicts against other cops in the same
+    /// iteration); block / string / semicolon claims store a 1-byte range.
+    pub end_offset: usize,
     /// Empty = newline break; `'`/`"` = string-split continuation delimiter.
     pub delimiter: String,
 }
@@ -158,7 +164,7 @@ struct BreakableVisitor<'a> {
     /// breakable; other lines are skipped before the expensive extraction.
     candidate_lines: Option<&'a HashSet<usize>>,
     stack: Vec<Frame>,
-    ranges: std::collections::BTreeMap<usize, usize>,
+    ranges: std::collections::BTreeMap<usize, (usize, usize)>,
     delimiters: std::collections::BTreeMap<usize, String>,
     literals: Vec<(usize, usize)>,
     comments: Vec<(usize, usize)>,
@@ -171,9 +177,10 @@ impl BreakableVisitor<'_> {
     fn into_breakables(self) -> Vec<Breakable> {
         self.ranges
             .into_iter()
-            .map(|(line_index, insert_offset)| Breakable {
+            .map(|(line_index, (insert_offset, end_offset))| Breakable {
                 line_index,
                 insert_offset,
+                end_offset,
                 delimiter: self
                     .delimiters
                     .get(&line_index)
@@ -192,8 +199,10 @@ impl BreakableVisitor<'_> {
         }
     }
 
-    fn claim(&mut self, line_index: usize, insert_offset: usize) {
-        self.ranges.entry(line_index).or_insert(insert_offset);
+    fn claim(&mut self, line_index: usize, insert_offset: usize, end_offset: usize) {
+        self.ranges
+            .entry(line_index)
+            .or_insert((insert_offset, end_offset));
     }
 
     /// Block claims ASSIGN instead of or-inserting: stock's
@@ -204,14 +213,16 @@ impl BreakableVisitor<'_> {
     /// so a line whose string claim was overwritten by a block still inserts
     /// the string-continuation form at the block position.
     fn claim_block(&mut self, line_index: usize, insert_offset: usize) {
-        self.ranges.insert(line_index, insert_offset);
+        self.ranges
+            .insert(line_index, (insert_offset, insert_offset + 1));
     }
 
     fn claim_string(&mut self, line_index: usize, insert_offset: usize, delimiter: String) {
         if self.ranges.contains_key(&line_index) {
             return;
         }
-        self.ranges.insert(line_index, insert_offset);
+        self.ranges
+            .insert(line_index, (insert_offset, insert_offset + 1));
         self.delimiters.insert(line_index, delimiter);
     }
 
@@ -251,7 +262,7 @@ impl BreakableVisitor<'_> {
                 continue;
             }
             // Overwrite (semicolons win and overwrite earlier semicolons).
-            self.ranges.insert(line_index, end_pos);
+            self.ranges.insert(line_index, (end_pos, end_pos + 1));
         }
     }
 
@@ -468,6 +479,49 @@ impl<'pr> Visit<'pr> for BreakableVisitor<'_> {
 
     fn visit_branch_node_leave(&mut self) {
         self.stack.pop();
+    }
+
+    // parser wraps a call-with-block in a `(block (send) args body)` node:
+    // from inside the block body, the SEND is NOT an ancestor — the wrapper
+    // block node is (kind-wise a non-collection, first line = the whole
+    // expression's). prism hangs the block off the CallNode, so the naive
+    // stack would show the call's collection frame from inside the block and
+    // `contained_by_multiline_collection_that_could_be_broken_up` would
+    // wrongly suppress claims inside the block (mastodon accounts_index).
+    // Swap the call frame for the parser block wrapper while descending into
+    // a real block child (a `BlockArgumentNode` stays an argument: parser
+    // keeps `&blk` under the send).
+    fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
+        if let Some(r) = node.receiver() {
+            self.visit(&r);
+        }
+        if let Some(a) = node.arguments() {
+            self.visit_arguments_node(&a);
+        }
+        let Some(block) = node.block() else { return };
+        if block.as_block_node().is_none() {
+            self.visit(&block);
+            return;
+        }
+        let call_frame = self.stack.pop();
+        let first_line = call_frame.as_ref().map_or_else(
+            || self.line_index.line_of(node.location().start_offset()),
+            |f| f.first_line,
+        );
+        self.stack.push(Frame {
+            kind: FrameKind::Other,
+            first_line,
+            parent_info: ParentInfo {
+                forbids_string_split: false,
+                dstr_open: None,
+                start_offset: node.location().start_offset(),
+            },
+        });
+        self.visit(&block);
+        self.stack.pop();
+        if let Some(f) = call_frame {
+            self.stack.push(f);
+        }
     }
 
     // String nodes are leaves and the generic `visit_branch_node_enter` hook is
@@ -1033,12 +1087,13 @@ impl<'pr> BreakableVisitor<'_> {
             exceptions.into_iter().nth(i - 1)
         };
         let Some(bn) = bn else { return };
-        let start = bn.location().start_offset();
+        let loc = bn.location();
+        let start = loc.start_offset();
         let line_index = self.line_index.line_of(start) - 1;
         if !self.is_candidate(line_index) {
             return;
         }
-        self.claim(line_index, start);
+        self.claim(line_index, start, loc.end_offset());
     }
 
     // --- breakable node -------------------------------------------------
@@ -1056,12 +1111,13 @@ impl<'pr> BreakableVisitor<'_> {
             }
         }
         if let Some(bn) = self.extract_breakable_node(node) {
-            let start = bn.location().start_offset();
+            let loc = bn.location();
+            let start = loc.start_offset();
             let line_index = self.line_index.line_of(start) - 1;
             if !self.is_candidate(line_index) {
                 return;
             }
-            self.claim(line_index, start);
+            self.claim(line_index, start, loc.end_offset());
         }
     }
 
@@ -1070,10 +1126,22 @@ impl<'pr> BreakableVisitor<'_> {
             if chained_to_heredoc(self.source, &call) {
                 return None;
             }
-            let args = call
+            // parser-gem's `send.arguments` includes the block-pass argument
+            // (`&blk`, bare `&`) as the LAST argument; prism keeps it in
+            // `block()`. Append it BEFORE `process_args`: with a block-pass
+            // last, a preceding braceless keyword hash is not the last
+            // argument and is NOT flattened into its pairs, and the
+            // block-pass itself is a pickable breakable element.
+            let mut raw: Vec<Node<'pr>> = call
                 .arguments()
-                .map(|a| process_args(a.arguments().iter().collect()))
+                .map(|a| a.arguments().iter().collect())
                 .unwrap_or_default();
+            if let Some(block) = call.block()
+                && block.as_block_argument_node().is_some()
+            {
+                raw.push(block);
+            }
+            let args = process_args(raw);
             return self.extract_breakable_node_from_elements(node, args, true, false);
         }
         if let Some(def) = node.as_def_node() {
