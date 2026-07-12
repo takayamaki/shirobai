@@ -42,3 +42,10 @@ Shirobai::Dispatch.register_plugin_packer(:performance) do |config|
   start_with = Shirobai::Cop::Performance::StartWith.bundle_args(config)
   [[1, end_with[0], start_with[0]], [[detect[0]]]]
 end
+
+# Re-run the autocorrect-incompatibility alignment now that this gem's stock
+# department and wrappers are enlisted: the core run happened before they
+# existed, so lists like `Rails/SafeNavigation -> Style::RedundantSelf` or
+# `RSpec/AlignLeftLetBrace -> Layout::ExtraSpacing` still name dismissed
+# stock classes until this call (see Shirobai::Inject).
+Shirobai::Inject.align_autocorrect_incompatibilities!

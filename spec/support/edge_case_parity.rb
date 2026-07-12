@@ -93,11 +93,13 @@ module EdgeCaseParity
   # source (via the stdin path). Unlike the single-cop helpers, this
   # exercises `Team#autocorrect`'s corrector merge — clobber drops and
   # `autocorrect_incompatible_with` skips — across several cops.
-  def one_team_round(cop_classes, source, config)
+  def one_team_round(cop_classes, source, config, path: nil)
     options = { autocorrect: true, stdin: source.dup, raise_error: true }
     cops = cop_classes.map { |klass| klass.new(config, options) }
     team = RuboCop::Cop::Team.new(cops, config, options)
-    processed = RuboCop::ProcessedSource.new(source, RuboCop::TargetRuby::DEFAULT_VERSION)
+    # `path` matters for cops with a department `Include` (RSpec cops only
+    # run on `**/*_spec.rb`); pass an absolute spec-like path for those.
+    processed = RuboCop::ProcessedSource.new(source, RuboCop::TargetRuby::DEFAULT_VERSION, path)
     processed.config = config
     processed.registry = RuboCop::Cop::Registry.global
     team.investigate(processed)
