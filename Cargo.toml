@@ -7,7 +7,7 @@ resolver = "3"
 # is crate 2026.709.0 -- cargo rejects leading zeros in numeric segments, and
 # Gem::Version normalizes to the same integers, so the two stay value-equal).
 [workspace.package]
-version = "2026.709.0"
+version = "2026.713.0"
 
 # Release tuning. The hot path crosses crate boundaries (ext cdylib -> core
 # check_* -> ruby-prism); without LTO the cross-crate calls are not inlined and
