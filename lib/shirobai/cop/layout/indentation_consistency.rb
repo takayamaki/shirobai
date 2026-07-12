@@ -39,16 +39,16 @@ module Shirobai
 
           offenses_for_source.each do |start, fin, column_delta, autocorrect|
             range = Parser::Source::Range.new(buffer, off[start], off[fin])
-            # Mirror the per-offense split (see argument_alignment): in lint mode
-            # the block still runs and a non-empty corrector keeps the offense
-            # correctable to match stock; `autocorrect` is false when the offense
-            # is nested in an already-corrected range and must be reported only.
-            unless autocorrect
-              add_offense(range, message: MSG)
-              next
-            end
-
+            # Always pass a block so the offense is correctable, matching stock:
+            # the Alignment mixin's `register_offense` always hands `add_offense`
+            # a block, even for the `within?` case (`autocorrect: false`). A
+            # blockless `add_offense` would mark the offense uncorrectable. When
+            # `autocorrect` is false (the offense is nested in an already-corrected
+            # range) the block returns early, leaving an empty (no-op) corrector,
+            # so the offense stays correctable but is not rewritten this pass.
             add_offense(range, message: MSG) do |corrector|
+              next unless autocorrect
+
               node = node_at(off[start], off[fin])
               target = node || range
               RuboCop::Cop::AlignmentCorrector.correct(

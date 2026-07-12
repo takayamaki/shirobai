@@ -24,17 +24,22 @@ module Shirobai
         def self.cop_name = "Metrics/AbcSize"
         def self.badge = RuboCop::Cop::Badge.parse("Metrics/AbcSize")
 
-        # Packed args for the bundled run: `[max_floor, discount_repeated]`.
+        # Packed args for the bundled run: `[max_floor, flags]`.
         # `max_floor` is the cop's `Max.floor` (conservative prefilter: a float
         # `Max` floors down, an integer one is exact); a non-natural `Max`
-        # disables the prefilter with `-1`. `discount_repeated` is
-        # `!CountRepeatedAttributes` (default `CountRepeatedAttributes: true`).
+        # disables the prefilter with `-1`. `flags` bit 0 is
+        # `!CountRepeatedAttributes` (default `CountRepeatedAttributes: true`);
+        # bit 1 is set when the target Ruby version is below 3.4, where the
+        # parser gem has no `itblock` and a bare `it` reference is a send
+        # (counted as a branch), matching stock's version-dependent counting.
         def self.bundle_args(config)
           cop_config = config.for_badge(badge)
           max = cop_config["Max"]
           max_floor = max.is_a?(Numeric) && max >= 0 ? max.floor : -1
-          discount = cop_config["CountRepeatedAttributes"] == false
-          [max_floor, discount ? 1 : 0]
+          flags = 0
+          flags |= 1 if cop_config["CountRepeatedAttributes"] == false
+          flags |= 2 if config.target_ruby_version < 3.4
+          [max_floor, flags]
         end
 
         def on_new_investigation

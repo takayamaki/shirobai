@@ -2435,11 +2435,13 @@ fn check_abc_size(
     source: RString,
     max_floor: i64,
     discount_repeated: bool,
+    it_is_send: bool,
 ) -> Vec<(usize, usize, usize, String, u64, u64, u64)> {
     map_abc_size(shirobai_core::rules::abc_size::check_abc_size(
         bytes(&source),
         max_floor,
         discount_repeated,
+        it_is_send,
     ))
 }
 
@@ -4357,7 +4359,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function("check_class_length", function!(check_class_length, 4))?;
     module.define_module_function("check_module_length", function!(check_module_length, 4))?;
     module.define_module_function("check_complexity", function!(check_complexity, 3))?;
-    module.define_module_function("check_abc_size", function!(check_abc_size, 3))?;
+    module.define_module_function("check_abc_size", function!(check_abc_size, 4))?;
     module.define_module_function("check_block_nesting", function!(check_block_nesting, 4))?;
     module.define_module_function("check_variable_number", function!(check_variable_number, 4))?;
     module.define_module_function(

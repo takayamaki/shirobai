@@ -88,6 +88,7 @@ pub mod rspec_language;
 pub mod safe_navigation_chain;
 pub mod self_assignment;
 pub mod semicolon;
+pub mod send_range;
 pub mod space_around_equals_in_parameter_default;
 pub mod space_around_keyword;
 pub mod space_around_method_call_operator;

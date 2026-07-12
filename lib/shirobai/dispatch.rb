@@ -441,7 +441,7 @@ module Shirobai
           num(uam[2]),                   # UselessAccessModifier ActiveSupportExtensionsEnabled
           elb_class[0], elb_module[0], elb_block[0], # EmptyLinesAround{Class,Module,Block}Body styles
           *bd[0],                        # BlockDelimiters style / procedural-oneliners flag
-          abc[0], abc[1],                # AbcSize max_floor / discount_repeated
+          abc[0], abc[1],                # AbcSize max_floor / flags (bit0 discount, bit1 it-is-send)
           ic[0],                         # IndentationConsistency indented_internal_methods
           *elbd[0],                       # EmptyLineBetweenDefs method/class/module/adjacent/min/max
           ea[0],                          # EndAlignment style

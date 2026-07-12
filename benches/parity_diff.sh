@@ -43,6 +43,10 @@ time BUNDLE_GEMFILE="$root/Gemfile.with_shirobai" bundle exec rubocop \
 echo
 echo "=== summary ==="
 ruby -rjson <<RUBY
+# Compare the FULL offense-key multiset, not just per-cop counts. A key is
+# path|cop|start_line:start_column|last_line:last_column|severity|correctable|message,
+# so a difference in range, severity, correctable or message shows up even when
+# the per-cop counts are identical (the old oracle's blind spot).
 def load(path)
   d = JSON.parse(File.read(path))
   h = Hash.new(0); per = {}
@@ -50,9 +54,13 @@ def load(path)
     fp = f["path"]
     f["offenses"].each do |o|
       cop = o["cop_name"]
-      key = "#{fp}|#{o["location"]["line"]}:#{o["location"]["column"]}|#{o["message"]}"
+      l = o["location"]
+      key = [fp, cop,
+             "#{l["start_line"]}:#{l["start_column"]}",
+             "#{l["last_line"]}:#{l["last_column"]}",
+             o["severity"], o["correctable"], o["message"]].join("|")
       h[cop] += 1
-      (per[cop] ||= {})[key] = true
+      (per[cop] ||= Hash.new(0))[key] += 1
     end
   end
   [d["files"].size, d["summary"]["offense_count"], h, per]
@@ -63,16 +71,31 @@ puts format("stock    files=%-6d offenses=%d", st_files, st_total)
 puts format("shirobai files=%-6d offenses=%d", sh_files, sh_total)
 puts format("total diff: %+d", sh_total - st_total)
 cops = (st_h.keys + sh_h.keys).uniq.sort
-diffs = cops.reject { |c| sh_h[c] == st_h[c] }
+# A cop diverges when its key multiset differs — this catches equal-count,
+# different-message/correctable cases the per-cop count check would miss.
+diffs = cops.reject { |c| (st_per[c] || {}) == (sh_per[c] || {}) }
 if diffs.empty?
   puts "per-cop divergence: NONE (full parity)"
 else
   puts "per-cop divergence (#{diffs.size} cops):"
+  samples = []
   diffs.each do |c|
-    only_sh = ((sh_per[c]||{}).keys - (st_per[c]||{}).keys).size
-    only_st = ((st_per[c]||{}).keys - (sh_per[c]||{}).keys).size
+    stk = st_per[c] || {}; shk = sh_per[c] || {}
+    only_sh = 0; only_st = 0
+    (stk.keys | shk.keys).each do |k|
+      delta = (shk[k] || 0) - (stk[k] || 0)
+      only_sh += delta if delta > 0
+      only_st += -delta if delta < 0
+    end
     printf "  %-50s shirobai=%-6d stock=%-6d  diff=%+d  (sh-only=%d, st-only=%d)\n",
            c, sh_h[c], st_h[c], sh_h[c] - st_h[c], only_sh, only_st
+    (shk.keys - stk.keys).each { |k| samples << "  sh-only: #{k}" }
+    (stk.keys - shk.keys).each { |k| samples << "  st-only: #{k}" }
+  end
+  unless samples.empty?
+    puts
+    puts "sample diverging offense keys (#{[samples.size, 8].min} of #{samples.size}):"
+    puts samples.first(8)
   end
   puts
   puts "Use the JSON files at $stock_json / $sh_json for per-offense inspection."

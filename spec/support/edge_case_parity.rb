@@ -49,12 +49,24 @@ module EdgeCaseParity
   # instance across passes, loop until the corrector is empty or a fixpoint).
   # Returns [first_pass_offenses, final_source]. `max` iterations guards against
   # an oscillating (non-converging) autocorrect.
-  def autocorrect_run(klass, source, config, max: 11)
+  #
+  # `fresh_cop_per_pass: true` builds a new cop instance for every pass, which
+  # is what the real CLI does (the Runner mobilizes a fresh team per correction
+  # round). Needed for cops that leak state across investigations — stock
+  # Layout/LineLength never resets `@breakable_range_by_line_index`, so a
+  # reused instance crashes ("Correction target buffer ... is not current")
+  # whenever a later pass registers an offense on a line whose claimed range
+  # came from the previous pass's buffer.
+  def autocorrect_run(klass, source, config, max: 11, fresh_cop_per_pass: false)
     cop = klass.new(config)
     cop.instance_variable_get(:@options)[:autocorrect] = true
     src = source
     first_offenses = nil
     max.times do |iteration|
+      if fresh_cop_per_pass && iteration.positive?
+        cop = klass.new(config)
+        cop.instance_variable_get(:@options)[:autocorrect] = true
+      end
       processed = RuboCop::ProcessedSource.new(src, RuboCop::TargetRuby::DEFAULT_VERSION)
       processed.config = config
       processed.registry = RuboCop::Cop::Registry.global
@@ -79,9 +91,12 @@ module EdgeCaseParity
   # Autocorrect differential: stock and shirobai must agree on both the
   # first-pass offenses and the fully corrected source. Returns the stock
   # corrected source.
-  def expect_autocorrect_parity(stock_klass, shirobai_klass, source, config)
-    stock_offenses, stock_corrected = autocorrect_run(stock_klass, source, config)
-    shirobai_offenses, shirobai_corrected = autocorrect_run(shirobai_klass, source, config)
+  def expect_autocorrect_parity(stock_klass, shirobai_klass, source, config,
+                                fresh_cop_per_pass: false)
+    stock_offenses, stock_corrected =
+      autocorrect_run(stock_klass, source, config, fresh_cop_per_pass: fresh_cop_per_pass)
+    shirobai_offenses, shirobai_corrected =
+      autocorrect_run(shirobai_klass, source, config, fresh_cop_per_pass: fresh_cop_per_pass)
     expect(shirobai_offenses).to eq(stock_offenses)
     expect(shirobai_corrected).to eq(stock_corrected)
     stock_corrected

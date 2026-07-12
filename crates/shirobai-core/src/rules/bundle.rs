@@ -123,7 +123,7 @@ pub fn check_multiline_bundle(
 /// | 43  | block_delimiters_style (`EnforcedStyle`: 0 = line_count_based, 1 = semantic, 2 = braces_for_chaining, 3 = always_braces) |
 /// | 44  | block_delimiters_oneliners (`AllowBracesOnProceduralOneLiners`) |
 /// | 45  | abc_size_max_floor (`Metrics/AbcSize` `Max.floor`, prefilter; `-1` reports every method) |
-/// | 46  | abc_size_discount_repeated (`!CountRepeatedAttributes`) |
+/// | 46  | abc_size_flags (bit 0 = `!CountRepeatedAttributes`; bit 1 = target Ruby < 3.4, where `it` is a bare send) |
 /// | 47  | indentation_consistency_internal (`Layout/IndentationConsistency` EnforcedStyle == 'indented_internal_methods') |
 /// | 48-50 | empty_line_between_defs method / class / module defs (`EmptyLineBetweenMethodDefs` / `...ClassDefs` / `...ModuleDefs`) |
 /// | 51  | empty_line_between_defs_allow_adjacent_one_line_defs (`AllowAdjacentOneLineDefs`) |
@@ -350,6 +350,7 @@ pub struct BundleConfig {
     pub block_delimiters: block_delimiters::Config,
     pub abc_size_max_floor: i64,
     pub abc_size_discount_repeated: bool,
+    pub abc_size_it_is_send: bool,
     pub indentation_consistency: indentation_consistency::Config,
     pub empty_line_between_defs: empty_line_between_defs::Config,
     pub end_alignment: end_alignment::Config,
@@ -613,7 +614,8 @@ impl BundleConfig {
                 braces_required_methods: next_list(),
             },
             abc_size_max_floor: nums[45],
-            abc_size_discount_repeated: nums[46] != 0,
+            abc_size_discount_repeated: nums[46] & 1 != 0,
+            abc_size_it_is_send: nums[46] & 2 != 0,
             indentation_consistency: indentation_consistency::Config {
                 indented_internal_methods: nums[47] != 0,
             },
@@ -1266,6 +1268,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         source,
         cfg.abc_size_max_floor,
         cfg.abc_size_discount_repeated,
+        cfg.abc_size_it_is_send,
     );
     let mut ic_rule = indentation_consistency::build_rule(source, cfg.indentation_consistency);
     let mut elbd_rule =
@@ -3492,6 +3495,7 @@ mod tests {
             src.as_bytes(),
             cfg.abc_size_max_floor,
             cfg.abc_size_discount_repeated,
+            cfg.abc_size_it_is_send,
         );
         assert_eq!(bundle.abc_size.len(), alone.len());
         assert!(!alone.is_empty());

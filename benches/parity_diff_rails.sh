@@ -98,7 +98,10 @@ diff_jsons() {
         fp = f["path"]
         f["offenses"].each do |o|
           cop = o["cop_name"]
-          key = "#{fp}|#{o["location"]["line"]}:#{o["location"]["column"]}|#{o["message"]}"
+          l = o["location"]
+          # Full key: range + severity + correctable + message, so an equal-count
+          # divergence (message / correctable / range) is caught by `exact` below.
+          key = "#{fp}|#{cop}|#{l["start_line"]}:#{l["start_column"]}|#{l["last_line"]}:#{l["last_column"]}|#{o["severity"]}|#{o["correctable"]}|#{o["message"]}"
           h[cop] += 1
           (per[cop] ||= {})[key] = true
         end

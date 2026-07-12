@@ -297,6 +297,7 @@ fn run_perrule(sources: &[Vec<u8>], cfg: &BundleConfig, iterations: usize) {
                 s,
                 cfg.abc_size_max_floor,
                 cfg.abc_size_discount_repeated,
+                cfg.abc_size_it_is_send,
             ));
         }),
         e!("indentation_consistency", |s: &[u8]| {

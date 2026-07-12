@@ -61,15 +61,20 @@ module Shirobai
             @offense_ranges << [cs, ce] if autocorrect
 
             range = Parser::Source::Range.new(buffer, off[start], off[fin])
-            # Key the split on the per-offense flag, not `autocorrect?` mode: the
-            # block runs in lint mode too and the non-empty corrector is what
-            # keeps the offense correctable to match stock (see argument_alignment).
-            unless autocorrect
-              add_offense(range, message: message)
-              next
-            end
-
+            # Always run the correction so the corrector is non-empty and the
+            # offense is correctable, matching stock. `IndentationWidth#offense`
+            # only nils the corrected node when `autocorrect? && other_offense_in_
+            # same_range?`; the `autocorrect?` guard means the suppression never
+            # fires in lint mode, so every offense stays correctable there. We
+            # mirror that: skip the correction only in a real autocorrect run when
+            # the per-offense flag says this offense is nested in an already-
+            # corrected range (an empty corrector then, exactly like stock's nil
+            # node). In lint mode the flag is ignored and the correction always
+            # runs. This keeps the `-a` convergence identical while fixing the
+            # lint-mode `[Correctable]` divergence.
             add_offense(range, message: message) do |corrector|
+              next if autocorrect? && !autocorrect
+
               node = node_at(off[cs], off[ce])
               target = node || Parser::Source::Range.new(buffer, off[cs], off[ce])
               RuboCop::Cop::AlignmentCorrector.correct(
