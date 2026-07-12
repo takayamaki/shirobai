@@ -582,7 +582,7 @@ cop's standalone cost.
 
 ## Plugin cops: shirobai-rails (Phase 0 + Application* cluster)
 
-`gems/shirobai-rails` replaces rubocop-rails (pinned `= 2.35.5`) cops with
+`gems/shirobai-rails` replaces rubocop-rails (pinned `= 2.36.0`) cops with
 Rust rules in the shared shirobai-core extension (no second native build).
 This batch stands up the plumbing for a NEW plugin origin (origin 3) plus a
 proof cluster of four trivial cops.
@@ -621,7 +621,7 @@ metadata does not come for free). Controller has no gate. The
 through each wrapper's badge, exactly as for the stock cop.
 
 Verified with the same bar as core cops: vendor specs from the
-`vendor/rubocop-rails` submodule (`= 2.35.5`, plus its `:rails*` version
+`vendor/rubocop-rails` submodule (`= 2.36.0`, plus its `:rails*` version
 shared contexts), differential edge-case specs for every probed quirk
 (cbase base, scope-insensitive name exemption, the Class.new exemption /
 block / cbase-casgn / namespaced-casgn / cross-cop cases, arity gating,
