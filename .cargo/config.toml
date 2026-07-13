@@ -1,0 +1,15 @@
+# Cross-compiling to arm64-darwin (rb-sys-dock via the cross-gem action):
+# ruby-prism-sys generates its bindings with bindgen, and bindgen needs the
+# osxcross macOS SDK as the clang sysroot. The rbsys/arm64-darwin image sets
+# BINDGEN_EXTRA_CLANG_ARGS_aarch64_apple_darwin (underscore form), but in the
+# first real cross-gem run (release run 29198424294) bindgen stopped at the
+# dash-separated variant -- the one it checks first -- and ended up with no
+# sysroot, so clang parsed the Linux glibc headers for a darwin target and
+# died with "'sys/cdefs.h' file not found".
+# Setting the dash variant here with force = true wins over whatever the
+# container environment carries, and is inert on every other target (bindgen
+# only reads the variant that matches TARGET).
+# The SDK path is the one baked into rake-compiler-dock 1.12.0 and referenced
+# by rb-sys 0.9.128's Dockerfile; revisit when the rcd base image bumps its SDK.
+[env]
+"BINDGEN_EXTRA_CLANG_ARGS_aarch64-apple-darwin" = { value = "--sysroot=/opt/osxcross/target/SDK/MacOSX11.1.sdk/", force = true }
