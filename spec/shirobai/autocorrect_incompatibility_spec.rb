@@ -49,12 +49,18 @@ RSpec.describe "autocorrect incompatibility alignment" do
     end
   end
 
-  it "leaves no dismissed stock class in any active cop's list" do
-    dismissed = wrapper_cops.filter_map { |w| stock_counterpart(w) }
-    RuboCop::Cop::Registry.global.cops.each do |cop|
-      stale = cop.autocorrect_incompatible_with & dismissed
+  it "leaves no replaced stock class in any enabled cop's list once the config is aligned" do
+    # Non-wrapper lists are translated per config (`Inject.align_for`, called
+    # from `Dispatch.bundle_token` before any correction round), not at
+    # require time: enumerating the whole registry would force every lazy
+    # stock cop to load. The runtime guarantee covers exactly the enabled
+    # set the team is built from.
+    Shirobai::Inject.align_for(config)
+    replaced = wrapper_cops.filter_map { |w| stock_counterpart(w) }
+    RuboCop::Cop::Registry.global.enabled(config).each do |cop|
+      stale = cop.autocorrect_incompatible_with & replaced
       expect(stale).to be_empty,
-                       "#{cop.cop_name} still lists dismissed stock classes: #{stale}"
+                       "#{cop.cop_name} still lists replaced stock classes: #{stale}"
     end
   end
 
