@@ -243,6 +243,8 @@ module Shirobai
             (const _ _)
             (send (const {nil? cbase} :Struct) :new ...)
             (block (send (const {nil? cbase} :Struct) :new ...) ...)
+            (send (const {nil? cbase} :Data) :define ...)
+            (block (send (const {nil? cbase} :Data) :define ...) ...)
             (send _ :freeze)
             (send {float int} {:+ :- :* :** :/ :% :<<} _)
             (send _ {:+ :- :* :** :/ :%} {float int})
