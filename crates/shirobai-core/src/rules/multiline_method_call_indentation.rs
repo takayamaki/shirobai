@@ -485,12 +485,20 @@ impl<'a> Visitor<'a> {
         self.line_of(range.0) == self.line_of(range.1)
     }
 
-    /// `single_line_block_receiver?` → `receiver.send_node`'s `dot.join(selector)`:
-    /// a single-line call carrying a block. In stock the Parser AST wraps the
-    /// `send` in a `:block` whose `single_line?` covers `dot ~ block-end` only —
-    /// not the full receiver chain. In prism a `CallNode` location spans the
-    /// whole chain, so we measure single-line-ness from the call's dot (or its
-    /// message when there is no dot) to its block's end.
+    /// `single_line_block_receiver?` → `leftmost_call_on_same_line(receiver)`'s
+    /// `dot.join(selector)`: a single-line call carrying a block. In stock the
+    /// Parser AST wraps the `send` in a `:block` whose `single_line?` covers
+    /// `dot ~ block-end` only — not the full receiver chain. In prism a
+    /// `CallNode` location spans the whole chain, so we measure
+    /// single-line-ness from the call's dot (or its message when there is no
+    /// dot) to its block's end.
+    ///
+    /// Since 1.89 (rubocop#15122) stock walks left from the block's send to
+    /// the leftmost dotted call on the same line, so a continuation under
+    /// `.dup.sort_by { ... }` aligns with `.dup`, not `.sort_by`. The walk
+    /// stops at a receiver that is not `call_type?` in the parser AST (a
+    /// `:block` — a call carrying a literal block — or a lambda), has no dot,
+    /// or whose dot sits on an earlier line.
     fn block_receiver_dot(&self, receiver: &Node<'_>) -> Option<(usize, usize)> {
         let c = receiver.as_call_node()?;
         let blk = c.block().and_then(|b| b.as_block_node())?;
@@ -501,7 +509,24 @@ impl<'a> Visitor<'a> {
         if self.line_of(span_start) != self.line_of(span_end) {
             return None;
         }
-        Some((span_start, sel.end_offset()))
+        let mut base = (span_start, sel.end_offset());
+        let mut node_opt = c.receiver();
+        while let Some(r) = node_opt {
+            let Some(rc) = r.as_call_node() else { break };
+            if rc.block().and_then(|b| b.as_block_node()).is_some() {
+                break; // parser `:block`, not `call_type?`
+            }
+            let Some(rdot) = rc.call_operator_loc() else {
+                break;
+            };
+            let Some(rsel) = rc.message_loc() else { break };
+            if self.line_of(rdot.start_offset()) != self.line_of(base.0) {
+                break;
+            }
+            base = (rdot.start_offset(), rsel.end_offset());
+            node_opt = rc.receiver();
+        }
+        Some(base)
     }
 
     fn find_continuation_base(
