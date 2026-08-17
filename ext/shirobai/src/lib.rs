@@ -982,25 +982,32 @@ fn map_stabby_lambda_parentheses(
 /// `map_ambiguous_block_association` for field semantics. A `type` alias keeps
 /// clippy's `type_complexity` lint quiet without an `#[allow]`.
 type AmbiguousBlockAssociationTuple = (
-    usize, usize, usize, usize, usize, usize, usize, usize, usize,
+    u8, usize, usize, usize, usize, usize, usize, usize, usize, usize,
 );
 
-/// `Lint/AmbiguousBlockAssociation`: `[[start, end, param_start, param_end,
-/// inner_send_start, inner_send_end, ac_open_start, ac_open_end, ac_close_pos],
-/// ...]`. `[start, end)` is the outer call's full source range (offense
-/// highlight). `[param_start, param_end)` is the last argument's source range
-/// (the block-bearing inner call — substituted into MSG as `%<param>s`).
-/// `[inner_send_start, inner_send_end)` is the inner block sender's source
-/// range (substituted into MSG as `%<method>s`). Autocorrect: replace
-/// `[ac_open_start, ac_open_end)` with `(` (`corrector.remove(range)` +
-/// `corrector.insert_before(range, '(')` in stock) and insert `)` at
-/// `ac_close_pos` (the last argument's end).
+/// `Lint/AmbiguousBlockAssociation`: `[[kind, start, end, param_start,
+/// param_end, inner_send_start, inner_send_end, ac_open_start, ac_open_end,
+/// ac_close_pos], ...]`.
+///
+/// kind 0 (paren ambiguity, stock `on_send`): `[start, end)` is the outer
+/// call's full source range (offense highlight). `[param_start, param_end)`
+/// is the last argument's source range (the block-bearing inner call —
+/// substituted into MSG as `%<param>s`). `[inner_send_start, inner_send_end)`
+/// is the inner block sender's source range (substituted into MSG as
+/// `%<method>s`). Autocorrect: replace `[ac_open_start, ac_open_end)` with
+/// `(` (`corrector.remove(range)` + `corrector.insert_before(range, '(')` in
+/// stock) and insert `)` at `ac_close_pos` (the last argument's end).
+///
+/// kind 1 (`do...end` binding, stock `on_block`, 1.89): `[start, end)` is the
+/// INNER call's range, `param_*` its method name, `inner_send_*` the OUTER
+/// call's method name; the `ac_*` fields are zero (no autocorrect).
 fn map_ambiguous_block_association(
     v: Vec<shirobai_core::rules::ambiguous_block_association::AmbiguousBlockAssociationOffense>,
 ) -> Vec<AmbiguousBlockAssociationTuple> {
     v.into_iter()
         .map(|o| {
             (
+                o.kind,
                 o.start_offset,
                 o.end_offset,
                 o.param_start,
