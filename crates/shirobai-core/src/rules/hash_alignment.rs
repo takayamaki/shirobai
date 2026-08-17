@@ -492,7 +492,7 @@ impl Visitor<'_> {
         self.group += 1;
         let first = pairs.iter().find(|p| p.is_pair()).unwrap();
         let ctx = HashCtx {
-            max_key_width: self.max_key_width(pairs),
+            target_operator_column: self.target_operator_column(pairs, first),
             max_delimiter_width: self.max_delimiter_width(pairs),
         };
 
@@ -770,9 +770,32 @@ impl Visitor<'_> {
         }
     }
 
+    /// `target_operator_column`: the column the table separator should land
+    /// on — the shared key margin plus the widest single-line key, or, if
+    /// larger, a multiline key's own last-line end column. Stock keeps the
+    /// two as separate candidates because a multiline key's source length
+    /// includes its newlines and cannot feed `max_key_width` (1.89,
+    /// rubocop#15452).
+    fn target_operator_column(&self, pairs: &[Pair], first: &Pair) -> isize {
+        let mut candidates: Vec<isize> = pairs
+            .iter()
+            .filter(|p| p.is_pair() && !self.single_line_key(p))
+            .map(|p| self.col(p.key_end()) + 1)
+            .collect();
+        let key_width = self.max_key_width(pairs);
+        if key_width > 0 {
+            candidates.push(self.col(first.range.0) + key_width + 1);
+        }
+        candidates.into_iter().max().unwrap_or(0)
+    }
+
+    fn single_line_key(&self, pair: &Pair) -> bool {
+        self.line_of(pair.key_start()) == self.line_of(pair.key_end())
+    }
+
     /// TableAlignment `hash_rocket_delta`.
-    fn table_rocket_delta(&self, first: &Pair, current: &Pair, ctx: &HashCtx) -> isize {
-        self.col(first.range.0) + ctx.max_key_width + 1 - self.col(current.op_start())
+    fn table_rocket_delta(&self, _first: &Pair, current: &Pair, ctx: &HashCtx) -> isize {
+        ctx.target_operator_column - self.col(current.op_start())
     }
 
     /// SeparatorAlignment `hash_rocket_delta`: `first.delimiter_delta(current)`.
@@ -787,11 +810,11 @@ impl Visitor<'_> {
     }
 
     /// TableAlignment `value_delta`.
-    fn table_val_delta(&self, first: &Pair, current: &Pair, ctx: &HashCtx) -> isize {
+    fn table_val_delta(&self, _first: &Pair, current: &Pair, ctx: &HashCtx) -> isize {
         if current.value_omission() {
             return 0;
         }
-        let correct = self.col(first.key_start()) + ctx.max_key_width + ctx.max_delimiter_width;
+        let correct = ctx.target_operator_column + ctx.max_delimiter_width - 1;
         correct - self.col(current.value_start())
     }
 
@@ -806,12 +829,14 @@ impl Visitor<'_> {
         self.col(first.value_start()) - self.col(current.value_start())
     }
 
-    /// `max_key_width`: `keys.map { |k| k.source.length }.max` (parser keys, so
-    /// colon excluded). Returns 0 for an empty pair set (never happens here).
+    /// `max_key_width`: `keys.select(&:single_line?).map { |k| k.source.length }.max`
+    /// (parser keys, so colon excluded). Multiline keys are separate
+    /// `target_operator_column` candidates since 1.89. Returns 0 when every
+    /// key is multiline.
     fn max_key_width(&self, pairs: &[Pair]) -> isize {
         pairs
             .iter()
-            .filter(|p| p.is_pair())
+            .filter(|p| p.is_pair() && self.single_line_key(p))
             .map(|p| (p.key_end() - p.key_start()) as isize)
             .max()
             .unwrap_or(0)
@@ -850,7 +875,9 @@ struct ClassEntry {
 
 /// Per-hash precomputed widths for table alignment.
 struct HashCtx {
-    max_key_width: isize,
+    /// `target_operator_column` (1.89, rubocop#15452): the column the table
+    /// separator should land on.
+    target_operator_column: isize,
     max_delimiter_width: isize,
 }
 
@@ -998,6 +1025,30 @@ mod tests {
         let got = run("hash = {\n  'a'   =>  0,\n  'bbb' => 1\n}\n", &cfg(2, 2));
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].2, 2); // table message
+    }
+
+    #[test]
+    fn table_style_multiline_key() {
+        // Since 1.89 (rubocop#15452) the table separator column is the max of
+        // the single-line key margin and each multiline key's own end column
+        // + 1, instead of a `max_key_width` corrupted by the newlines in a
+        // multiline key's source. Here the multiline key ends at column 9, so
+        // the target separator column is 11: the multiline pair is already
+        // aligned and only the single-line pairs are flagged.
+        let src = "hash = {\n  'short' => 1,\n  [ :a,\n    :ab, ] => :v,\n  'x' => 2,\n}\n";
+        let got = run(src, &cfg(2, 2));
+        assert_eq!(got.len(), 2);
+        // 'short' pair: separator at column 10, one short of the target.
+        assert_eq!(got[0].2, 2);
+        assert_eq!(got[0].4, 1);
+        // 'x' pair: separator at column 6.
+        assert_eq!(got[1].2, 2);
+        assert_eq!(got[1].4, 5);
+
+        // A multiline hash with no single-line keys is accepted when each
+        // pair's separator follows its own key.
+        let all_multi = "hash = {\n  [\n    :a,\n  ] => 1,\n  [\n    :b,\n  ] => 2,\n}\n";
+        assert!(run(all_multi, &cfg(2, 2)).is_empty());
     }
 
     #[test]
