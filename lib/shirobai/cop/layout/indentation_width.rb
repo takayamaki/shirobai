@@ -78,7 +78,7 @@ module Shirobai
               node = node_at(off[cs], off[ce])
               target = node || Parser::Source::Range.new(buffer, off[cs], off[ce])
               RuboCop::Cop::AlignmentCorrector.correct(
-                corrector, processed_source, target, column_delta
+                corrector, processed_source, target, column_delta, tab_indentation: true
               )
             end
           end
