@@ -19,6 +19,10 @@ module Shirobai
       # after the ext call, this cop is always bundle-eligible.
       class PredicatePrefix < RuboCop::Cop::Base
         include RuboCop::Cop::AllowedMethods
+        # `overrides_inherited_method?` (the 1.89 project-index gate) and the
+        # `external_dependency_checksum` override that invalidates ResultCache
+        # when indexed files change.
+        include RuboCop::Cop::ProjectIndexHelp
 
         def self.cop_name = "Naming/PredicatePrefix"
         def self.badge = RuboCop::Cop::Badge.parse("Naming/PredicatePrefix")
@@ -40,12 +44,20 @@ module Shirobai
 
           off = SourceOffsets.for(processed_source.raw_source)
           candidates.each do |start, fin, method_name, is_def, sorbet_boolean_sig|
-            predicate_prefixes.each do |prefix|
-              next if allowed_method_name?(method_name, prefix)
+            prefixes = predicate_prefixes.reject do |prefix|
               # The Sorbet exemption only applies to `def`/`defs` sites; the
               # stock `on_send` (macro) path never consults the sig.
-              next if is_def && use_sorbet_sigs? && !sorbet_boolean_sig
+              allowed_method_name?(method_name, prefix) ||
+                (is_def && use_sorbet_sigs? && !sorbet_boolean_sig)
+            end
+            next if prefixes.empty?
+            # 1.89 project-index gate, `def`/`defs` sites only: an override of
+            # an ancestor method defined elsewhere in the project is exempt.
+            # Only consulted when the runner handed us an index.
+            next if is_def && project_index &&
+                    overrides_inherited_method?(def_node_at(off[start], off[fin]))
 
+            prefixes.each do |prefix|
               range = Parser::Source::Range.new(processed_source.buffer, off[start], off[fin])
               add_offense(range, message: message(method_name, expected_name(method_name, prefix)))
             end
@@ -100,6 +112,33 @@ module Shirobai
 
         def use_sorbet_sigs?
           cop_config["UseSorbetSigs"]
+        end
+
+        # The parser `def`/`defs` node whose name selector spans the offense
+        # range. Only consulted on the project-index path, so the walk cost is
+        # never paid in a default run.
+        def def_node_at(begin_pos, end_pos)
+          processed_source.ast.each_node(:def, :defs).find do |n|
+            n.loc.name.begin_pos == begin_pos && n.loc.name.end_pos == end_pos
+          end
+        end
+
+        # Verbatim from the stock cop (1.89): an override of a method an
+        # ancestor defines elsewhere in the project keeps the inherited
+        # contract, so renaming it is not suggested. The index helpers come
+        # from the stock `ProjectIndexHelp` mixin.
+        def overrides_inherited_method?(node)
+          return false unless project_index
+          return false unless node
+          return false unless (namespace_node = node.each_ancestor(:class, :module).first)
+
+          declaration = resolve_constant_in_index(namespace_node.identifier)
+          return false unless declaration.is_a?(Rubydex::Namespace)
+
+          scope = node.defs_type? ? indexed_singleton_of(declaration) : declaration
+          !scope.nil? && inherited_index_member?(scope, "#{node.method_name}()")
+        rescue StandardError
+          false
         end
       end
     end
