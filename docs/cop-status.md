@@ -582,7 +582,7 @@ cop's standalone cost.
 
 ## Plugin cops: shirobai-rails (Phase 0 + Application* cluster)
 
-`gems/shirobai-rails` replaces rubocop-rails (pinned `= 2.36.0`) cops with
+`gems/shirobai-rails` replaces rubocop-rails (pinned `= 2.37.0`) cops with
 Rust rules in the shared shirobai-core extension (no second native build).
 This batch stands up the plumbing for a NEW plugin origin (origin 3) plus a
 proof cluster of four trivial cops.

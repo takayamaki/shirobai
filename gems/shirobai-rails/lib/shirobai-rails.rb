@@ -5,15 +5,16 @@
 # 1. `shirobai` first. The core gem loads the native extension, replaces
 #    the core cops, and defines `Shirobai::Dispatch` — the registration
 #    point for this gem's packed-config segment.
-# 2. `rubocop-rails` second. Stock Rails cop classes must be enlisted in
-#    RuboCop's registry BEFORE the wrappers below:
-#    `Registry#clear_enrollment_queue` resolves same-badge collisions by
-#    last-write-wins, so whoever is defined later owns the badge.
-#    Requiring it here (the gemspec pins the exact version) makes the
-#    replacement order independent of `.rubocop.yml` require order.
+# 2. `rubocop-rails` second. Since 2.37 (with RuboCop 1.89) it registers
+#    its cops lazily; requiring it here (the gemspec pins the exact
+#    version) still makes the replacement order independent of
+#    `.rubocop.yml` require order.
 # 3. Wrapper cop classes last. Defining each class auto-enlists it
-#    (`RuboCop::Cop::Base.inherited`) and replaces the stock cop under
-#    the same badge.
+#    (`RuboCop::Cop::Base.inherited`); `Shirobai::Inject.activate!` at the
+#    bottom then claims the badges — it loads every replaced stock
+#    counterpart first (consuming its lazy registration, so it can never
+#    be enlisted again later) and re-enlists the wrappers, which
+#    `Registry#clear_enrollment_queue`'s last-write-wins hands the badge.
 #
 # Requiring rubocop-rails here does NOT merge its config/default.yml into
 # RuboCop's default configuration — that is the plugin system's job. Users

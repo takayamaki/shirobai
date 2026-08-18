@@ -4,4 +4,4 @@
 source "https://rubygems.org"
 
 gem "rubocop", "= 1.89.0"
-gem "rubocop-rails", "= 2.36.0"
+gem "rubocop-rails", "= 2.37.0"
