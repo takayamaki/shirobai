@@ -69,7 +69,7 @@ Two things are different from the shirobai-rspec shell:
 
 ```ruby
 # Gemfile
-gem "rubocop", "= 1.88.2"
+gem "rubocop", "= 1.89.0"
 gem "rubocop-rails", "= 2.36.0"
 gem "shirobai"
 gem "shirobai-rails"
