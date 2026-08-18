@@ -46,30 +46,33 @@ shirobaiは日本語話者なら当然わかるでしょう、白バイです。
   の位置・メッセージ・autocorrect 後のバイトすべてが stock RuboCop と一致する。
   PENDING autocorrect は許容しない。完全互換に到達できない cop は ship しない方針。
 - **実プロジェクトでの速度** — 実 CLI、各プロジェクトの `.rubocop.yml`、
-  plugin gem 込み、5 round 中央値:
+  plugin gem 込み、3 round 中央値:
 
   | コーパス | files | offenses | stock | shirobai (core のみ) | + plugin gem |
   |---|---|---|---|---|---|
-  | Mastodon | 3,206 | 0 | 105.89s | 73.72s (-30.4%) | 62.17s (**-41.3%**) |
-  | Discourse | 10,229 | 16 | 220.09s | 174.44s (-20.7%) | 164.19s (**-25.4%**) |
-  | Redmine | 1,058 | 2 | 56.20s | 38.27s (-31.9%) | 36.05s (**-35.9%**) |
-  | fluentd | 456 | 0 | 6.89s | 7.00s (+1.6%) | 7.77s (+12.7%) |
+  | Mastodon | 3,206 | 0 | 79.31s | 53.92s (-32.0%) | 46.21s (**-41.7%**) |
+  | Discourse | 10,229 | 25 | 143.79s | 106.21s (-26.1%) | 102.75s (**-28.5%**) |
+  | Redmine | 1,058 | 4 | 58.38s | 38.24s (**-34.5%**) | 38.60s (-33.9%) |
+  | fluentd | 456 | 0 | 4.09s | 4.25s (+3.9%) | 4.94s (+20.8%) |
 
   「shirobai (core のみ)」列は core gem 単体、「+ plugin gem」列はその上に
   shirobai-rspec / shirobai-rails / shirobai-performance を足した値
   （各 shell は、対象コーパスの config が該当 stock plugin を実際に load する
   ときだけ require する。実ユーザーと同じ入れ方）。
   計測環境: GitHub Actions `ubuntu-latest`（4-vCPU 共有 runner）、
-  shirobai は [`0b09c69`](https://github.com/takayamaki/shirobai/commit/0b09c69) 時点。
+  shirobai は [`a4e310b`](https://github.com/takayamaki/shirobai/commit/a4e310b) 時点
+  （RuboCop 1.89.0 / rubocop-rails 2.37.0 / rubocop-performance 1.27.0）。
   各実行はまず stock と shirobai が **同じ offense 集合** を報告することを検証してから、
   同じコードを lint する中央値時間を測る。
   任意のコミットで再実行するには `gh workflow run bench.yml`
   （`.github/workflows/bench.yml`）。
 
   plugin cop に時間を使うプロジェクトは、core gem 単体では届かない分を
-  plugin gem で取り返せる（plugin 依存の大きい Discourse は core -20.7% →
-  plugin gem 込み -25.4%。spec の重い Mastodon は shirobai-rspec/-rails で
-  11 ポイント上乗せ）。
+  plugin gem で取り返せる（plugin 依存の大きい Discourse は core -26.1% →
+  plugin gem 込み -28.5%。spec の重い Mastodon は shirobai-rspec/-rails で
+  10 ポイント上乗せ）。Redmine では plugin shell はほぼ収支トントンになった
+  （rubocop-rails 2.37 が自前の重い cop を高速化したため）。core gem 単体が
+  ちょうどいい構成もある。
   fluentd は正直な注意書きで、config がほとんどの default cop を無効化して
   いるため置き換え対象が少なく、native extension の固定ロードコストが削減分を
   わずかに上回る。plugin shell はそこに固定費を足すだけになる。
