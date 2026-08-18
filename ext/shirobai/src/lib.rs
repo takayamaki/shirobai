@@ -3338,30 +3338,41 @@ fn check_empty_line_after_magic_comment(
     )
 }
 
-/// `Lint/DuplicateMethods`: `[[name, key, sexp_start, sexp_end, scope_line,
-/// off_start, off_end, line, rescue_scope], ...]` — one tuple per stock
-/// `found_method` call, in callback order. `sexp_start/end >= 0` marks the
-/// parser-sexp key fallback (byte range of the defs node); `scope_line >= 0`
-/// asks the wrapper to append the `"@#{smart_path}:#{line}"` scope id.
+/// `Lint/DuplicateMethods`: `[[flags, name, key, sexp_start, sexp_end,
+/// scope_line, scope_begin, off_start, off_end, line], ...]` — one tuple per
+/// stock `found_method` / `track_self_alias` call, in callback order.
+/// `sexp_start/end >= 0` marks the parser-sexp key fallback (byte range of
+/// the defs node); `scope_line >= 0` asks the wrapper to append the
+/// `"@#{smart_path}:#{line}:#{begin_pos}"` scope id (1.89
+/// `anon_block_identity`).
 /// `rescue_scope`: 0 none / 1 rescue / 2 ensure. The wrapper replays stock's
 /// cross-file `@definitions` / `@scopes` bookkeeping over this stream.
-type DupMethodTuple = (String, String, i64, i64, i64, usize, usize, usize, u8);
+/// `flags` bits: 0-1 rescue_scope (0 none / 1 rescue / 2 ensure) / 4
+/// self_alias (a `track_self_alias` event: `name` only) / 8 scoped (the key
+/// carries a scope id) / 16 inside_def. `scope_begin >= 0` is the parser
+/// begin offset for the 1.89 `anon_block_identity` suffix.
+type DupMethodTuple = (u8, String, String, i64, i64, i64, i64, usize, usize, usize);
 
 fn map_duplicate_methods(
     v: Vec<shirobai_core::rules::duplicate_methods::DupMethodEvent>,
 ) -> Vec<DupMethodTuple> {
     v.into_iter()
         .map(|e| {
+            let flags = e.rescue_scope
+                | (u8::from(e.self_alias) << 2)
+                | (u8::from(e.scoped) << 3)
+                | (u8::from(e.inside_def) << 4);
             (
+                flags,
                 e.name,
                 e.key,
                 e.sexp_start,
                 e.sexp_end,
                 e.scope_line,
+                e.scope_begin,
                 e.off_start,
                 e.off_end,
                 e.line,
-                e.rescue_scope,
             )
         })
         .collect()
@@ -3397,13 +3408,19 @@ fn check_frozen_string_literal_comment(
 }
 
 /// Ruby entry point for `Lint/DuplicateMethods` (standalone fallback).
-/// `active_support` mirrors `AllCops/ActiveSupportExtensionsEnabled`.
-/// Returns the shape documented on `map_duplicate_methods`.
-fn check_duplicate_methods(source: RString, active_support: bool) -> Vec<DupMethodTuple> {
+/// `active_support` mirrors `AllCops/ActiveSupportExtensionsEnabled`;
+/// `delegating` is the `DelegatingMethods` list (1.89). Returns the shape
+/// documented on `map_duplicate_methods`.
+fn check_duplicate_methods(
+    source: RString,
+    active_support: bool,
+    delegating: Vec<String>,
+) -> Vec<DupMethodTuple> {
     map_duplicate_methods(shirobai_core::rules::duplicate_methods::check_duplicate_methods(
         bytes(&source),
         &shirobai_core::rules::duplicate_methods::Config {
             active_support_extensions_enabled: active_support,
+            delegating_methods: delegating,
         },
     ))
 }
@@ -4521,7 +4538,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     )?;
     module.define_module_function(
         "check_duplicate_methods",
-        function!(check_duplicate_methods, 2),
+        function!(check_duplicate_methods, 3),
     )?;
     module.define_module_function(
         "check_empty_lines",

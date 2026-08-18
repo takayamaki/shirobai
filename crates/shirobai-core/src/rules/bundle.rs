@@ -230,6 +230,7 @@ pub fn check_multiline_bundle(
 /// | 25  | arguments_forwarding RedundantRestArgumentNames |
 /// | 26  | arguments_forwarding RedundantKeywordRestArgumentNames |
 /// | 27  | arguments_forwarding RedundantBlockArgumentNames |
+/// | 28  | duplicate_methods_delegating (`Lint/DuplicateMethods` `DelegatingMethods`, 1.89) |
 ///
 /// Performance segment `nums[1]` (the shirobai-performance plugin origin):
 ///
@@ -485,7 +486,7 @@ pub const ORIGIN_RAILS: usize = 3;
 pub const N_ORIGINS: usize = 4;
 
 const CORE_NUMS_LEN: usize = 134;
-const CORE_LISTS_LEN: usize = 28;
+const CORE_LISTS_LEN: usize = 29;
 const PERF_NUMS_LEN: usize = 3;
 const PERF_LISTS_LEN: usize = 1;
 
@@ -546,7 +547,7 @@ impl BundleConfig {
         }
         let mut lists = core_lists.into_iter();
         let mut next_list = || lists.next().expect("length checked above");
-        Ok(BundleConfig {
+        let mut bundle = BundleConfig {
             debugger_methods: next_list(),
             debugger_requires: next_list(),
             block_length_max: nums[0] as usize,
@@ -802,6 +803,9 @@ impl BundleConfig {
             },
             duplicate_methods: duplicate_methods::Config {
                 active_support_extensions_enabled: nums[111] != 0,
+                // Filled after the literal: list 28 sits at the end of the
+                // packing order, after the arguments_forwarding lists.
+                delegating_methods: Vec::new(),
             },
             redundant_freeze_target_30_plus: nums[114] != 0,
             redundant_freeze_string_literals_frozen_by_default: nums[115] != 0,
@@ -856,7 +860,9 @@ impl BundleConfig {
             // The shirobai-rails origin, read from its own segment (nums and
             // list lengths are checked there).
             rails: rails_config::RailsConfig::from_segment(rails_nums, &rails_lists)?,
-        })
+        };
+        bundle.duplicate_methods.delegating_methods = next_list();
+        Ok(bundle)
     }
 }
 
@@ -2021,6 +2027,7 @@ mod tests {
             ["args", "arguments"].map(String::from).to_vec(), // af: RedundantRestArgumentNames
             ["kwargs", "options", "opts"].map(String::from).to_vec(), // af: RedundantKeywordRestArgumentNames
             ["blk", "block", "proc"].map(String::from).to_vec(), // af: RedundantBlockArgumentNames
+            vec!["delegate".to_string()], // duplicate_methods: DelegatingMethods
         ];
         // Performance segment (origin 1): enabled, with the SafeMultiline
         // defaults and RuboCop's default preferred method for Detect

@@ -66,10 +66,13 @@ use ruby_prism::{CallNode, Node};
 use super::dispatch::{self, Interest, Rule};
 use super::line_index::{self, LineIndex};
 
-/// `AllCops/ActiveSupportExtensionsEnabled` — gates `delegate` tracking.
-#[derive(Clone, Copy)]
+/// `AllCops/ActiveSupportExtensionsEnabled` — gates delegating-call
+/// tracking — and the `DelegatingMethods` name list (1.89; default
+/// `["delegate"]`).
+#[derive(Clone)]
 pub struct Config {
     pub active_support_extensions_enabled: bool,
+    pub delegating_methods: Vec<String>,
 }
 
 /// One `found_method` call, in stock's callback order.
@@ -98,6 +101,18 @@ pub struct DupMethodEvent {
     /// Nearest parser rescue/ensure ancestor: 0 none, 1 `:rescue`,
     /// 2 `:ensure`.
     pub rescue_scope: u8,
+    /// `>= 0`: parser begin offset for the anonymous-block scope id — since
+    /// 1.89 the suffix is `"@#{path}:#{line}:#{begin_pos}"`
+    /// (`anon_block_identity`), distinguishing blocks that share a line.
+    pub scope_begin: i64,
+    /// A `track_self_alias` event (1.89): `name` carries the humanized
+    /// method name; the wrapper records it and skips the bookkeeping.
+    pub self_alias: bool,
+    /// The key carries a scope id (`scope_id` non-nil in stock) — gates the
+    /// project-index cross-file check in the wrapper.
+    pub scoped: bool,
+    /// `node.each_ancestor(:any_def).any?` — gates the cross-file check.
+    pub inside_def: bool,
 }
 
 const RESTRICT_ON_SEND: &[&[u8]] = &[
@@ -160,6 +175,11 @@ struct CallInfo {
     /// This call is `Class.new`/`Module.new` (any const namespace, any
     /// args) with a PLAIN literal block — an anonymous-class candidate.
     is_com_new_block: bool,
+    /// The `Class.new` subset of the above (stock `class_new_block?`):
+    /// suppresses the receiver-based scope id when the block is an argument
+    /// to a named-receiver call (1.89, rubocop#15058). `Module.new` keeps
+    /// the receiver id — it may be intentionally mixed into one target.
+    is_class_new_block: bool,
     has_plain_block: bool,
     start: usize,
 }
@@ -216,7 +236,8 @@ struct Frame {
 enum ScopeId {
     None,
     Static(String),
-    PathLine(usize),
+    /// `anon_block_identity` (1.89): line and parser begin offset.
+    PathLine(usize, usize),
 }
 
 pub struct DuplicateMethodsRule<'s> {
@@ -234,7 +255,7 @@ pub fn build_rule<'s>(source: &'s [u8], cfg: &Config) -> DuplicateMethodsRule<'s
     let li = line_index::with_line_index(source, |li| li.clone());
     DuplicateMethodsRule {
         source,
-        cfg: *cfg,
+        cfg: cfg.clone(),
         li,
         frames: Vec::new(),
         if_depth: 0,
@@ -307,6 +328,21 @@ fn block_kind(call: &CallNode<'_>) -> BlockKind {
             },
             None => BlockKind::BlockArg,
         },
+    }
+}
+
+/// The const node (read or path) is named `name` (any namespace).
+fn const_named(node: &Node<'_>, name: &[u8]) -> bool {
+    match node {
+        Node::ConstantReadNode { .. } => {
+            node.as_constant_read_node().unwrap().name().as_slice() == name
+        }
+        Node::ConstantPathNode { .. } => node
+            .as_constant_path_node()
+            .unwrap()
+            .name()
+            .is_some_and(|n| n.as_slice() == name),
+        _ => false,
     }
 }
 
@@ -553,16 +589,22 @@ impl<'s> DuplicateMethodsRule<'s> {
     /// `anon_block_scope_id(anon_block)` for the anonymous block owned by
     /// the Call frame at `call_idx`.
     fn anon_scope_id(&self, call_idx: usize) -> ScopeId {
-        let path_line = || {
-            let start = match &self.frames[call_idx].kind {
-                Kind::Call(info) => info.start,
-                _ => unreachable!(),
-            };
-            ScopeId::PathLine(self.li.line_of(start))
+        let start = match &self.frames[call_idx].kind {
+            Kind::Call(info) => info.start,
+            _ => unreachable!(),
         };
+        let path_line = || ScopeId::PathLine(self.li.line_of(start), start);
+        // Stock `scope_receiver` (1.89, rubocop#15058): a Class.new block
+        // passed as an argument to a named-receiver method call falls
+        // through to the unique source-location id — the receiver-based id
+        // (e.g. "T.cast") is the same for every call.
+        let class_new = matches!(
+            &self.frames[call_idx].kind,
+            Kind::Call(info) if info.is_class_new_block
+        );
         match self.resolve_parent(call_idx) {
             PParent::Call(info) => match info.recv {
-                Some(r) if !info.recv_is_com_new_block => {
+                Some(r) if !info.recv_is_com_new_block && !class_new => {
                     ScopeId::Static(format!("{}.{}", self.src(r), info.name))
                 }
                 _ => path_line(),
@@ -651,10 +693,11 @@ impl<'s> DuplicateMethodsRule<'s> {
         off: (usize, usize),
         node_start: usize,
     ) {
-        let (scope_line, static_suffix) = match scope_id {
-            ScopeId::None => (-1i64, None),
-            ScopeId::PathLine(l) => (l as i64, None),
-            ScopeId::Static(s) => (-1i64, Some(s)),
+        let scoped = !matches!(scope_id, ScopeId::None);
+        let (scope_line, scope_begin, static_suffix) = match scope_id {
+            ScopeId::None => (-1i64, -1i64, None),
+            ScopeId::PathLine(l, b) => (l as i64, b as i64, None),
+            ScopeId::Static(s) => (-1i64, -1i64, Some(s)),
         };
         let mut key = format!("{}{}", self.key_prefix(), key_body);
         if let Some(s) = static_suffix {
@@ -667,6 +710,12 @@ impl<'s> DuplicateMethodsRule<'s> {
         };
         let rescue_scope = self.rescue_scope(node_start);
         let line = self.li.line_of(node_start);
+        // `each_ancestor(:any_def)` — handle_def runs before its own frame
+        // is pushed, so the frames never include the current def.
+        let inside_def = self
+            .frames
+            .iter()
+            .any(|f| matches!(f.kind, Kind::Def { .. }));
         self.events.push(DupMethodEvent {
             name,
             key,
@@ -677,6 +726,36 @@ impl<'s> DuplicateMethodsRule<'s> {
             off_end: off.1,
             line,
             rescue_scope,
+            scope_begin,
+            self_alias: false,
+            scoped,
+            inside_def,
+        });
+    }
+
+    /// Stock `track_self_alias` (1.89): `alias foo foo` /
+    /// `alias_method :foo, :foo` marks an intentional redefinition of a
+    /// method defined in another file. Only tracked when
+    /// `parent_module_name` resolves, like stock.
+    fn track_self_alias(&mut self, name: &str) {
+        let Some(scope) = self.pmn(self.frames.len()) else {
+            return;
+        };
+        let full = format!("{}{}", humanize_scope(&scope), name);
+        self.events.push(DupMethodEvent {
+            name: full,
+            key: String::new(),
+            sexp_start: -1,
+            sexp_end: -1,
+            scope_line: -1,
+            off_start: 0,
+            off_end: 0,
+            line: 0,
+            rescue_scope: 0,
+            scope_begin: -1,
+            self_alias: true,
+            scoped: false,
+            inside_def: false,
         });
     }
 
@@ -851,6 +930,7 @@ impl<'s> DuplicateMethodsRule<'s> {
             return;
         };
         if new == old {
+            self.track_self_alias(&new);
             return;
         }
         if self.if_depth > 0 {
@@ -861,9 +941,49 @@ impl<'s> DuplicateMethodsRule<'s> {
         self.found_instance_method(&new, off, loc.start_offset());
     }
 
+    /// Stock `delegating_method?`: gated on ActiveSupportExtensionsEnabled
+    /// (recognizing a delegating call as a method definition is Active
+    /// Support behavior) and the configured `DelegatingMethods` list.
+    fn is_delegating(&self, name: &[u8]) -> bool {
+        self.cfg.active_support_extensions_enabled
+            && self
+                .cfg
+                .delegating_methods
+                .iter()
+                .any(|m| m.as_bytes() == name)
+    }
+
+    /// The `delegate_args` half: true when the arguments have the delegate
+    /// shape (events are then emitted), false to fall through to the
+    /// def_delegator branches.
+    fn handle_delegating(
+        &mut self,
+        args: &[Node<'_>],
+        off: (usize, usize),
+        node_start: usize,
+    ) -> bool {
+        let Some((names, prefix)) = delegate_names(args) else {
+            return false;
+        };
+        if self.if_depth > 0 {
+            return true;
+        }
+        for n in names {
+            let full = match &prefix {
+                Some(p) => format!("{p}_{n}"),
+                None => n,
+            };
+            self.found_instance_method(&full, off, node_start);
+        }
+        true
+    }
+
     fn handle_send(&mut self, call: &CallNode<'_>) {
         let name = call.name().as_slice();
-        if !RESTRICT_ON_SEND.contains(&name) {
+        // Stock 1.89 drops RESTRICT_ON_SEND (DelegatingMethods is
+        // configurable); the fixed names plus the configured list keep the
+        // same early exit here.
+        if !RESTRICT_ON_SEND.contains(&name) && !self.is_delegating(name) {
             return;
         }
         if call.is_safe_navigation() || call.receiver().is_some() {
@@ -895,7 +1015,11 @@ impl<'s> DuplicateMethodsRule<'s> {
                 let (Some(new), Some(old)) = (sym_value(&args[0]), sym_value(&args[1])) else {
                     return;
                 };
-                if new == old || self.if_depth > 0 {
+                if new == old {
+                    self.track_self_alias(&new);
+                    return;
+                }
+                if self.if_depth > 0 {
                     return;
                 }
                 self.found_instance_method(&new, off, node_start);
@@ -930,24 +1054,14 @@ impl<'s> DuplicateMethodsRule<'s> {
                     }
                 }
             }
-            b"delegate" => {
-                if !self.cfg.active_support_extensions_enabled {
-                    return;
-                }
-                let Some((names, prefix)) = delegate_names(&args) else {
-                    return;
-                };
-                if self.if_depth > 0 {
-                    return;
-                }
-                for n in names {
-                    let full = match &prefix {
-                        Some(p) => format!("{p}_{n}"),
-                        None => n,
-                    };
-                    self.found_instance_method(&full, off, node_start);
-                }
-            }
+            // Stock's elsif chain checks `delegating_method?(node) &&
+            // delegate_args(node)` BEFORE the def_delegator branches: a
+            // configured name whose arguments do not have the delegate shape
+            // must still fall through (e.g. `DelegatingMethods:
+            // ['def_delegator']`). `handle_delegating` mirrors that by
+            // returning false on a shape mismatch.
+            n if self.is_delegating(n)
+                && self.handle_delegating(&args, off, node_start) => {}
             b"def_delegator" | b"def_instance_delegator" => {
                 // 2 or 3 args, all plain sym/str; the last is the defined name.
                 if args.len() != 2 && args.len() != 3 {
@@ -1126,6 +1240,8 @@ impl<'s> DuplicateMethodsRule<'s> {
                             .is_some_and(|rc| is_com_new_block(&rc, block_kind(&rc)))
                     }),
                     is_com_new_block: is_com_new_block(&c, kind),
+                    is_class_new_block: is_com_new_block(&c, kind)
+                        && c.receiver().is_some_and(|r| const_named(&r, b"Class")),
                     has_plain_block: kind == BlockKind::Plain,
                     start: c.location().start_offset(),
                 };
@@ -1321,16 +1437,22 @@ impl<'s> Rule for DuplicateMethodsRule<'s> {
 mod tests {
     use super::*;
 
-    fn events(src: &str) -> Vec<(String, String, i64, i64, u8)> {
+    fn all_events(src: &str) -> Vec<DupMethodEvent> {
         check_duplicate_methods(
             src.as_bytes(),
             &Config {
                 active_support_extensions_enabled: false,
+                delegating_methods: vec!["delegate".to_string()],
             },
         )
-        .into_iter()
-        .map(|e| (e.key, e.name, e.scope_line, e.sexp_start, e.rescue_scope))
-        .collect()
+    }
+
+    fn events(src: &str) -> Vec<(String, String, i64, i64, u8)> {
+        all_events(src)
+            .into_iter()
+            .filter(|e| !e.self_alias)
+            .map(|e| (e.key, e.name, e.scope_line, e.sexp_start, e.rescue_scope))
+            .collect()
     }
 
     fn keys(src: &str) -> Vec<String> {
@@ -1439,11 +1561,18 @@ mod tests {
         assert_eq!(evts[0].2, 2);
     }
 
-    // Chained receiver: `x.foo(Class.new do ... end)` gets a static
-    // receiver.method scope id.
+    // Chained receiver: since 1.89 (rubocop#15058) a Class.new block passed
+    // to a named-receiver call falls through to the unique
+    // path:line:begin_pos id — the receiver id would collide across calls.
     #[test]
     fn anon_in_call_args_with_receiver() {
-        let evts = events("x.foo(Class.new do\n  def y; end\nend)\n");
+        let evts = all_events("x.foo(Class.new do\n  def y; end\nend)\n");
+        assert_eq!(evts[0].key, "Object#y");
+        assert_eq!(evts[0].scope_line, 1);
+        assert_eq!(evts[0].scope_begin, 6); // `Class.new` begin
+        // Module.new keeps the receiver-based id: it may be intentionally
+        // mixed into one target.
+        let evts = events("x.foo(Module.new do\n  def y; end\nend)\n");
         assert_eq!(evts[0].0, "Object#y@x.foo");
     }
 
@@ -1538,6 +1667,14 @@ mod tests {
     fn alias_forms() {
         assert_eq!(keys("class A\n  alias foo bar\nend\n"), vec!["A#foo"]);
         assert_eq!(keys("class A\n  alias foo foo\nend\n"), Vec::<String>::new());
+        // ...but 1.89 tracks it as a self-alias event (the intentional
+        // cross-file redefinition marker).
+        let sa: Vec<DupMethodEvent> = all_events("class A\n  alias foo foo\nend\n")
+            .into_iter()
+            .filter(|e| e.self_alias)
+            .collect();
+        assert_eq!(sa.len(), 1);
+        assert_eq!(sa[0].name, "A#foo");
         assert_eq!(
             keys("class A\n  alias_method :foo, :bar\nend\n"),
             vec!["A#foo"]
@@ -1578,6 +1715,7 @@ mod tests {
             src.as_bytes(),
             &Config {
                 active_support_extensions_enabled: true,
+                delegating_methods: vec!["delegate".to_string()],
             },
         );
         assert_eq!(evts[0].key, "A#foo");
@@ -1588,6 +1726,7 @@ mod tests {
     fn delegate_prefix() {
         let cfg = Config {
             active_support_extensions_enabled: true,
+            delegating_methods: vec!["delegate".to_string()],
         };
         let k = |src: &str| {
             check_duplicate_methods(src.as_bytes(), &cfg)
@@ -1703,6 +1842,7 @@ mod tests {
             b"class A\n  def self.foo; end\nend\n",
             &Config {
                 active_support_extensions_enabled: false,
+                delegating_methods: vec!["delegate".to_string()],
             },
         );
         let src = "class A\n  def self.foo; end\nend\n";
@@ -1717,6 +1857,7 @@ mod tests {
             src.as_bytes(),
             &Config {
                 active_support_extensions_enabled: false,
+                delegating_methods: vec!["delegate".to_string()],
             },
         );
         assert_eq!(&src[evts[0].off_start..evts[0].off_end], "alias_method :a, :b");
