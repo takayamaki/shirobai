@@ -65,11 +65,9 @@ module Shirobai
     # classes are defined (each auto-enlists via `Base.inherited`), again at
     # each shirobai plugin gem's require (their stock departments — e.g.
     # `Rails/SafeNavigation` listing `Style::RedundantSelf` — enlist between
-    # aligner runs), and lazily when the registry grew since the last run
-    # (third-party plugins like rubocop-capybara load during config
-    # resolution, after every shirobai require; see `align_if_registry_grew!`
-    # and `Dispatch.bundle_token`). Idempotent: an already-translated list
-    # maps to itself and is skipped.
+    # aligner runs), and per config over the enabled set (third-party
+    # plugins like rubocop-capybara load during config resolution, after
+    # every shirobai require; see `align_for` and `Dispatch.bundle_token`).
     #
     # The rewritten methods return a FRESH copy per call, like stock's
     # per-call array literals: rubocop-performance and rubocop-capybara
@@ -99,13 +97,26 @@ module Shirobai
       extra_cops.each do |cop|
         next if replacements.value?(cop)
 
-        list = cop.autocorrect_incompatible_with
+        list = base_incompatible_list(cop)
         mapped = list.map { |klass| replacements.fetch(klass, klass) }
         next if mapped == list
 
         mapped.freeze
         cop.define_singleton_method(:autocorrect_incompatible_with) { mapped.dup }
       end
+    end
+
+    # The cop's own `autocorrect_incompatible_with`, bypassing modules
+    # prepended onto its singleton class (rubocop-performance's
+    # `super.push(...)` pattern). The rewritten method sits UNDER those
+    # prepends, so snapshotting the full call would bake their pushes into
+    # the base and the prepend would then add them again on every call.
+    def self.base_incompatible_list(cop)
+      singleton = cop.singleton_class
+      prepends = singleton.ancestors.take_while { |mod| !mod.equal?(singleton) }
+      meth = cop.method(:autocorrect_incompatible_with)
+      meth = meth.super_method while meth && prepends.include?(meth.owner)
+      meth ? meth.call : []
     end
 
     # Per-config re-alignment for cops that load AFTER every shirobai

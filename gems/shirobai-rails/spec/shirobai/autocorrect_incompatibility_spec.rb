@@ -17,21 +17,26 @@ RSpec.describe "autocorrect incompatibility alignment (rails)" do
 
   let(:config) { RuboCop::ConfigLoader.default_configuration }
 
-  it "leaves no dismissed stock class in any active cop's list" do
+  it "leaves no replaced stock class in any enabled cop's list once the config is aligned" do
+    # Non-wrapper lists are translated per config (`Inject.align_for`,
+    # called from `Dispatch.bundle_token` before any correction round), not
+    # at require time: enumerating the whole registry would force every
+    # lazily registered stock cop to load. The runtime guarantee covers the
+    # enabled set the team is built from.
+    Shirobai::Inject.align_for(config)
     registry = RuboCop::Cop::Registry.global
-    dismissed = registry.cops.filter_map do |cop|
-      next unless cop.name&.start_with?("Shirobai::")
-
+    replaced = Shirobai::Inject.wrapper_cops.filter_map do |cop|
       Shirobai::Inject.stock_counterpart(cop)
     end
-    registry.cops.each do |cop|
-      stale = cop.autocorrect_incompatible_with & dismissed
+    registry.enabled(config).each do |cop|
+      stale = cop.autocorrect_incompatible_with & replaced
       expect(stale).to be_empty,
-                       "#{cop.cop_name} still lists dismissed stock classes: #{stale}"
+                       "#{cop.cop_name} still lists replaced stock classes: #{stale}"
     end
   end
 
   it "translates Rails/SafeNavigation's list to the replaced RedundantSelf" do
+    Shirobai::Inject.align_for(config)
     expect(RuboCop::Cop::Rails::SafeNavigation.autocorrect_incompatible_with)
       .to eq([Shirobai::Cop::Style::RedundantSelf])
   end
