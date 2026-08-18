@@ -24,5 +24,5 @@ Gem::Specification.new do |spec|
   # Hard pin, same policy as core's rubocop pin: shirobai copies cop
   # behavior at the byte level, so even a minor rubocop-performance update
   # can break compatibility. A failed install beats a silent difference.
-  spec.add_dependency "rubocop-performance", "= 1.26.1"
+  spec.add_dependency "rubocop-performance", "= 1.27.0"
 end

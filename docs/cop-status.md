@@ -286,7 +286,7 @@ has a non-ASCII `!` / `?` method name, so this never affects corpus parity
 
 ## Plugin cops: shirobai-performance (proof of concept)
 
-`gems/shirobai-performance` replaces rubocop-performance (pinned `= 1.26.1`)
+`gems/shirobai-performance` replaces rubocop-performance (pinned `= 1.27.0`)
 cops with Rust rules that live in the shared shirobai-core extension
 (no second native build). This batch is a proof of concept for the plugin
 plumbing — monorepo gem boundary, load order, packed-config segment with
