@@ -222,7 +222,7 @@ Each directory has its own `README.md` with details.
 | `gems/shirobai-performance/` | Plugin gem (rubocop-performance cops) |
 | `gems/shirobai-rspec/` | Plugin gem (rubocop-rspec cops) |
 | `gems/shirobai-rails/` | Plugin gem (rubocop-rails cops) |
-| `vendor/rubocop-performance/` | Git submodule pinned to 1.26.1 for plugin vendor specs |
+| `vendor/rubocop-performance/` | Git submodule pinned to 1.27.0 for plugin vendor specs |
 | `vendor/rubocop-rspec/` | Git submodule pinned to 3.10.2 for plugin vendor specs |
 | `vendor/rubocop-rails/` | Git submodule pinned to 2.36.0 for plugin vendor specs |
 

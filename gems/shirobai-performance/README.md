@@ -20,7 +20,7 @@ This gem is a **pure-Ruby thin shell**: wrapper cop classes plus load-order
 glue. The Rust rules live in the shirobai core gem's native extension —
 one shared cdylib, no extra cargo build for users.
 
-- `rubocop-performance` is pinned exactly (`= 1.26.1`), same policy as
+- `rubocop-performance` is pinned exactly (`= 1.27.0`), same policy as
   core's rubocop pin: byte-level behavior copies break on minor updates.
 - `shirobai` is pinned to the exact same version as this gem: the bundle
   slot layout and the packed-config segment are an internal wire contract.
@@ -35,7 +35,7 @@ one shared cdylib, no extra cargo build for users.
 ```ruby
 # Gemfile
 gem "rubocop", "= 1.89.0"
-gem "rubocop-performance", "= 1.26.1"
+gem "rubocop-performance", "= 1.27.0"
 gem "shirobai"
 gem "shirobai-performance"
 ```
