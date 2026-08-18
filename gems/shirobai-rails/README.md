@@ -15,7 +15,7 @@ This gem is a **pure-Ruby thin shell**: wrapper cop classes plus load-order
 glue. The Rust rules live in the shirobai core gem's native extension —
 one shared cdylib, no extra cargo build for users.
 
-- `rubocop-rails` is pinned exactly (`= 2.36.0`), same policy as core's
+- `rubocop-rails` is pinned exactly (`= 2.37.0`), same policy as core's
   rubocop pin: byte-level behavior copies break on minor updates.
 - `shirobai` is pinned to the exact same version as this gem: the bundle
   slot layout and the packed-config segment are an internal wire contract.
@@ -70,7 +70,7 @@ Two things are different from the shirobai-rspec shell:
 ```ruby
 # Gemfile
 gem "rubocop", "= 1.89.0"
-gem "rubocop-rails", "= 2.36.0"
+gem "rubocop-rails", "= 2.37.0"
 gem "shirobai"
 gem "shirobai-rails"
 ```

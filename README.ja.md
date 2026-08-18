@@ -207,7 +207,7 @@ disable コメント、`--only` / `--except`、`--auto-correct`、ResultCache �
 | `gems/shirobai-rails/` | プラグイン gem（rubocop-rails cop） |
 | `vendor/rubocop-performance/` | git submodule、1.26.1 を pin（プラグイン vendor spec 用） |
 | `vendor/rubocop-rspec/` | git submodule、3.10.2 を pin（プラグイン vendor spec 用） |
-| `vendor/rubocop-rails/` | git submodule、2.36.0 を pin（プラグイン vendor spec 用） |
+| `vendor/rubocop-rails/` | git submodule、2.37.0 を pin（プラグイン vendor spec 用） |
 
 ## ビルドとテスト
 
