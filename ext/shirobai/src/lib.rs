@@ -2244,18 +2244,32 @@ fn map_space_inside_string_interpolation(
 
 type IfUnlessModifierOps = Vec<(u8, usize, usize, String)>;
 
+/// One direction-1 rewrite variant: `(replacement, assembled_line)`. The
+/// assembled line is non-empty only when its raw length exceeds max (the
+/// wrapper then applies the `Layout/LineLength` exemptions, 1.89).
+type IfUnlessModifierVariant = (String, String);
+type IfUnlessModifierTuple = (
+    u8, usize, usize, usize, usize, u8, usize, usize,
+    IfUnlessModifierVariant, IfUnlessModifierVariant, usize, IfUnlessModifierOps,
+);
+
 /// `Style/IfUnlessModifier` candidates: `[kind, kw_start, kw_end, node_start,
 /// node_end, flags, comment_start, comment_end, replacement_no_comment,
 /// replacement_with_comment, line_number, ops]`, in walk order.
 ///
 /// `kind`: 0 = "use modifier", 1 = "too long". `flags` bits: 1 unless-keyword
 /// / 2 another_modifier_if_on_same_line / 4 has first-line comment / 8 code
-/// after `end` / 16 fits without comment / 32 fits with comment. `ops` are
+/// after `end` / 16 fits without comment / 32 fits with comment / 64
+/// parenthesize (stock's MSG_USE_MODIFIER_PARENS variant, 1.89). `ops` are
 /// `[op_kind, start, end, text]` with 0 = replace, 1 = remove (direction 2).
+/// The replacement slots are `(replacement, assembled_line)` pairs per
+/// comment variant; the assembled line is non-empty only when its raw length
+/// exceeds max — the wrapper then applies the `Layout/LineLength`
+/// exemptions.
 #[allow(clippy::type_complexity)]
 fn map_if_unless_modifier(
     v: Vec<shirobai_core::rules::if_unless_modifier::IfUnlessModifierCandidate>,
-) -> Vec<(u8, usize, usize, usize, usize, u8, usize, usize, String, String, usize, IfUnlessModifierOps)> {
+) -> Vec<IfUnlessModifierTuple> {
     v.into_iter()
         .map(|c| {
             let flags = u8::from(c.is_unless)
@@ -2263,7 +2277,8 @@ fn map_if_unless_modifier(
                 | (u8::from(c.has_comment) << 2)
                 | (u8::from(c.has_code_after_end) << 3)
                 | (u8::from(c.fits_no_comment) << 4)
-                | (u8::from(c.fits_with_comment) << 5);
+                | (u8::from(c.fits_with_comment) << 5)
+                | (u8::from(c.parenthesize) << 6);
             let ops = c
                 .ops
                 .into_iter()
@@ -2278,8 +2293,8 @@ fn map_if_unless_modifier(
                 flags,
                 c.comment_start,
                 c.comment_end,
-                c.replacement_no_comment,
-                c.replacement_with_comment,
+                (c.replacement_no_comment, c.line_no_comment),
+                (c.replacement_with_comment, c.line_with_comment),
                 c.line_number,
                 ops,
             )
@@ -2294,7 +2309,7 @@ fn map_if_unless_modifier(
 fn check_if_unless_modifier(
     source: RString,
     nums: Vec<i64>,
-) -> Vec<(u8, usize, usize, usize, usize, u8, usize, usize, String, String, usize, IfUnlessModifierOps)> {
+) -> Vec<IfUnlessModifierTuple> {
     let cfg = shirobai_core::rules::if_unless_modifier::Config {
         max_line_length: if nums[0] < 0 { None } else { Some(nums[0]) },
         tab_width: nums[1],

@@ -37,6 +37,10 @@ module Shirobai
         MSG_USE_MODIFIER = "Favor modifier `%<keyword>s` usage when having a " \
                            "single-line body. Another good alternative is " \
                            "the usage of control flow `&&`/`||`."
+        MSG_USE_MODIFIER_PARENS = "Favor modifier `%<keyword>s` usage when having a " \
+                                  "single-line body. Wrap the expression in parentheses " \
+                                  "to keep the current behavior, as it is part of a " \
+                                  "larger expression."
         MSG_USE_NORMAL = "Modifier form of `%<keyword>s` makes the line too long."
 
         def self.cop_name = "Style/IfUnlessModifier"
@@ -96,28 +100,32 @@ module Shirobai
 
         # Direction 1: multiline if/unless that would fit as a modifier.
         def check_use_modifier(candidate)
-          _, kw_s, kw_e, node_s, node_e, flags, c_s, c_e, repl_no, repl_with, = candidate
+          _, kw_s, kw_e, node_s, node_e, flags, c_s, c_e, variant_no, variant_with, line_no, = candidate
           if flags.anybits?(4) # first-line comment present
             comment = rust_source.byteslice(c_s, c_e - c_s)
             if comment_disables_cop?(comment)
               fits = flags.anybits?(16)
-              replacement = repl_no
+              replacement, rendered_line = variant_no
             else
               # `first_line_comment(node) && code_after(node)` rejection.
               return if flags.anybits?(8)
 
               fits = flags.anybits?(32)
-              replacement = repl_with
+              replacement, rendered_line = variant_with
             end
           else
             fits = flags.anybits?(16)
-            replacement = repl_no
+            replacement, rendered_line = variant_no
           end
-          return unless fits
+          # 1.89: a raw-too-long modifier form still "fits" when
+          # `Layout/LineLength` would exempt the assembled line
+          # (`acceptable_line_length?`); Rust exported that line.
+          return unless fits || exempted_line?(rendered_line, line_no)
 
           keyword = flags.anybits?(1) ? "unless" : "if"
+          message = flags.anybits?(64) ? MSG_USE_MODIFIER_PARENS : MSG_USE_MODIFIER
           add_candidate_offense(kw_s, kw_e, node_s, node_e, flags,
-                                format(MSG_USE_MODIFIER, keyword: keyword)) do |corrector, node_range|
+                                format(message, keyword: keyword)) do |corrector, node_range|
             corrector.replace(node_range, replacement)
           end
         end
@@ -127,17 +135,8 @@ module Shirobai
         # exemptions are applied here, in stock's order.
         def check_too_long(candidate)
           _, kw_s, kw_e, node_s, node_e, flags, _, _, _, _, line_no, ops = candidate
-          return unless line_length_enabled_at_line?(line_no)
-
           line = processed_source.lines[line_no - 1]
-          return if matches_allowed_pattern?(line)
-
-          if allow_cop_directives? && directive_on_source_line?(line_no - 1)
-            return unless line_length_without_directive(line) > max_line_length
-          elsif allow_uri?
-            uri_range = find_excessive_range(line, :uri)
-            return if uri_range && allowed_position?(line, uri_range)
-          end
+          return if exempted_line?(line, line_no)
 
           keyword = flags.anybits?(1) ? "unless" : "if"
           buffer = processed_source.buffer
@@ -181,6 +180,27 @@ module Shirobai
         end
 
         # --- stock private methods reused verbatim ---
+
+        # Stock `acceptable_line_length?` (1.89) minus the raw length
+        # comparison, which Rust already decided: a line `Layout/LineLength`
+        # would not flag fits by definition.
+        def exempted_line?(line, line_number)
+          return true unless line_length_enabled_at_line?(line_number)
+          return true if matches_allowed_pattern?(line)
+
+          if allow_cop_directives? && directive_on_source_line?(line_number - 1)
+            return line_length_without_directive(line) <= max_line_length
+          end
+
+          allowed_by_uri?(line)
+        end
+
+        def allowed_by_uri?(line)
+          return false unless allow_uri?
+
+          uri_range = find_excessive_range(line, :uri)
+          !uri_range.nil? && allowed_position?(line, uri_range)
+        end
 
         def line_length_enabled_at_line?(line)
           processed_source.comment_config.cop_enabled_at_line?("Layout/LineLength", line)
