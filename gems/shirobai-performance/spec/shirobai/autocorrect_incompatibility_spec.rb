@@ -10,7 +10,21 @@ require "spec_helper"
 # a future wrapper (or core slot) cannot leave a dismissed class in any
 # list.
 RSpec.describe "autocorrect incompatibility alignment (performance)" do
+  let(:config) { RuboCop::ConfigLoader.default_configuration }
+  # `Naming/BlockForwarding` ships pending, so the per-config alignment only
+  # covers it when a config enables it — as any run consulting its list
+  # would have.
+  let(:config_with_block_forwarding) do
+    base = RuboCop::ConfigLoader.default_configuration
+    hash = base.to_h
+    hash["Naming/BlockForwarding"] = hash["Naming/BlockForwarding"].merge("Enabled" => true)
+    RuboCop::Config.new(hash, base.loaded_path)
+  end
+
   it "keeps rubocop-performance's prepended push working on a fresh copy per call" do
+    # Non-wrapper lists are translated per config (`Inject.align_for`,
+    # called from `Dispatch.bundle_token` before any correction round).
+    Shirobai::Inject.align_for(config_with_block_forwarding)
     # rubocop-performance prepends a module onto
     # `Naming::BlockForwarding.singleton_class` that does
     # `super.push(Performance::BlockGivenWithExplicitBlock)`. The aligner's
@@ -26,17 +40,16 @@ RSpec.describe "autocorrect incompatibility alignment (performance)" do
     end
   end
 
-  it "leaves no dismissed stock class in any active cop's list" do
+  it "leaves no replaced stock class in any enabled cop's list once the config is aligned" do
+    Shirobai::Inject.align_for(config)
     registry = RuboCop::Cop::Registry.global
-    dismissed = registry.cops.filter_map do |cop|
-      next unless cop.name&.start_with?("Shirobai::")
-
+    replaced = Shirobai::Inject.wrapper_cops.filter_map do |cop|
       Shirobai::Inject.stock_counterpart(cop)
     end
-    registry.cops.each do |cop|
-      stale = cop.autocorrect_incompatible_with & dismissed
+    registry.enabled(config).each do |cop|
+      stale = cop.autocorrect_incompatible_with & replaced
       expect(stale).to be_empty,
-                       "#{cop.cop_name} still lists dismissed stock classes: #{stale}"
+                       "#{cop.cop_name} still lists replaced stock classes: #{stale}"
     end
   end
 end

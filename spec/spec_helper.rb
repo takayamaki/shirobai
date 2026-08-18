@@ -15,6 +15,9 @@ require_relative "../vendor/rubocop/spec/core_ext/string"
 require_relative "../vendor/rubocop/spec/support/empty_lines_around_body_shared_examples"
 # Shared examples (`aligned` / `misaligned`) used by the EndAlignment spec.
 require_relative "../vendor/rubocop/spec/support/alignment_examples"
+# `:project_index`-tagged vendor examples: provides `build_index` and skips
+# each example when the rubydex gem is unavailable.
+require_relative "../vendor/rubocop/spec/support/project_index_metadata"
 # Shared examples used by the MultilineMethodCallBraceLayout spec.
 require_relative "../vendor/rubocop/spec/support/multiline_literal_brace_helper"
 require_relative "../vendor/rubocop/spec/support/multiline_literal_brace_layout_examples"

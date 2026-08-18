@@ -288,11 +288,10 @@ module Shirobai
           # A new Config means config resolution just happened — the moment
           # any third-party plugin gem (rubocop-capybara et al.) named in
           # `plugins:` / `require:` has finished loading. Re-align the
-          # `autocorrect_incompatible_with` lists if those loads grew the
-          # registry (see `Inject.align_if_registry_grew!`), so their skip
-          # entries point at the replacement classes before any correction
-          # round runs.
-          Inject.align_if_registry_grew!
+          # `autocorrect_incompatible_with` lists over this config's enabled
+          # set (see `Inject.align_for`), so their skip entries point at the
+          # replacement classes before any correction round runs.
+          Inject.align_for(config)
           Shirobai.register_bundle_config(*packed_config(config, inactive))
         end
       end
@@ -504,7 +503,7 @@ module Shirobai
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0], aba[0],
-                 cl[2], mol[2], *af[1]]
+                 cl[2], mol[2], *af[1], dm[1]]
 
         # One sub-array per origin: `nums[origin]` / `lists[origin]`. Core is
         # origin 0; every plugin origin packs its registered segment or the

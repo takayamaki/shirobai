@@ -2,22 +2,49 @@
 
 module Shirobai
   module Inject
-    def self.replace_cops!
+    # Badge replacement rides on `Registry#clear_enrollment_queue` being
+    # last-write-wins: whoever is enlisted later owns the badge. Up to
+    # RuboCop 1.88 every stock cop was loaded (and enlisted) at
+    # `require "rubocop"`, so wrappers defined afterwards always won.
+    #
+    # RuboCop 1.89 registers stock cops lazily: the registry maps each badge
+    # to a constant-name String and the class only loads when the constant is
+    # resolved (autoload). Loading enlists the stock class through
+    # `Base.inherited`, so a replaced cop whose stock file loads AFTER the
+    # wrapper — `Registry#load_all_lazy_cops`, a plugin gem referencing the
+    # constant (rubocop-rails prepends onto `Style/RedundantSelf`), or our own
+    # `stock_counterpart` — would steal the badge back on the next flush.
+    #
+    # `claim_badges!` closes every such path at require time: resolve each
+    # replaced cop's stock constant first (consuming the autoload, so the
+    # stock class can never be enlisted again later), then re-enlist the
+    # wrapper so the queue flushes with the wrapper last. Unreplaced cops
+    # keep their lazy registration — shirobai must not force the whole
+    # registry to load.
+    def self.activate!
+      claim_badges!
+      align_autocorrect_incompatibilities!
+    end
+
+    def self.claim_badges!
       registry = RuboCop::Cop::Registry.global
+      wrapper_cops.each do |wrapper|
+        next unless stock_counterpart(wrapper) # consume the stock autoload
 
-      Shirobai::Cop.constants(false).each do |department|
+        registry.enlist(wrapper)
+      end
+    end
+
+    # All wrapper classes defined so far, from the core departments and any
+    # loaded plugin gem's department (RSpec / Rails / Performance).
+    def self.wrapper_cops
+      Shirobai::Cop.constants(false).flat_map do |department|
         mod = Shirobai::Cop.const_get(department)
-        next unless mod.is_a?(Module)
+        next [] unless mod.is_a?(Module) && !mod.is_a?(Class)
 
-        mod.constants(false).each do |cop_name|
+        mod.constants(false).filter_map do |cop_name|
           klass = mod.const_get(cop_name)
-          next unless klass < RuboCop::Cop::Base
-
-          original = registry.find { |c| c.cop_name == klass.cop_name }
-          next unless original
-
-          registry.dismiss(original)
-          registry.enlist(klass)
+          klass if klass.is_a?(Class) && klass < RuboCop::Cop::Base
         end
       end
     end
@@ -38,26 +65,26 @@ module Shirobai
     # classes are defined (each auto-enlists via `Base.inherited`), again at
     # each shirobai plugin gem's require (their stock departments — e.g.
     # `Rails/SafeNavigation` listing `Style::RedundantSelf` — enlist between
-    # aligner runs), and lazily when the registry grew since the last run
-    # (third-party plugins like rubocop-capybara load during config
-    # resolution, after every shirobai require; see `align_if_registry_grew!`
-    # and `Dispatch.bundle_token`). Idempotent: an already-translated list
-    # maps to itself and is skipped.
+    # aligner runs), and per config over the enabled set (third-party
+    # plugins like rubocop-capybara load during config resolution, after
+    # every shirobai require; see `align_for` and `Dispatch.bundle_token`).
     #
     # The rewritten methods return a FRESH copy per call, like stock's
     # per-call array literals: rubocop-performance and rubocop-capybara
     # prepend singleton modules that do `super.push(...)`, so a shared (or
     # frozen) array would accumulate duplicates across calls (or raise
     # FrozenError).
-    def self.align_autocorrect_incompatibilities!
-      registry = RuboCop::Cop::Registry.global
-      cops = registry.cops
-      @aligned_registry_size = cops.size
-
+    #
+    # The wrapper pass runs unconditionally (the stock counterparts are
+    # loaded by `claim_badges!`). The non-wrapper pass only covers
+    # `extra_cops` — enumerating the whole registry would force every lazy
+    # stock cop to load, so `align_for` passes the enabled set of the config
+    # actually being run, which is exactly the set `Team#each_corrector` can
+    # consult. Idempotent: an already-translated list maps to itself and is
+    # skipped.
+    def self.align_autocorrect_incompatibilities!(extra_cops = [])
       replacements = {}
-      cops.each do |cop|
-        next unless cop.name&.start_with?("Shirobai::")
-
+      wrapper_cops.each do |cop|
         stock = stock_counterpart(cop)
         replacements[stock] = cop if stock
       end
@@ -67,10 +94,10 @@ module Shirobai
                     .map { |klass| replacements.fetch(klass, klass) }.freeze
         wrapper.define_singleton_method(:autocorrect_incompatible_with) { list.dup }
       end
-      cops.each do |cop|
+      extra_cops.each do |cop|
         next if replacements.value?(cop)
 
-        list = cop.autocorrect_incompatible_with
+        list = base_incompatible_list(cop)
         mapped = list.map { |klass| replacements.fetch(klass, klass) }
         next if mapped == list
 
@@ -79,18 +106,37 @@ module Shirobai
       end
     end
 
-    # Cheap re-alignment guard for plugins that load AFTER every shirobai
+    # The cop's own `autocorrect_incompatible_with`, bypassing modules
+    # prepended onto its singleton class (rubocop-performance's
+    # `super.push(...)` pattern). The rewritten method sits UNDER those
+    # prepends, so snapshotting the full call would bake their pushes into
+    # the base and the prepend would then add them again on every call.
+    def self.base_incompatible_list(cop)
+      singleton = cop.singleton_class
+      prepends = singleton.ancestors.take_while { |mod| !mod.equal?(singleton) }
+      meth = cop.method(:autocorrect_incompatible_with)
+      meth = meth.super_method while meth && prepends.include?(meth.owner)
+      meth ? meth.call : []
+    end
+
+    # Per-config re-alignment for cops that load AFTER every shirobai
     # require: rubocop resolves `plugins:` / `require:` gems while loading
     # the corpus config, and those gems (rubocop-capybara et al.) may list a
-    # replaced class or enlist new cops. Badge replacement keeps the registry
-    # count, but a plugin load only ever ADDS badges, so a size change is the
-    # signal; called from `Dispatch.bundle_token` on each new config, which
-    # happens after config resolution and before any correction round.
-    def self.align_if_registry_grew!
-      size = RuboCop::Cop::Registry.global.cops.size
-      return if @aligned_registry_size == size
+    # replaced class or enlist new cops. Called from `Dispatch.bundle_token`
+    # on each new config, which happens after config resolution and before
+    # any correction round. Memoized per (config identity, registry badge
+    # count): a plugin load only ever ADDS badges, so a size change re-runs
+    # the alignment mid-run. `Registry#length` only counts badges — it never
+    # loads a lazy cop — and `Registry#enabled` loads exactly the cops the
+    # run's team is built from.
+    def self.align_for(config)
+      registry = RuboCop::Cop::Registry.global
+      size = registry.length
+      @aligned ||= {}.compare_by_identity
+      return if @aligned[config] == size
 
-      align_autocorrect_incompatibilities!
+      @aligned[config] = size
+      align_autocorrect_incompatibilities!(registry.enabled(config))
     end
 
     # The stock class whose badge `klass` took over, or nil when the stock
@@ -215,4 +261,4 @@ require_relative "cop/style/if_unless_modifier"
 require_relative "cop/style/semicolon"
 require_relative "cop/style/arguments_forwarding"
 
-Shirobai::Inject.align_autocorrect_incompatibilities!
+Shirobai::Inject.activate!

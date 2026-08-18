@@ -488,6 +488,14 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Lint::AmbiguousBlockAssociation,
       "some_method a { |el| puts el }\n"
     ],
+    # The 1.89 `do...end` binding offense has NO corrector in stock — the
+    # wrapper must not attach one either (status parity in the other
+    # direction).
+    "Lint/AmbiguousBlockAssociation (do...end binding)" => [
+      RuboCop::Cop::Lint::AmbiguousBlockAssociation,
+      Shirobai::Cop::Lint::AmbiguousBlockAssociation,
+      "render json: data.map do |item|\n  item.to_h\nend\n"
+    ],
     # A lonely empty `#` line: stock emits a `corrector.remove(range_by_whole_lines)`
     # corrector (correctable). Guards that the wrapper attaches the corrector block
     # in lint mode like stock.

@@ -303,6 +303,13 @@ mod tests {
     }
 
     #[test]
+    fn empty_symbol_hash_key_skipped() {
+        // A quoted empty hash key (`{ "": value }`) parses as an empty symbol
+        // node; stock skips it since 1.89 (rubocop#15507).
+        assert!(names("{ \"\": 1 }", SNAKE_CASE).is_empty());
+    }
+
+    #[test]
     fn allowed_identifier_skipped() {
         let (offenses, _) = check_variable_number(
             "@capture3 = 1".as_bytes(),

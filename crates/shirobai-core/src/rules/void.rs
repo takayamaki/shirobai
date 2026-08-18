@@ -529,7 +529,14 @@ impl<'a> Visitor<'a> {
             "{template} `{}` used in void context.",
             self.lossy(start, end)
         );
-        let remove = self.removal_correction(expr, branch);
+        // Referencing a constant can trigger autoloading side effects, so
+        // stock flags but never removes it (rubocop#12017). `__ENCODING__`
+        // (`is_special`) is a separate node type and keeps its correction.
+        let remove = if is_const {
+            None
+        } else {
+            self.removal_correction(expr, branch)
+        };
         self.push_offense(start, end, message, None, remove);
     }
 
@@ -654,8 +661,12 @@ impl super::dispatch::Rule for Visitor<'_> {
             let comparison = matches!(name, b"==" | b"===" | b"!=" | b"<=" | b">=" | b">" | b"<");
             let asgn = !comparison && name.ends_with(b"=");
             // `DefNode#void_context?`: `initialize` counts for instance defs
-            // only (`def self.initialize` is an ordinary `defs`).
-            let void = (def.receiver().is_none() && name == b"initialize") || asgn;
+            // only (`def self.initialize` is an ordinary `defs`). Setter defs
+            // are also void contexts, but `check_begin` pops their last
+            // expression anyway (`setter_method?`, rubocop#13786): the method
+            // can be called directly and its return value relied upon. So
+            // only `initialize` keeps the full-void body here.
+            let void = def.receiver().is_none() && name == b"initialize";
             self.frames.push(Frame::Def { asgn });
             if let Some(body) = def.body()
                 && let Some(stmts) = body.as_statements_node()
@@ -1045,6 +1056,16 @@ mod tests {
     }
 
     #[test]
+    fn constants_flagged_but_not_corrected() {
+        // Referencing a constant can trigger autoloading side effects, so
+        // stock flags but no longer removes it (rubocop#12017, 1.89).
+        assert_eq!(corrected("CONST = 5\nCONST\ntop\n"), "CONST = 5\nCONST\ntop\n");
+        assert_eq!(corrected("A::B\ntop\n"), "A::B\ntop\n");
+        // `__ENCODING__` is a special keyword, not a real constant: still corrected.
+        assert_eq!(corrected("__ENCODING__\ntop\n"), "\ntop\n");
+    }
+
+    #[test]
     fn guard_and_branch_offenses_without_correction() {
         let src = "var = 5\nvar unless condition\ntop\n";
         let got = run(src);
@@ -1138,10 +1159,14 @@ mod tests {
             corrected("def initialize\n  42\n  42\nend\n"),
             "def initialize\nend\n"
         );
+        // setters: the last expression is exempt since 1.89 (rubocop#13786);
+        // the remaining offenses still get no corrections.
         let setter = run("def foo=(rhs)\n  42\n  42\nend\n");
-        assert_eq!(setter.len(), 2);
+        assert_eq!(setter.len(), 1);
         assert!(setter.iter().all(|o| o.remove_end == 0)); // no corrections
-        assert_eq!(run("def self.foo=(rhs)\n  42\n  42\nend\n").len(), 2);
+        assert_eq!(run("def self.foo=(rhs)\n  42\n  42\nend\n").len(), 1);
+        // ...including through a single parenthesised body.
+        assert_eq!(run("def foo=(rhs)\n  (42; 42)\nend\n").len(), 1);
         // `def self.initialize` is a defs: not void.
         assert_eq!(run("def self.initialize\n  42\n  42\nend\n").len(), 1);
         // comparison defs are not assignment methods.

@@ -24,6 +24,9 @@ module Shirobai
         MSG = "Parenthesize the param `%<param>s` to make sure that the " \
               "block will be associated with the `%<method>s` method " \
               "call."
+        MSG_DO_END_BLOCK = "`%<inner_method>s` is called without a block because the " \
+                           "`do` block binds to `%<outer_method>s`. " \
+                           "Use braces or extract to a variable."
 
         def self.cop_name = "Lint/AmbiguousBlockAssociation"
         def self.badge = RuboCop::Cop::Badge.parse(cop_name)
@@ -52,19 +55,28 @@ module Shirobai
         def on_new_investigation
           buffer = processed_source.buffer
           off = SourceOffsets.for(processed_source.raw_source)
-          fetch_offenses.each do |start_offset, end_offset, param_start, param_end,
+          fetch_offenses.each do |kind, start_offset, end_offset, param_start, param_end,
                                   inner_send_start, inner_send_end,
                                   ac_open_start, ac_open_end, ac_close_pos|
             range = Parser::Source::Range.new(buffer, off[start_offset], off[end_offset])
             param_range = Parser::Source::Range.new(buffer, off[param_start], off[param_end])
             inner_range = Parser::Source::Range.new(buffer, off[inner_send_start], off[inner_send_end])
-            message = format(MSG, param: param_range.source, method: inner_range.source)
-            add_offense(range, message: message) do |corrector|
-              open_range = Parser::Source::Range.new(buffer, off[ac_open_start], off[ac_open_end])
-              close_range = Parser::Source::Range.new(buffer, off[ac_close_pos], off[ac_close_pos])
-              corrector.remove(open_range)
-              corrector.insert_before(open_range, "(")
-              corrector.insert_after(close_range, ")")
+            if kind == 1
+              # `do...end` binding (stock `on_block`, 1.89): offense on the
+              # inner call, message names both methods, no autocorrect.
+              message = format(MSG_DO_END_BLOCK,
+                               inner_method: param_range.source,
+                               outer_method: inner_range.source)
+              add_offense(range, message: message)
+            else
+              message = format(MSG, param: param_range.source, method: inner_range.source)
+              add_offense(range, message: message) do |corrector|
+                open_range = Parser::Source::Range.new(buffer, off[ac_open_start], off[ac_open_end])
+                close_range = Parser::Source::Range.new(buffer, off[ac_close_pos], off[ac_close_pos])
+                corrector.remove(open_range)
+                corrector.insert_before(open_range, "(")
+                corrector.insert_after(close_range, ")")
+              end
             end
           end
         end
@@ -104,8 +116,12 @@ module Shirobai
           src = processed_source.raw_source
           buffer = processed_source.buffer
           off = SourceOffsets.for(src)
-          collected = raw.filter_map do |_s, _e, _ps, _pe, iss, ise, _aos, _aoe, _acp|
-            range = Parser::Source::Range.new(buffer, off[iss], off[ise])
+          collected = raw.filter_map do |kind, s, e, _ps, _pe, iss, ise, _aos, _aoe, _acp|
+            # kind 0 matches against the inner block sender's source; kind 1
+            # (do...end binding) against the inner call's own source, which is
+            # its offense range.
+            t_start, t_end = kind == 1 ? [s, e] : [iss, ise]
+            range = Parser::Source::Range.new(buffer, off[t_start], off[t_end])
             text = range.source
             regexps.any? { |r| text.match?(r) } ? text : nil
           end

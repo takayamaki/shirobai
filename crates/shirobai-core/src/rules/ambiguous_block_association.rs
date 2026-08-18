@@ -98,6 +98,16 @@ pub struct Config {
 
 #[derive(Debug, Clone)]
 pub struct AmbiguousBlockAssociationOffense {
+    /// 0 — the classic paren ambiguity (stock `on_send`): the fields read as
+    /// documented below and the offense is correctable.
+    ///
+    /// 1 — a `do...end` block binding to the outer method while an enumerable
+    /// call sits in the arguments (stock `on_block`, 1.89, rubocop#14835).
+    /// `[start, end)` is the INNER call's range (the offense highlight AND
+    /// the `AllowedPatterns` match target), `param_*` is the inner call's
+    /// method NAME range, `inner_send_*` is the OUTER call's method NAME
+    /// range, and the `ac_*` fields are zero (stock has no autocorrect).
+    pub kind: u8,
     /// Start byte of the OUTER call's source range (offense highlight).
     pub start_offset: usize,
     /// End byte of the OUTER call's source range.
@@ -299,6 +309,7 @@ impl<'s> AmbiguousBlockAssociationVisitor<'s> {
             inner_send_loc.expect("inner_send_loc set for the CallNode arm");
 
         self.offenses.push(AmbiguousBlockAssociationOffense {
+            kind: 0,
             start_offset: outer_loc.start_offset(),
             end_offset: outer_loc.end_offset(),
             param_start: last_loc.start_offset(),
@@ -309,6 +320,166 @@ impl<'s> AmbiguousBlockAssociationVisitor<'s> {
             ac_open_end: first_arg_loc.start_offset(),
             ac_close_pos: last_loc.end_offset(),
         });
+    }
+
+    /// Stock `on_block` (1.89, rubocop#14835): a `do...end` block that binds
+    /// to the outer method while the arguments end with an enumerable call
+    /// that was likely meant to receive it.
+    ///
+    /// ```ruby
+    /// def on_block(node)
+    ///   return if node.braces?
+    ///   send_node = node.send_node
+    ///   block_method_arg = find_ambiguous_block_method(node)
+    ///   return unless block_method_arg
+    ///   add_offense(block_method_arg, message: format(MSG_DO_END_BLOCK, …))
+    /// end
+    /// ```
+    ///
+    /// `find_ambiguous_block_method` requires `send_node.send_type?` (a
+    /// csend outer is excluded), arguments, and no parentheses; the candidate
+    /// search (`find_block_method_arg`) walks the last argument's subtree for
+    /// a `:call` whose source ends where the outer send's source ends
+    /// (parser's outer send excludes the block, so that end is the last
+    /// argument's end), whose name is one of `BLOCK_METHODS`, and which has
+    /// no arguments (parser counts a block-pass as an argument). A prism
+    /// CallNode carrying a literal BlockNode is a parser `:block`, not a
+    /// `:call` — never a match, but its children are still searched.
+    fn check_do_end(&mut self, call: &ruby_prism::CallNode<'_>) {
+        let Some(block) = call.block() else { return };
+        let Some(block_node) = block.as_block_node() else {
+            return;
+        };
+        // `node.braces?` — only `do...end` blocks are ambiguous this way.
+        if block_node.opening_loc().as_slice() != b"do" {
+            return;
+        }
+        // `send_node.send_type?` — parser csend is a different type.
+        if call
+            .call_operator_loc()
+            .is_some_and(|l| l.as_slice() == b"&.")
+        {
+            return;
+        }
+        let Some(args_node) = call.arguments() else { return };
+        let arg_vec: Vec<_> = args_node.arguments().iter().collect();
+        let Some(last_arg) = arg_vec.last() else { return };
+        // `send_node.parenthesized?`
+        if call.opening_loc().is_some() {
+            return;
+        }
+        let target_end = last_arg.location().end_offset();
+        let mut finder = FindBlockMethodArg {
+            target_end,
+            result: None,
+        };
+        finder.visit(last_arg);
+        let Some((start, end, name_start, name_end)) = finder.result else {
+            return;
+        };
+        // `allowed_method?(block_method_arg.method_name)`
+        if self
+            .allowed_methods
+            .iter()
+            .any(|n| n.as_slice() == &self.source[name_start..name_end])
+        {
+            return;
+        }
+        // `matches_allowed_pattern?(block_method_arg.source)` — pre-applied
+        // by the wrapper, keyed by the inner call's source bytes.
+        if self
+            .allowed_inner_sources
+            .iter()
+            .any(|s| s.as_slice() == &self.source[start..end])
+        {
+            return;
+        }
+        let Some(outer_msg) = call.message_loc() else { return };
+        self.offenses.push(AmbiguousBlockAssociationOffense {
+            kind: 1,
+            start_offset: start,
+            end_offset: end,
+            param_start: name_start,
+            param_end: name_end,
+            inner_send_start: outer_msg.start_offset(),
+            inner_send_end: outer_msg.end_offset(),
+            ac_open_start: 0,
+            ac_open_end: 0,
+            ac_close_pos: 0,
+        });
+    }
+}
+
+/// Stock `BLOCK_METHODS`: the enumerable methods a stray `do` block was
+/// probably meant for.
+fn is_block_method(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"map"
+            | b"collect"
+            | b"flat_map"
+            | b"collect_concat"
+            | b"select"
+            | b"filter"
+            | b"find_all"
+            | b"reject"
+            | b"find"
+            | b"detect"
+            | b"each"
+            | b"each_with_object"
+            | b"each_with_index"
+            | b"reduce"
+            | b"inject"
+            | b"sort_by"
+            | b"min_by"
+            | b"max_by"
+            | b"group_by"
+            | b"filter_map"
+    )
+}
+
+/// `send_node.last_argument.each_node(:call).find { … }`: the first call in
+/// the last argument's subtree whose source ends where the outer send's
+/// source ends, named like an enumerable, and taking no arguments.
+struct FindBlockMethodArg {
+    target_end: usize,
+    /// `(start, end, name_start, name_end)` of the found inner call.
+    result: Option<(usize, usize, usize, usize)>,
+}
+
+impl<'pr> Visit<'pr> for FindBlockMethodArg {
+    fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
+        if self.result.is_some() {
+            return;
+        }
+        // A call with a literal block is a parser `:block`, not a `:call` —
+        // skip it as a match but keep searching its children.
+        let literal_block = node
+            .block()
+            .is_some_and(|b| b.as_block_node().is_some());
+        // Parser counts a block-pass (`&blk`) as an argument.
+        let has_args = node
+            .arguments()
+            .is_some_and(|a| a.arguments().iter().count() > 0)
+            || node
+                .block()
+                .is_some_and(|b| b.as_block_argument_node().is_some());
+        if !literal_block
+            && !has_args
+            && node.location().end_offset() == self.target_end
+            && is_block_method(node.name().as_slice())
+            && let Some(msg) = node.message_loc()
+        {
+            let loc = node.location();
+            self.result = Some((
+                loc.start_offset(),
+                loc.end_offset(),
+                msg.start_offset(),
+                msg.end_offset(),
+            ));
+            return;
+        }
+        ruby_prism::visit_call_node(self, node);
     }
 }
 
@@ -350,6 +521,7 @@ fn is_operator_method(name: &[u8]) -> bool {
 impl<'pr, 's> Visit<'pr> for AmbiguousBlockAssociationVisitor<'s> {
     fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
         self.check_call(node);
+        self.check_do_end(node);
         ruby_prism::visit_call_node(self, node);
     }
 }
@@ -361,10 +533,11 @@ impl<'s> super::dispatch::Rule for AmbiguousBlockAssociationVisitor<'s> {
             Interest::ENTER_CALL,
         )
     }
-    
+
     fn enter(&mut self, node: &Node<'_>) {
         if let Some(call) = node.as_call_node() {
             self.check_call(&call);
+            self.check_do_end(&call);
         }
     }
 
@@ -407,6 +580,47 @@ mod tests {
     fn flags_csend_outer() {
         let off = detect("Foo&.some_method a { |el| puts el }\n");
         assert_eq!(off.len(), 1);
+    }
+
+    #[test]
+    fn do_end_binding_to_outer_method() {
+        // 1.89 (rubocop#14835): `render json: data.map do ... end` — Ruby
+        // binds the `do` block to `render`, so `map` is called without a
+        // block. Offense on the inner call, no autocorrect.
+        let off = detect("render json: data.map do |x|\n  x\nend\n");
+        assert_eq!(off.len(), 1);
+        let o = &off[0];
+        assert_eq!(o.kind, 1);
+        assert_eq!((o.start_offset, o.end_offset), (13, 21)); // `data.map`
+        assert_eq!((o.param_start, o.param_end), (18, 21)); // `map`
+        assert_eq!((o.inner_send_start, o.inner_send_end), (0, 6)); // `render`
+        assert_eq!(o.ac_open_end, 0); // not correctable
+
+        // positional argument and safe navigation on the inner call
+        assert_eq!(detect("foo bar.select do |x|\n  x\nend\n").len(), 1);
+        assert_eq!(detect("foo bar&.each do |x|\n  x\nend\n").len(), 1);
+    }
+
+    #[test]
+    fn do_end_binding_not_flagged_when_unambiguous() {
+        // braces bind to the inner call; parentheses fix the binding
+        assert!(detect("render json: data.map { |x| x }\n").is_empty());
+        assert!(detect("render(json: data.map) do |x|\n  x\nend\n").is_empty());
+        // a call chained past the enumerable was never a block candidate
+        assert!(detect("foo bar.map.to_a do |x|\n  x\nend\n").is_empty());
+        // an inner call that already has arguments or a block-pass
+        assert!(detect("foo bar.reduce(0) do |a, b|\n  a\nend\n").is_empty());
+        assert!(detect("foo bar.map(&:to_s) do |x|\n  x\nend\n").is_empty());
+        // a method outside the enumerable list
+        assert!(detect("foo bar.frobnicate do |x|\n  x\nend\n").is_empty());
+        // safe navigation on the outer call is not `send_type?`
+        assert!(detect("foo&.bar baz.map do |x|\n  x\nend\n").is_empty());
+    }
+
+    #[test]
+    fn do_end_binding_respects_allowed_methods() {
+        let off = detect_with_allowed("foo bar.map do |x|\n  x\nend\n", &["map"]);
+        assert!(off.is_empty());
     }
 
     #[test]

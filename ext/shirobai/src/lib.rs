@@ -982,25 +982,32 @@ fn map_stabby_lambda_parentheses(
 /// `map_ambiguous_block_association` for field semantics. A `type` alias keeps
 /// clippy's `type_complexity` lint quiet without an `#[allow]`.
 type AmbiguousBlockAssociationTuple = (
-    usize, usize, usize, usize, usize, usize, usize, usize, usize,
+    u8, usize, usize, usize, usize, usize, usize, usize, usize, usize,
 );
 
-/// `Lint/AmbiguousBlockAssociation`: `[[start, end, param_start, param_end,
-/// inner_send_start, inner_send_end, ac_open_start, ac_open_end, ac_close_pos],
-/// ...]`. `[start, end)` is the outer call's full source range (offense
-/// highlight). `[param_start, param_end)` is the last argument's source range
-/// (the block-bearing inner call — substituted into MSG as `%<param>s`).
-/// `[inner_send_start, inner_send_end)` is the inner block sender's source
-/// range (substituted into MSG as `%<method>s`). Autocorrect: replace
-/// `[ac_open_start, ac_open_end)` with `(` (`corrector.remove(range)` +
-/// `corrector.insert_before(range, '(')` in stock) and insert `)` at
-/// `ac_close_pos` (the last argument's end).
+/// `Lint/AmbiguousBlockAssociation`: `[[kind, start, end, param_start,
+/// param_end, inner_send_start, inner_send_end, ac_open_start, ac_open_end,
+/// ac_close_pos], ...]`.
+///
+/// kind 0 (paren ambiguity, stock `on_send`): `[start, end)` is the outer
+/// call's full source range (offense highlight). `[param_start, param_end)`
+/// is the last argument's source range (the block-bearing inner call —
+/// substituted into MSG as `%<param>s`). `[inner_send_start, inner_send_end)`
+/// is the inner block sender's source range (substituted into MSG as
+/// `%<method>s`). Autocorrect: replace `[ac_open_start, ac_open_end)` with
+/// `(` (`corrector.remove(range)` + `corrector.insert_before(range, '(')` in
+/// stock) and insert `)` at `ac_close_pos` (the last argument's end).
+///
+/// kind 1 (`do...end` binding, stock `on_block`, 1.89): `[start, end)` is the
+/// INNER call's range, `param_*` its method name, `inner_send_*` the OUTER
+/// call's method name; the `ac_*` fields are zero (no autocorrect).
 fn map_ambiguous_block_association(
     v: Vec<shirobai_core::rules::ambiguous_block_association::AmbiguousBlockAssociationOffense>,
 ) -> Vec<AmbiguousBlockAssociationTuple> {
     v.into_iter()
         .map(|o| {
             (
+                o.kind,
                 o.start_offset,
                 o.end_offset,
                 o.param_start,
@@ -2237,18 +2244,32 @@ fn map_space_inside_string_interpolation(
 
 type IfUnlessModifierOps = Vec<(u8, usize, usize, String)>;
 
+/// One direction-1 rewrite variant: `(replacement, assembled_line)`. The
+/// assembled line is non-empty only when its raw length exceeds max (the
+/// wrapper then applies the `Layout/LineLength` exemptions, 1.89).
+type IfUnlessModifierVariant = (String, String);
+type IfUnlessModifierTuple = (
+    u8, usize, usize, usize, usize, u8, usize, usize,
+    IfUnlessModifierVariant, IfUnlessModifierVariant, usize, IfUnlessModifierOps,
+);
+
 /// `Style/IfUnlessModifier` candidates: `[kind, kw_start, kw_end, node_start,
 /// node_end, flags, comment_start, comment_end, replacement_no_comment,
 /// replacement_with_comment, line_number, ops]`, in walk order.
 ///
 /// `kind`: 0 = "use modifier", 1 = "too long". `flags` bits: 1 unless-keyword
 /// / 2 another_modifier_if_on_same_line / 4 has first-line comment / 8 code
-/// after `end` / 16 fits without comment / 32 fits with comment. `ops` are
+/// after `end` / 16 fits without comment / 32 fits with comment / 64
+/// parenthesize (stock's MSG_USE_MODIFIER_PARENS variant, 1.89). `ops` are
 /// `[op_kind, start, end, text]` with 0 = replace, 1 = remove (direction 2).
+/// The replacement slots are `(replacement, assembled_line)` pairs per
+/// comment variant; the assembled line is non-empty only when its raw length
+/// exceeds max — the wrapper then applies the `Layout/LineLength`
+/// exemptions.
 #[allow(clippy::type_complexity)]
 fn map_if_unless_modifier(
     v: Vec<shirobai_core::rules::if_unless_modifier::IfUnlessModifierCandidate>,
-) -> Vec<(u8, usize, usize, usize, usize, u8, usize, usize, String, String, usize, IfUnlessModifierOps)> {
+) -> Vec<IfUnlessModifierTuple> {
     v.into_iter()
         .map(|c| {
             let flags = u8::from(c.is_unless)
@@ -2256,7 +2277,8 @@ fn map_if_unless_modifier(
                 | (u8::from(c.has_comment) << 2)
                 | (u8::from(c.has_code_after_end) << 3)
                 | (u8::from(c.fits_no_comment) << 4)
-                | (u8::from(c.fits_with_comment) << 5);
+                | (u8::from(c.fits_with_comment) << 5)
+                | (u8::from(c.parenthesize) << 6);
             let ops = c
                 .ops
                 .into_iter()
@@ -2271,8 +2293,8 @@ fn map_if_unless_modifier(
                 flags,
                 c.comment_start,
                 c.comment_end,
-                c.replacement_no_comment,
-                c.replacement_with_comment,
+                (c.replacement_no_comment, c.line_no_comment),
+                (c.replacement_with_comment, c.line_with_comment),
                 c.line_number,
                 ops,
             )
@@ -2287,7 +2309,7 @@ fn map_if_unless_modifier(
 fn check_if_unless_modifier(
     source: RString,
     nums: Vec<i64>,
-) -> Vec<(u8, usize, usize, usize, usize, u8, usize, usize, String, String, usize, IfUnlessModifierOps)> {
+) -> Vec<IfUnlessModifierTuple> {
     let cfg = shirobai_core::rules::if_unless_modifier::Config {
         max_line_length: if nums[0] < 0 { None } else { Some(nums[0]) },
         tab_width: nums[1],
@@ -3316,30 +3338,41 @@ fn check_empty_line_after_magic_comment(
     )
 }
 
-/// `Lint/DuplicateMethods`: `[[name, key, sexp_start, sexp_end, scope_line,
-/// off_start, off_end, line, rescue_scope], ...]` — one tuple per stock
-/// `found_method` call, in callback order. `sexp_start/end >= 0` marks the
-/// parser-sexp key fallback (byte range of the defs node); `scope_line >= 0`
-/// asks the wrapper to append the `"@#{smart_path}:#{line}"` scope id.
+/// `Lint/DuplicateMethods`: `[[flags, name, key, sexp_start, sexp_end,
+/// scope_line, scope_begin, off_start, off_end, line], ...]` — one tuple per
+/// stock `found_method` / `track_self_alias` call, in callback order.
+/// `sexp_start/end >= 0` marks the parser-sexp key fallback (byte range of
+/// the defs node); `scope_line >= 0` asks the wrapper to append the
+/// `"@#{smart_path}:#{line}:#{begin_pos}"` scope id (1.89
+/// `anon_block_identity`).
 /// `rescue_scope`: 0 none / 1 rescue / 2 ensure. The wrapper replays stock's
 /// cross-file `@definitions` / `@scopes` bookkeeping over this stream.
-type DupMethodTuple = (String, String, i64, i64, i64, usize, usize, usize, u8);
+/// `flags` bits: 0-1 rescue_scope (0 none / 1 rescue / 2 ensure) / 4
+/// self_alias (a `track_self_alias` event: `name` only) / 8 scoped (the key
+/// carries a scope id) / 16 inside_def. `scope_begin >= 0` is the parser
+/// begin offset for the 1.89 `anon_block_identity` suffix.
+type DupMethodTuple = (u8, String, String, i64, i64, i64, i64, usize, usize, usize);
 
 fn map_duplicate_methods(
     v: Vec<shirobai_core::rules::duplicate_methods::DupMethodEvent>,
 ) -> Vec<DupMethodTuple> {
     v.into_iter()
         .map(|e| {
+            let flags = e.rescue_scope
+                | (u8::from(e.self_alias) << 2)
+                | (u8::from(e.scoped) << 3)
+                | (u8::from(e.inside_def) << 4);
             (
+                flags,
                 e.name,
                 e.key,
                 e.sexp_start,
                 e.sexp_end,
                 e.scope_line,
+                e.scope_begin,
                 e.off_start,
                 e.off_end,
                 e.line,
-                e.rescue_scope,
             )
         })
         .collect()
@@ -3375,13 +3408,19 @@ fn check_frozen_string_literal_comment(
 }
 
 /// Ruby entry point for `Lint/DuplicateMethods` (standalone fallback).
-/// `active_support` mirrors `AllCops/ActiveSupportExtensionsEnabled`.
-/// Returns the shape documented on `map_duplicate_methods`.
-fn check_duplicate_methods(source: RString, active_support: bool) -> Vec<DupMethodTuple> {
+/// `active_support` mirrors `AllCops/ActiveSupportExtensionsEnabled`;
+/// `delegating` is the `DelegatingMethods` list (1.89). Returns the shape
+/// documented on `map_duplicate_methods`.
+fn check_duplicate_methods(
+    source: RString,
+    active_support: bool,
+    delegating: Vec<String>,
+) -> Vec<DupMethodTuple> {
     map_duplicate_methods(shirobai_core::rules::duplicate_methods::check_duplicate_methods(
         bytes(&source),
         &shirobai_core::rules::duplicate_methods::Config {
             active_support_extensions_enabled: active_support,
+            delegating_methods: delegating,
         },
     ))
 }
@@ -4499,7 +4538,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     )?;
     module.define_module_function(
         "check_duplicate_methods",
-        function!(check_duplicate_methods, 2),
+        function!(check_duplicate_methods, 3),
     )?;
     module.define_module_function(
         "check_empty_lines",
