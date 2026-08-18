@@ -19,6 +19,7 @@ module Shirobai
         include RuboCop::Cop::AllowedPattern
         include RuboCop::Cop::RangeHelp
         include RuboCop::Cop::LineLengthHelp
+        include RuboCop::Cop::EndlessMethodRewriter
         extend RuboCop::Cop::AutoCorrector
 
         exclude_limit "Max"
@@ -109,6 +110,13 @@ module Shirobai
 
         def check_candidate(line, line_index, length, heredoc_delimiters)
           return if allowed_candidate?(line, line_index, heredoc_delimiters)
+
+          # 1.89: a line that opens an endless method gets the multiline
+          # rewrite (or brace-to-do/end conversion) instead of the breakable
+          # correction. Same position as stock's `check_line` branch.
+          if endless_methods_by_line.key?(line_index)
+            return handle_endless_method_line(line, line_index)
+          end
 
           if allow_rbs_inline_annotation? && rbs_inline_annotation_on_source_line?(line_index)
             return
@@ -228,6 +236,91 @@ module Shirobai
 
         def allowed_heredoc
           cop_config["AllowHeredoc"]
+        end
+
+        # Stock 1.89 tracks endless defs through `on_def` callbacks during
+        # the Commissioner traversal; the wrapper has no per-node callbacks,
+        # so the map is built lazily from the AST. Only a file with a
+        # candidate line that survives the allowed checks ever pays the walk.
+        def endless_methods_by_line
+          @endless_methods_by_line ||= begin
+            map = {}
+            processed_source.ast&.each_node(:def, :defs) do |node|
+              next unless node.endless?
+
+              map[node.first_line - processed_source.buffer.first_line] = node
+            end
+            map
+          end
+        end
+
+        # The endless-method handling below is verbatim from stock 1.89
+        # (`correct_to_multiline` comes from the stock EndlessMethodRewriter
+        # mixin, `indent` from Util).
+        def handle_endless_method_line(line, line_index)
+          if require_endless_methods?
+            return register_required_endless_method_offense(line, line_index)
+          end
+
+          register_endless_method_offense(line, line_index)
+        end
+
+        def require_endless_methods?
+          config.cop_enabled?("Style/EndlessMethod") &&
+            config.for_cop("Style/EndlessMethod")["EnforcedStyle"] == "require_always"
+        end
+
+        def register_endless_method_offense(line, line_index)
+          message = format(MSG, length: line_length(line), max: max)
+          loc = excess_range(nil, line, line_index)
+
+          add_offense(loc, message: message) do |corrector|
+            self.max = line_length(line)
+
+            correct_to_multiline(corrector, endless_methods_by_line[line_index])
+          end
+        end
+
+        def register_required_endless_method_offense(line, line_index)
+          node = endless_methods_by_line[line_index]
+          loc = excess_range(nil, line, line_index)
+
+          add_offense(loc, message: format(MSG, length: line_length(line), max: max)) do |corrector|
+            self.max = line_length(line)
+
+            if correctable_endless_method_block?(node)
+              correct_endless_method_block_to_multiline(corrector, node)
+            end
+          end
+        end
+
+        def correctable_endless_method_block?(node)
+          block_node = node.body
+
+          block_node&.type?(:any_block) &&
+            block_node.braces? &&
+            block_node.single_line? &&
+            block_node.body &&
+            !receiver_contains_heredoc?(block_node)
+        end
+
+        def correct_endless_method_block_to_multiline(corrector, node)
+          block_node = node.body
+          block_arguments = block_node.arguments? ? " #{block_node.arguments.source}" : ""
+          replacement = [
+            "#{block_node.send_node.source} do#{block_arguments}",
+            "#{indent(node, offset: 2)}#{block_node.body.source}",
+            "#{indent(node)}end"
+          ].join("\n")
+
+          corrector.replace(block_node, replacement)
+        end
+
+        def receiver_contains_heredoc?(node)
+          return false unless (receiver = node.receiver)
+          return true if receiver.any_str_type? && receiver.heredoc?
+
+          receiver.each_descendant(:any_str).any?(&:heredoc?)
         end
       end
     end
