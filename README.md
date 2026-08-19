@@ -56,21 +56,22 @@ The image is simple: RuboCop hops on a shiro-bai and gets faster.
   I do not ship a cop with pending autocorrect.
   If a cop cannot reach full compatibility, I remove it.
 - **Real-world speedup** — real CLI, each project's own `.rubocop.yml`,
-  all plugin gems installed, 5-round median:
+  all plugin gems installed, 3-round median:
 
   | Corpus | files | offenses | stock | shirobai (core only) | + plugin gems |
   |---|---|---|---|---|---|
-  | Mastodon | 3,206 | 0 | 105.89s | 73.72s (-30.4%) | 62.17s (**-41.3%**) |
-  | Discourse | 10,229 | 16 | 220.09s | 174.44s (-20.7%) | 164.19s (**-25.4%**) |
-  | Redmine | 1,058 | 2 | 56.20s | 38.27s (-31.9%) | 36.05s (**-35.9%**) |
-  | fluentd | 456 | 0 | 6.89s | 7.00s (+1.6%) | 7.77s (+12.7%) |
+  | Mastodon | 3,206 | 0 | 79.31s | 53.92s (-32.0%) | 46.21s (**-41.7%**) |
+  | Discourse | 10,229 | 25 | 143.79s | 106.21s (-26.1%) | 102.75s (**-28.5%**) |
+  | Redmine | 1,058 | 4 | 58.38s | 38.24s (**-34.5%**) | 38.60s (-33.9%) |
+  | fluentd | 456 | 0 | 4.09s | 4.25s (+3.9%) | 4.94s (+20.8%) |
 
   The "shirobai (core only)" column installs the core gem alone; the
   "+ plugin gems" column adds shirobai-rspec / shirobai-rails /
   shirobai-performance on top (each required only when the corpus's own
   config loads the matching stock plugin, exactly as a real user would).
   Measured on GitHub Actions `ubuntu-latest` (4-vCPU shared runner)
-  against shirobai at commit [`0b09c69`](https://github.com/takayamaki/shirobai/commit/0b09c69).
+  against shirobai at commit [`a4e310b`](https://github.com/takayamaki/shirobai/commit/a4e310b)
+  (RuboCop 1.89.0 / rubocop-rails 2.37.0 / rubocop-performance 1.27.0).
   Each run first verifies that stock and shirobai report the **same offense set**
   on the corpus's own config; the table shows the median time to lint the same code.
   Rerun on any commit via `gh workflow run bench.yml`
@@ -78,8 +79,10 @@ The image is simple: RuboCop hops on a shiro-bai and gets faster.
 
   Projects that spend their time on plugin cops gain from the plugin gems
   what the core gem alone cannot reach (Discourse is a heavy plugin user:
-  core -20.7%, with plugin gems -25.4%; Mastodon's spec-heavy suite gains
-  11 points from shirobai-rspec/-rails).
+  core -26.1%, with plugin gems -28.5%; Mastodon's spec-heavy suite gains
+  10 points from shirobai-rspec/-rails). On Redmine the plugin shells now
+  roughly break even — rubocop-rails 2.37 sped up its own hot cop — so the
+  core gem alone is the sweet spot there.
   fluentd is the honest fine print: its config disables most default cops,
   so there is little for shirobai to replace and the fixed cost of loading
   the native extension slightly exceeds the saving — and the plugin shells
