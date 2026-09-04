@@ -52,18 +52,39 @@ impl Style {
     }
 }
 
+/// How `Layout/ArgumentAlignment`'s `with_fixed_indentation` interacts with
+/// this cop (`enforce_first_argument_with_fixed_indentation?`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FixedIndentationMode {
+    /// `Layout/ArgumentAlignment` does not enforce `with_fixed_indentation`.
+    Off,
+    /// It does and `Layout/FirstMethodArgumentLineBreak` is disabled: the
+    /// cop defers entirely (stock returns before checking any node).
+    DeferAll,
+    /// It does and `Layout/FirstMethodArgumentLineBreak` is enabled: the cop
+    /// runs, but defers on the nodes where the two would loop (1.90
+    /// `conflicts_with_fixed_indentation_alignment?`).
+    DeferConflicts,
+}
+
+impl FixedIndentationMode {
+    /// Wire form: 0 = off, 1 = defer all, 2 = defer conflicts.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => FixedIndentationMode::DeferAll,
+            2 => FixedIndentationMode::DeferConflicts,
+            _ => FixedIndentationMode::Off,
+        }
+    }
+}
+
 pub fn check_first_argument_indentation(
     source: &[u8],
     style: u8,
     indent_width: usize,
-    enforce_fixed_with_no_line_break: bool,
+    fixed_mode: u8,
 ) -> Vec<FirstArgIndentOffense> {
-    let Some(mut rule) = build_rule(
-        source,
-        style,
-        indent_width,
-        enforce_fixed_with_no_line_break,
-    ) else {
+    let Some(mut rule) = build_rule(source, style, indent_width, fixed_mode) else {
         return Vec::new();
     };
     super::dispatch::run(source, &mut [&mut rule]);
@@ -71,15 +92,16 @@ pub fn check_first_argument_indentation(
 }
 
 /// Build the rule for use standalone or in a shared-walk bundle. `None` when
-/// the cop is disabled outright (the `enforce_first_argument_with_fixed_indentation`
-/// + no-line-break fast path handled on the Ruby side).
+/// the cop is disabled outright (`enforce_first_argument_with_fixed_indentation?`
+/// with `Layout/FirstMethodArgumentLineBreak` off).
 pub(crate) fn build_rule(
     source: &[u8],
     style: u8,
     indent_width: usize,
-    enforce_fixed_with_no_line_break: bool,
+    fixed_mode: u8,
 ) -> Option<Visitor<'_>> {
-    if enforce_fixed_with_no_line_break {
+    let fixed_mode = FixedIndentationMode::from_u8(fixed_mode);
+    if fixed_mode == FixedIndentationMode::DeferAll {
         return None;
     }
     let line_index = super::line_index::with_line_index(source, |li| li.clone());
@@ -88,10 +110,24 @@ pub(crate) fn build_rule(
         line_index: line_index.clone(),
         style: Style::from_u8(style),
         indent: indent_width,
+        defer_conflicts: fixed_mode == FixedIndentationMode::DeferConflicts,
         stack: Vec::new(),
         comment_lines: comment_lines(source, &line_index),
         offenses: Vec::new(),
     })
+}
+
+/// The per-call facts `conflicts_with_fixed_indentation_alignment?` reads.
+struct AlignmentFacts {
+    /// `node.call_type? && !node.method?(:[]=)` (`super` is not a call).
+    is_plain_call: bool,
+    /// `node.arguments.size` (parser-gem counts a block-pass argument).
+    arg_count: usize,
+    /// `node.first_argument.pairs.count` when the first argument is a hash.
+    first_arg_pairs: Option<usize>,
+    /// Start of `node.loc.selector`, or of `node.loc.begin` when there is no
+    /// selector: the line `indentation_of_method_line` reads.
+    method_line_anchor: usize,
 }
 
 /// Lightweight ancestor frame. Wrapper kinds (`Arguments`/`Statements`/
@@ -123,6 +159,8 @@ pub(crate) struct Visitor<'a> {
     line_index: Rc<LineIndex>,
     style: Style,
     indent: usize,
+    /// [`FixedIndentationMode::DeferConflicts`].
+    defer_conflicts: bool,
     stack: Vec<Frame>,
     /// 1-based line numbers of lines that are a comment beginning the line.
     comment_lines: Vec<usize>,
@@ -253,6 +291,7 @@ impl<'a> Visitor<'a> {
         is_operator: bool,
         has_dot: bool,
         end_loc_start: Option<usize>,
+        facts: AlignmentFacts,
     ) {
         // should_check?: arguments? (guaranteed by caller) && !bare_operator? &&
         // !setter_method?.
@@ -270,6 +309,18 @@ impl<'a> Visitor<'a> {
         } else {
             self.previous_code_line_indent(self.line_of(first_arg.0))
         };
+        // `conflicts_with_fixed_indentation_alignment?` (1.90): when
+        // `Layout/ArgumentAlignment` enforces `with_fixed_indentation` and
+        // `Layout/FirstMethodArgumentLineBreak` is on, an inner call whose
+        // special base differs from its method line's indentation is left to
+        // ArgumentAlignment (the two would otherwise correct in a loop).
+        if self.defer_conflicts
+            && special
+            && self.argument_alignment_applies(&facts)
+            && base_indent != self.indentation_of_method_line(facts.method_line_anchor)
+        {
+            return;
+        }
         let indent = base_indent + self.indent;
 
         // check_alignment([first_argument], indent): a single item, on its own
@@ -343,6 +394,22 @@ impl<'a> Visitor<'a> {
         // node must begin inside the parent (otherwise it is the first part of a
         // chained method call).
         node_range.0 > parent.start
+    }
+
+    /// `argument_alignment_applies?(node)`: ArgumentAlignment has something to
+    /// align — two or more arguments, or a first hash argument with two or more
+    /// pairs.
+    fn argument_alignment_applies(&self, facts: &AlignmentFacts) -> bool {
+        facts.is_plain_call
+            && (facts.arg_count >= 2 || facts.first_arg_pairs.is_some_and(|n| n >= 2))
+    }
+
+    /// `indentation_of_method_line(node)`: `lines[lineno - 1] =~ /\S/` for the
+    /// selector's line (the char index of its first non-blank).
+    fn indentation_of_method_line(&self, anchor: usize) -> usize {
+        self.line_text(self.line_of(anchor))
+            .and_then(|t| t.chars().position(|c| !c.is_whitespace()))
+            .unwrap_or(0)
     }
 
     /// `base_range(send_node, arg_node)`: from the start of `send_node` (or its
@@ -521,6 +588,18 @@ impl<'a> Visitor<'a> {
             let Some(first) = first else { return };
             // `node.dot?`: a `.`/`&.` operator call.
             let has_dot = c.call_operator_loc().is_some();
+            let block_pass = c.block().filter(|b| b.as_block_argument_node().is_some());
+            let arg_count = c.arguments().map_or(0, |a| a.arguments().iter().count())
+                + usize::from(block_pass.is_some());
+            let facts = AlignmentFacts {
+                is_plain_call: c.name().as_slice() != b"[]=",
+                arg_count,
+                first_arg_pairs: hash_pair_count(&first),
+                method_line_anchor: c
+                    .message_loc()
+                    .or_else(|| c.opening_loc())
+                    .map_or(c.as_node().location().start_offset(), |l| l.start_offset()),
+            };
             self.process_call(
                 loc(&c.as_node().location()),
                 loc(&first.location()),
@@ -529,6 +608,7 @@ impl<'a> Visitor<'a> {
                 is_operator_name(c.name().as_slice()),
                 has_dot,
                 c.closing_loc().map(|cl| cl.start_offset()),
+                facts,
             );
         } else if let Some(s) = node.as_super_node() {
             // Same block-pass mapping as calls: `super(&blk)`.
@@ -537,6 +617,12 @@ impl<'a> Visitor<'a> {
                 .and_then(|args| args.arguments().iter().next())
                 .or_else(|| s.block().filter(|b| b.as_block_argument_node().is_some()));
             let Some(first) = first else { return };
+            let facts = AlignmentFacts {
+                is_plain_call: false,
+                arg_count: 0,
+                first_arg_pairs: None,
+                method_line_anchor: s.as_node().location().start_offset(),
+            };
             self.process_call(
                 loc(&s.as_node().location()),
                 loc(&first.location()),
@@ -545,6 +631,7 @@ impl<'a> Visitor<'a> {
                 false,
                 false,
                 s.rparen_loc().map(|cl| cl.start_offset()),
+                facts,
             );
         }
     }
@@ -587,6 +674,23 @@ impl<'a> Visitor<'a> {
     }
 }
 
+/// `first_argument.pairs.count` when the argument is a hash (braced, or the
+/// braceless keyword hash parser-gem also types as `:hash`); `pairs` excludes
+/// `**splat` entries.
+fn hash_pair_count(node: &Node<'_>) -> Option<usize> {
+    let count = |elements: ruby_prism::NodeList<'_>| {
+        elements
+            .iter()
+            .filter(|e| e.as_assoc_node().is_some())
+            .count()
+    };
+    if let Some(h) = node.as_hash_node() {
+        Some(count(h.elements()))
+    } else {
+        node.as_keyword_hash_node().map(|h| count(h.elements()))
+    }
+}
+
 /// `operator_method?`: the method name is in stock's `OPERATOR_METHODS`
 /// (rubocop-ast `method_identifier_predicates.rb`). That set includes `[]` and
 /// `[]=`, so braceless index reads (`x[:foo]`) are bare operators that
@@ -605,7 +709,11 @@ mod tests {
     use super::*;
 
     fn run(source: &str, style: u8) -> Vec<(usize, usize, isize, String, bool)> {
-        check_first_argument_indentation(source.as_bytes(), style, 2, false)
+        run_mode(source, style, 0)
+    }
+
+    fn run_mode(source: &str, style: u8, mode: u8) -> Vec<(usize, usize, isize, String, bool)> {
+        check_first_argument_indentation(source.as_bytes(), style, 2, mode)
             .into_iter()
             .map(|o| {
                 (
@@ -635,6 +743,21 @@ mod tests {
     #[test]
     fn accepts_first_arg_on_same_line() {
         assert!(run("run :foo,\n    bar: 3\n", 0).is_empty());
+    }
+
+    // `with_fixed_indentation` + FirstMethodArgumentLineBreak on (mode 2): an
+    // inner call that does not start its own line is left to
+    // ArgumentAlignment; with FirstMethodArgumentLineBreak off (mode 1) the
+    // cop defers entirely.
+    #[test]
+    fn defers_conflicting_inner_call_to_argument_alignment() {
+        let src = "expect(execute_request(\n  \"some_url\",\n  :request_method => \"PATCH\"\n)).to be_throttled\n";
+        assert_eq!(run_mode(src, 3, 0).len(), 1);
+        assert!(run_mode(src, 3, 2).is_empty());
+        assert!(run_mode(src, 3, 1).is_empty());
+        // A single-argument inner call has nothing for ArgumentAlignment.
+        let single = "expect(execute_request(\n  \"some_url\"\n)).to be_throttled\n";
+        assert_eq!(run_mode(single, 3, 2).len(), 1);
     }
 
     #[test]

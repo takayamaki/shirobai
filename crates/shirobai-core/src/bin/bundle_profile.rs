@@ -221,7 +221,7 @@ fn run_perrule(sources: &[Vec<u8>], cfg: &BundleConfig, iterations: usize) {
                 s,
                 cfg.first_argument_style,
                 cfg.first_argument_indent,
-                cfg.first_argument_enforce_fixed_no_line_break,
+                cfg.first_argument_fixed_mode,
             ));
         }),
         e!("redundant_self", |s: &[u8]| {

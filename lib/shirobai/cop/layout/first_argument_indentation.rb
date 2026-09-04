@@ -31,19 +31,24 @@ module Shirobai
         def self.badge = RuboCop::Cop::Badge.parse("Layout/FirstArgumentIndentation")
 
         # Packed args for the bundled run: `[style, indentation_width,
-        # enforce_fixed_with_no_line_break]`. The enforce flag replicates the
-        # instance derivation: `Layout/ArgumentAlignment` enforcing
-        # `with_fixed_indentation` while `Layout/FirstMethodArgumentLineBreak`
-        # is disabled.
+        # fixed_mode]`. `fixed_mode` replicates stock's
+        # `enforce_first_argument_with_fixed_indentation?` gate: `0` when
+        # `Layout/ArgumentAlignment` does not enforce `with_fixed_indentation`;
+        # otherwise `1` while `Layout/FirstMethodArgumentLineBreak` is disabled
+        # (the cop defers entirely) and `2` while it is enabled (the cop defers
+        # only on the inner calls where the two would loop, 1.90).
         def self.bundle_args(config)
           cop_config = config.for_badge(badge)
           argument_alignment_config = config.for_enabled_cop("Layout/ArgumentAlignment")
-          enforce = argument_alignment_config["EnforcedStyle"] == "with_fixed_indentation" &&
-                    !config.cop_enabled?("Layout/FirstMethodArgumentLineBreak")
+          fixed_mode = if argument_alignment_config["EnforcedStyle"] == "with_fixed_indentation"
+                         config.cop_enabled?("Layout/FirstMethodArgumentLineBreak") ? 2 : 1
+                       else
+                         0
+                       end
           [
             STYLES.fetch(cop_config["EnforcedStyle"], 0),
             cop_config["IndentationWidth"] || config.for_cop("Layout/IndentationWidth")["Width"] || 2,
-            enforce
+            fixed_mode
           ]
         end
 

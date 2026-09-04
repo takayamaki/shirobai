@@ -411,7 +411,7 @@ fn run_full_firstarg(sources: &[Vec<u8>]) -> usize {
     let mut sink = 0usize;
     for s in sources {
         sink = sink.wrapping_add(
-            rules::first_argument_indentation::check_first_argument_indentation(s, 0, 2, false)
+            rules::first_argument_indentation::check_first_argument_indentation(s, 0, 2, 0)
                 .len(),
         );
     }
