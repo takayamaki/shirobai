@@ -63,9 +63,10 @@ module Shirobai
         end
 
         def on_new_investigation
-          # Stock 1.89: the self-alias trick declares an intentional
-          # redefinition only within the file that uses it.
-          @self_aliased = Set.new
+          # The self-alias trick (1.89) and Active Support's redefinition
+          # markers (1.90) declare an intentional redefinition only within
+          # the file that uses them.
+          @intentionally_redefined = Set.new
           events = resolved_events
           return if events.empty?
 
@@ -73,12 +74,12 @@ module Shirobai
           path = smart_path(buffer.name)
           off = SourceOffsets.for(bundle_eligible? ? processed_source.raw_source : buffer.source)
 
-          # `flags` bits: 0-1 rescue/ensure scope / 4 self-alias event / 8
-          # the key carries a scope id / 16 inside a def.
+          # `flags` bits: 0-1 rescue/ensure scope / 4 intentional-redefinition
+          # event / 8 the key carries a scope id / 16 inside a def.
           events.each do |flags, name, key, sexp_start, _sexp_end, scope_line, scope_begin,
                           off_start, off_end, line|
-            if flags.anybits?(4) # track_self_alias (1.89)
-              @self_aliased << name
+            if flags.anybits?(4) # track_intentional_redefinition
+              @intentionally_redefined << name
               next
             end
             scope = flags & 3
@@ -97,20 +98,22 @@ module Shirobai
             if @definitions.key?(key)
               defined_display, defined_path = @definitions[key]
               if scope != 0 && !@scopes[scope].include?(key)
-                @definitions[key] = [current, path]
+                @definitions[key] = [current, buffer.name]
                 @scopes[scope] << key
-              elsif @self_aliased.include?(name) && defined_path != path
-                # `intentional_cross_file_redefinition?` (1.89): the
-                # self-alias trick marks an intentional redefinition of a
-                # method defined in another file.
-                @definitions[key] = [current, path]
+              elsif defined_path != buffer.name &&
+                    (@intentionally_redefined.include?(name) || allowed_cross_file_path?(defined_path))
+                # `intentional_cross_file_redefinition?` (the self-alias trick
+                # / Active Support markers) or `allowed_cross_file_redefinition?`
+                # (`AllowedCrossFilePaths`, 1.90): a redefinition of a method
+                # defined in another file that stock does not report.
+                @definitions[key] = [current, buffer.name]
               else
                 range = Parser::Source::Range.new(buffer, off[off_start], off[off_end])
                 message = format(MSG, method: name, defined: defined_display, current: current)
                 add_offense(range, message: message)
               end
             else
-              @definitions[key] = [current, path]
+              @definitions[key] = [current, buffer.name]
               # Stock 1.89 `check_cross_file_duplicate`: first sighting, no
               # scope id, no rescue/ensure scope, not inside a def, and the
               # runner handed us an index.
@@ -138,7 +141,7 @@ module Shirobai
         # helpers come from the ProjectIndexHelp mixin) ---
 
         def check_cross_file_duplicate(method_name, current, begin_pos, end_pos)
-          return if @self_aliased.include?(method_name)
+          return if @intentionally_redefined.include?(method_name)
           return unless (prior = cross_file_prior_definition(method_name))
 
           range = Parser::Source::Range.new(processed_source.buffer, begin_pos, end_pos)
@@ -153,10 +156,24 @@ module Shirobai
 
           definitions = definitions_in_other_files(
             indexed_definitions(match[:owner], match[:separator], match[:name])
-          )
+          ).reject { |definition| allowed_cross_file_path?(definition.location.to_file_path) }
           return if definitions.empty? || cross_file_self_alias_trick?(definitions)
+          return if cross_file_redefinition_marker?(definitions, match[:name])
 
           first_indexed_definition(definitions)
+        end
+
+        # Cross-file duplicates whose other definition site matches one of the
+        # `AllowedCrossFilePaths` patterns are skipped (1.90). Patterns are
+        # matched like `Exclude` patterns, against the path relative to the
+        # directory of the config file that configures the cop; absolute
+        # patterns are matched against the absolute path.
+        def allowed_cross_file_path?(path)
+          patterns = cop_config.fetch("AllowedCrossFilePaths", [])
+          return false if patterns.empty?
+
+          relative = config.path_relative_to_config(path)
+          patterns.any? { |pattern| match_path?(pattern, relative) || match_path?(pattern, path) }
         end
 
         def indexed_definitions(owner, separator, name)
@@ -189,6 +206,28 @@ module Shirobai
           alias_paths = aliases.map { |definition| definition.location.to_file_path }
 
           others.any? { |definition| alias_paths.include?(definition.location.to_file_path) }
+        end
+
+        # An Active Support redefinition marker alongside one of the
+        # definitions in another file marks the redefinition there as
+        # intentional, like the self-alias trick (1.90). The index does not
+        # record the marker's method-name argument, so the other file's
+        # source is searched for a marker naming the method.
+        def cross_file_redefinition_marker?(definitions, name)
+          return false unless active_support_extensions_enabled?
+
+          definitions.map { |definition| definition.location.to_file_path }.uniq.any? do |path|
+            redefinition_marker_in_file?(path, name)
+          end
+        end
+
+        def redefinition_marker_in_file?(path, name)
+          return false unless File.readable?(path)
+
+          escaped = Regexp.escape(name)
+          marker = /\b(?:silence_redefinition_of_method|redefine_method)\s*\(?\s*
+                    (?::#{escaped}|(["'])#{escaped}\1)(?![\w=!?])/x
+          File.read(path).scrub.match?(marker)
         end
 
         def first_indexed_definition(definitions)
