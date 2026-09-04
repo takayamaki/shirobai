@@ -17,7 +17,9 @@ module Shirobai
       #   and the replacement text), and
       # - the `Layout/LineLength` exemptions prune the "too long" direction
       #   (`AllowedPatterns`, cop directives, `AllowURI`, per-line disables
-      #   via `comment_config`), reusing the stock mixins.
+      #   via `comment_config`), reusing the stock mixins. They do not apply
+      #   to the "use modifier" direction: since 1.90 a modifier form that
+      #   exceeds `Max` never fits, whatever `Layout/LineLength` would exempt.
       #
       # The wrapper also replays stock's `ignore_node` bookkeeping with plain
       # char ranges: the store persists across autocorrect passes (stock's
@@ -100,27 +102,25 @@ module Shirobai
 
         # Direction 1: multiline if/unless that would fit as a modifier.
         def check_use_modifier(candidate)
-          _, kw_s, kw_e, node_s, node_e, flags, c_s, c_e, variant_no, variant_with, line_no, = candidate
+          _, kw_s, kw_e, node_s, node_e, flags, c_s, c_e, replacement_no, replacement_with, = candidate
           if flags.anybits?(4) # first-line comment present
             comment = rust_source.byteslice(c_s, c_e - c_s)
             if comment_disables_cop?(comment)
               fits = flags.anybits?(16)
-              replacement, rendered_line = variant_no
+              replacement = replacement_no
             else
               # `first_line_comment(node) && code_after(node)` rejection.
               return if flags.anybits?(8)
 
               fits = flags.anybits?(32)
-              replacement, rendered_line = variant_with
+              replacement = replacement_with
             end
           else
             fits = flags.anybits?(16)
-            replacement, rendered_line = variant_no
+            replacement = replacement_no
           end
-          # 1.89: a raw-too-long modifier form still "fits" when
-          # `Layout/LineLength` would exempt the assembled line
-          # (`acceptable_line_length?`); Rust exported that line.
-          return unless fits || exempted_line?(rendered_line, line_no)
+          # `modifier_fits_on_single_line?` (1.90): the bare maximum decides.
+          return unless fits
 
           keyword = flags.anybits?(1) ? "unless" : "if"
           message = flags.anybits?(64) ? MSG_USE_MODIFIER_PARENS : MSG_USE_MODIFIER
@@ -181,9 +181,10 @@ module Shirobai
 
         # --- stock private methods reused verbatim ---
 
-        # Stock `acceptable_line_length?` (1.89) minus the raw length
-        # comparison, which Rust already decided: a line `Layout/LineLength`
-        # would not flag fits by definition.
+        # Stock `acceptable_line_length?` minus the raw length comparison,
+        # which Rust already decided. Only the "too long" direction asks it:
+        # an existing modifier line `Layout/LineLength` would not flag is
+        # acceptable by definition.
         def exempted_line?(line, line_number)
           return true unless line_length_enabled_at_line?(line_number)
           return true if matches_allowed_pattern?(line)

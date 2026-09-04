@@ -2244,13 +2244,9 @@ fn map_space_inside_string_interpolation(
 
 type IfUnlessModifierOps = Vec<(u8, usize, usize, String)>;
 
-/// One direction-1 rewrite variant: `(replacement, assembled_line)`. The
-/// assembled line is non-empty only when its raw length exceeds max (the
-/// wrapper then applies the `Layout/LineLength` exemptions, 1.89).
-type IfUnlessModifierVariant = (String, String);
 type IfUnlessModifierTuple = (
     u8, usize, usize, usize, usize, u8, usize, usize,
-    IfUnlessModifierVariant, IfUnlessModifierVariant, usize, IfUnlessModifierOps,
+    String, String, usize, IfUnlessModifierOps,
 );
 
 /// `Style/IfUnlessModifier` candidates: `[kind, kw_start, kw_end, node_start,
@@ -2262,10 +2258,7 @@ type IfUnlessModifierTuple = (
 /// after `end` / 16 fits without comment / 32 fits with comment / 64
 /// parenthesize (stock's MSG_USE_MODIFIER_PARENS variant, 1.89). `ops` are
 /// `[op_kind, start, end, text]` with 0 = replace, 1 = remove (direction 2).
-/// The replacement slots are `(replacement, assembled_line)` pairs per
-/// comment variant; the assembled line is non-empty only when its raw length
-/// exceeds max — the wrapper then applies the `Layout/LineLength`
-/// exemptions.
+/// The replacement slots are the `to_modifier_form` text per comment variant.
 #[allow(clippy::type_complexity)]
 fn map_if_unless_modifier(
     v: Vec<shirobai_core::rules::if_unless_modifier::IfUnlessModifierCandidate>,
@@ -2293,8 +2286,8 @@ fn map_if_unless_modifier(
                 flags,
                 c.comment_start,
                 c.comment_end,
-                (c.replacement_no_comment, c.line_no_comment),
-                (c.replacement_with_comment, c.line_with_comment),
+                c.replacement_no_comment,
+                c.replacement_with_comment,
                 c.line_number,
                 ops,
             )

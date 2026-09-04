@@ -96,13 +96,6 @@ pub struct IfUnlessModifierCandidate {
     /// Direction 1: `StatementModifier#parenthesize?` — picks stock's
     /// MSG_USE_MODIFIER_PARENS message variant (1.89).
     pub parenthesize: bool,
-    /// Direction 1: the assembled modifier-form LINE (code before the
-    /// keyword + modifier form + code after `end`), exported only when its
-    /// raw length exceeds max — the wrapper then applies the
-    /// `Layout/LineLength` exemptions (stock `acceptable_line_length?`,
-    /// 1.89). Empty when the raw length already fits.
-    pub line_no_comment: String,
-    pub line_with_comment: String,
     /// 1-based first line of the node (direction 2 Ruby-side checks).
     pub line_number: usize,
     /// Direction 2: the corrector ops (removals first, then the replace).
@@ -500,20 +493,13 @@ impl<'a> Visitor<'a> {
         let len_with = self.line_length(&assemble(&expr_with_comment));
         let fits_no_comment = self.cfg.max_line_length.is_none_or(|m| len_no <= m);
         let fits_with_comment = self.cfg.max_line_length.is_none_or(|m| len_with <= m);
-        // A raw-too-long variant can still "fit" through the
-        // `Layout/LineLength` exemptions (1.89 `acceptable_line_length?`),
-        // so the candidate is emitted either way and carries the assembled
-        // line for the wrapper's regex-side checks.
-        let line_no_comment = if fits_no_comment {
-            String::new()
-        } else {
-            lossy(&assemble(&expr))
-        };
-        let line_with_comment = if fits_with_comment {
-            String::new()
-        } else {
-            lossy(&assemble(&expr_with_comment))
-        };
+        // 1.90 `modifier_fits_on_single_line?` compares the assembled line
+        // against the bare maximum: `Layout/LineLength`'s exemptions never
+        // license a new too-long line. When neither comment variant fits
+        // there is nothing the wrapper could report.
+        if !fits_no_comment && !fits_with_comment {
+            return;
+        }
 
         let another = self.another_modifier_if_on_same_line(ns, first_line);
         self.candidates.push(IfUnlessModifierCandidate {
@@ -533,8 +519,6 @@ impl<'a> Visitor<'a> {
             replacement_no_comment: lossy(&expr),
             replacement_with_comment: lossy(&expr_with_comment),
             parenthesize,
-            line_no_comment,
-            line_with_comment,
             line_number: first_line,
             ops: Vec::new(),
         });
@@ -812,8 +796,6 @@ impl<'a> Visitor<'a> {
             replacement_no_comment: String::new(),
             replacement_with_comment: String::new(),
             parenthesize: false,
-            line_no_comment: String::new(),
-            line_with_comment: String::new(),
             line_number: line_no,
             ops,
         });
