@@ -618,6 +618,11 @@ impl<'pr> Visit<'pr> for Visitor<'_> {
         // Endless def: `def foo = body`; `loc.assignment` is the `=`.
         if let Some(eq) = node.equal_loc() {
             self.def_equals.push(eq.start_offset());
+            // 1.90 `on_def` / `on_defs`: the endless `=` is checked through the
+            // `:assignment` path with the body as the right operand.
+            if let Some(body) = node.body() {
+                self.on_assignment_plain(eq, body.location());
+            }
         }
         ruby_prism::visit_def_node(self, node);
     }
