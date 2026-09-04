@@ -1588,7 +1588,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     };
     // `Layout/ExtraSpacing` is a token-scan cop with an AST side input: it walks
     // the token stream collected up front as adjacent pairs, and its own
-    // `with_parsed` (`collect_def_equals`, sharing the cached parse) supplies the
+    // `with_parsed` (`collect_def_info`, sharing the cached parse) supplies the
     // `remove_equals_in_def` positions the alignment / assignment logic needs.
     let extra_spacing = match &bundle_tokens {
         Some(tokens) if cfg.extra_spacing_enabled => {

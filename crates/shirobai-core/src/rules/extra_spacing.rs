@@ -5,7 +5,12 @@
 //!
 //! - `AllowForAlignment` (default `true`): extra space used to vertically align
 //!   a token with something on an adjacent line is permitted (the shared
-//!   [`Aligner`], `aligned_with_something?` / `@aligned_comments`).
+//!   [`Aligner`], `aligned_with_something?` / `@aligned_comments`). Since 1.90
+//!   a coincidental alignment is not enough for a non-assignment token: the
+//!   padding must *vary* across the alignment group (`spacing_varies?`, the
+//!   per-group column profile in [`SpacingProfile`]) — three `let(:x)   {`
+//!   lines padded by the same two spaces are repeated extra spacing, not
+//!   alignment.
 //! - `AllowBeforeTrailingComments` (default `false`): extra space before a
 //!   trailing `#` comment is permitted.
 //! - `ForceEqualSignAlignment` (default `false`): instead of removing extra
@@ -34,7 +39,8 @@
 //! Offsets are **byte** offsets; the Ruby wrapper maps them through
 //! `Shirobai::SourceOffsets`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
+use std::rc::Rc;
 
 use ruby_prism::Visit;
 
@@ -99,6 +105,10 @@ struct GapCandidate {
     tok2_end: usize,
     /// `token2.comment?`.
     tok2_is_comment: bool,
+    /// `token2.type` (the prism id, see [`Token::type_id`]).
+    tok2_type: u32,
+    /// `ASSIGNMENT_OR_COMPARISON_TOKENS.include?(token2.type)`.
+    tok2_asgn_or_cmp: bool,
 }
 
 /// An `=`-assignment token deferred to the `ForceEqualSignAlignment` check.
@@ -175,6 +185,8 @@ impl ExtraSpacingRule {
             tok2_begin: t2.begin_pos,
             tok2_end: t2.end_pos,
             tok2_is_comment: t2.comment(),
+            tok2_type: t2.type_id,
+            tok2_asgn_or_cmp: t2.assignment_or_comparison(),
         });
     }
 }
@@ -229,29 +241,32 @@ fn aligned_comment_lines(tokens: &[Token], line_index: &LineIndex, source: &[u8]
 /// source). The Ruby wrapper reproduces that instance memoization, so it owns the
 /// `ignored_range?` step; here every gap survivor that passes the alignment
 /// filter is emitted as a `Remove` offense and tagged with its `range_start` (==
-/// `start_offset`) for the wrapper to filter. `def_equals` are the `=` byte
-/// positions `remove_equals_in_def` excludes.
+/// `start_offset`) for the wrapper to filter. `defs` carries the `=` byte
+/// positions `remove_equals_in_def` excludes and the def boundary lines the
+/// alignment profile stops at.
 pub fn resolve(
     source: &[u8],
     cfg: Config,
     rule: ExtraSpacingRule,
     tokens: &[Token],
-    def_equals: &[usize],
+    defs: &DefInfo,
 ) -> Vec<ExtraSpacingOffense> {
     let line_index = super::line_index::with_line_index(source, |li| li.clone());
-    let aligner = Aligner::new(source, &line_index, tokens, def_equals);
+    let aligner = Aligner::new(source, &line_index, tokens, &defs.equals);
     let aligned_comments = aligned_comment_lines(tokens, &line_index, source);
+    let mut profile = SpacingProfile::new(source, &line_index, tokens, &aligner, &defs.boundary_lines);
 
     let mut out: Vec<ExtraSpacingOffense> = Vec::new();
 
     // check_other survivors (the `ignored_range?` filter is the caller's).
     for g in &rule.gaps {
-        // `return if allow_for_alignment? && aligned_tok?(token2)`.
+        // `return if allow_for_alignment? && aligned_tok?(token1, token2)`.
         if cfg.allow_for_alignment {
             let aligned = if g.tok2_is_comment {
                 aligned_comments.contains(&line_index.line_of(g.tok2_begin))
             } else {
                 aligner.aligned_with_something(g.tok2_begin, g.tok2_end)
+                    && (g.tok2_asgn_or_cmp || profile.spacing_varies(g))
             };
             if aligned {
                 continue;
@@ -418,6 +433,23 @@ fn relevant_assignment_lines(
     asgn_lines: &BTreeSet<usize>,
     line_range: &[usize],
 ) -> Vec<usize> {
+    relevant_lines(source, line_index, line_range, &BTreeSet::new(), |ln| {
+        asgn_lines.contains(&ln)
+    })
+}
+
+/// `relevant_lines(line_range, boundary_lines) { |line| ... }` (the mixin):
+/// walk `line_range` (1-based line numbers, in iteration order) from its first
+/// line, stopping at a def boundary, at a less-indented non-blank line, or at a
+/// blank line while still at the original indent level; collect the lines at
+/// the original indent that satisfy `pred`.
+fn relevant_lines(
+    source: &[u8],
+    line_index: &LineIndex,
+    line_range: &[usize],
+    boundary_lines: &BTreeSet<usize>,
+    pred: impl Fn(usize) -> bool,
+) -> Vec<usize> {
     let mut result = Vec::new();
     let Some(&first) = line_range.first() else {
         return result;
@@ -427,10 +459,13 @@ fn relevant_assignment_lines(
     for &ln in line_range {
         let cur_indent = line_indentation(source, line_index, ln);
         let blank = line_is_blank(source, line_index, ln);
-        if (cur_indent < original_indent && !blank) || (relevant_at_level && blank) {
+        if (ln != first && boundary_lines.contains(&ln))
+            || (cur_indent < original_indent && !blank)
+            || (relevant_at_level && blank)
+        {
             break;
         }
-        if asgn_lines.contains(&ln) && cur_indent == original_indent {
+        if pred(ln) && cur_indent == original_indent {
             result.push(ln);
         }
         if !blank {
@@ -438,6 +473,249 @@ fn relevant_assignment_lines(
         }
     }
     result
+}
+
+/// One alignment group's column profile (`group_profile` / `build_group_profile`).
+struct GroupProfile {
+    /// `by_column`: token column -> `(line, spacing before the token)`, one entry
+    /// per token of the group's lines (in line order, then token order).
+    by_column: HashMap<usize, Vec<(usize, usize)>>,
+    /// `typed`: `(column, token type)` -> `(lines, spacings)`.
+    typed: HashMap<(usize, u32), (Vec<usize>, Vec<usize>)>,
+    /// `@alignment_verdicts`: keyed by the `typed` entry (stock keys by the
+    /// identity of its `lines` array, which amounts to the same thing).
+    verdicts: HashMap<(usize, u32), bool>,
+}
+
+/// `spacing_varies?` and its helpers (1.90): whether the padding before a
+/// token differs somewhere across the token's alignment group — a uniformly
+/// padded column is repeated extra spacing, not alignment. Lazily builds
+/// `alignment_lines` (the group of same-indent lines around a line, bounded by
+/// def boundaries) and the per-group column profile, both memoized as stock
+/// does (`@alignment_lines_by_line` / `@group_profiles`).
+struct SpacingProfile<'a> {
+    source: &'a [u8],
+    line_index: &'a LineIndex,
+    tokens: &'a [Token],
+    aligner: &'a Aligner<'a>,
+    /// `definition_boundary_lines`.
+    boundary_lines: &'a BTreeSet<usize>,
+    /// `@tokens_by_line`: 1-based line -> indices into `tokens`.
+    tokens_by_line: HashMap<usize, Vec<usize>>,
+    /// `@alignment_lines_by_line`.
+    alignment_lines_by_line: HashMap<usize, Rc<Vec<usize>>>,
+    /// `@group_profiles`, keyed by the group's line list.
+    group_profiles: HashMap<Vec<usize>, GroupProfile>,
+    line_count: usize,
+}
+
+impl<'a> SpacingProfile<'a> {
+    fn new(
+        source: &'a [u8],
+        line_index: &'a LineIndex,
+        tokens: &'a [Token],
+        aligner: &'a Aligner<'a>,
+        boundary_lines: &'a BTreeSet<usize>,
+    ) -> Self {
+        SpacingProfile {
+            source,
+            line_index,
+            tokens,
+            aligner,
+            boundary_lines,
+            tokens_by_line: HashMap::new(),
+            alignment_lines_by_line: HashMap::new(),
+            group_profiles: HashMap::new(),
+            line_count: line_count(source),
+        }
+    }
+
+    fn column(&self, off: usize) -> usize {
+        self.line_index.column(self.source, off)
+    }
+
+    /// `@tokens_by_line = processed_source.tokens.group_by(&:line)`, built on
+    /// first use (most files never ask).
+    fn ensure_tokens_by_line(&mut self) {
+        if !self.tokens_by_line.is_empty() {
+            return;
+        }
+        for (i, t) in self.tokens.iter().enumerate() {
+            self.tokens_by_line
+                .entry(self.line_index.line_of(t.begin_pos))
+                .or_default()
+                .push(i);
+        }
+    }
+
+    fn tokens_on_line(&self, line: usize) -> &[usize] {
+        self.tokens_by_line.get(&line).map_or(&[], Vec::as_slice)
+    }
+
+    /// `spacing_varies?(previous_token, token)`.
+    fn spacing_varies(&mut self, g: &GapCandidate) -> bool {
+        let line = self.line_index.line_of(g.tok2_begin);
+        let column = self.column(g.tok2_begin);
+        let group = self.alignment_lines(line);
+        self.ensure_group_profile(&group);
+        let profile = &self.group_profiles[group.as_ref()];
+        let (lines, spacings) = profile
+            .typed
+            .get(&(column, g.tok2_type))
+            .map_or((&[][..], &[][..]), |(l, s)| (l.as_slice(), s.as_slice()));
+        let entries = profile.by_column.get(&column).map_or(&[][..], Vec::as_slice);
+
+        if lines.len() > 1 {
+            let lines = lines.to_vec();
+            let spacings = spacings.to_vec();
+            self.uniform_alignment_allowed(&group, column, g.tok2_type, &lines, &spacings)
+        } else if entries.len() > 1 {
+            let mut distinct: Vec<usize> = entries.iter().map(|&(_, sp)| sp).collect();
+            distinct.sort_unstable();
+            distinct.dedup();
+            distinct.len() > 1
+        } else {
+            self.nearest_spacing_varies(g, line, column)
+        }
+    }
+
+    /// `uniform_alignment_allowed?(token, lines, spacings)`, memoized per
+    /// `(group, column, type)`.
+    fn uniform_alignment_allowed(
+        &mut self,
+        group: &Rc<Vec<usize>>,
+        column: usize,
+        type_id: u32,
+        lines: &[usize],
+        spacings: &[usize],
+    ) -> bool {
+        let key = (column, type_id);
+        if let Some(&v) = self.group_profiles[group.as_ref()].verdicts.get(&key) {
+            return v;
+        }
+        let mut distinct = spacings.to_vec();
+        distinct.sort_unstable();
+        distinct.dedup();
+        let verdict = distinct.len() > 1 || self.aligned_on_other_column(group, column, lines);
+        self.group_profiles
+            .get_mut(group.as_ref())
+            .expect("profile built")
+            .verdicts
+            .insert(key, verdict);
+        verdict
+    }
+
+    /// `aligned_on_other_column?(token, lines)`: another column of the same
+    /// lines is padded unevenly, so this column's uniform padding is alignment.
+    fn aligned_on_other_column(&self, group: &Rc<Vec<usize>>, column: usize, lines: &[usize]) -> bool {
+        let line_set: BTreeSet<usize> = lines.iter().copied().collect();
+        let profile = &self.group_profiles[group.as_ref()];
+        profile.by_column.iter().any(|(&col, entries)| {
+            if col == column {
+                return false;
+            }
+            let mut shared: Vec<usize> = entries
+                .iter()
+                .filter_map(|&(line, sp)| line_set.contains(&line).then_some(sp))
+                .collect();
+            shared.sort_unstable();
+            shared.dedup();
+            shared.len() > 1
+        })
+    }
+
+    /// `alignment_lines(line_number)`: the union of the downward and upward
+    /// `relevant_lines` around `line` (aligned comment lines excluded, def
+    /// boundaries respected), sorted; memoized for every line of the group.
+    fn alignment_lines(&mut self, line: usize) -> Rc<Vec<usize>> {
+        if let Some(lines) = self.alignment_lines_by_line.get(&line) {
+            return Rc::clone(lines);
+        }
+        let down: Vec<usize> = (1..=line).rev().collect();
+        let up: Vec<usize> = (line..=self.line_count).collect();
+        let pred = |ln: usize| !self.aligner.aligned_comment_line(ln);
+        let mut lines = relevant_lines(self.source, self.line_index, &down, self.boundary_lines, pred);
+        lines.extend(relevant_lines(self.source, self.line_index, &up, self.boundary_lines, pred));
+        lines.sort_unstable();
+        lines.dedup();
+        let lines = Rc::new(lines);
+        for &ln in lines.iter() {
+            self.alignment_lines_by_line.insert(ln, Rc::clone(&lines));
+        }
+        lines
+    }
+
+    /// `group_profile(line)` / `build_group_profile(group)`, memoized per group.
+    fn ensure_group_profile(&mut self, group: &Rc<Vec<usize>>) {
+        if self.group_profiles.contains_key(group.as_ref()) {
+            return;
+        }
+        self.ensure_tokens_by_line();
+        let mut by_column: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
+        let mut typed: HashMap<(usize, u32), (Vec<usize>, Vec<usize>)> = HashMap::new();
+        for &line in group.iter() {
+            // `record_line_spacings`: `@tokens_by_line[line]&.each_cons(2)`.
+            let idx = self.tokens_on_line(line);
+            for w in idx.windows(2) {
+                let (prev, tok) = (&self.tokens[w[0]], &self.tokens[w[1]]);
+                let spacing = tok.begin_pos.saturating_sub(prev.end_pos);
+                let column = self.column(tok.begin_pos);
+                by_column.entry(column).or_default().push((line, spacing));
+                let entry = typed.entry((column, tok.type_id)).or_default();
+                entry.0.push(line);
+                entry.1.push(spacing);
+            }
+        }
+        self.group_profiles.insert(
+            group.as_ref().clone(),
+            GroupProfile {
+                by_column,
+                typed,
+                verdicts: HashMap::new(),
+            },
+        );
+    }
+
+    /// `nearest_spacing_varies?(previous_token, token)`: the nearest line above
+    /// or below (within the def) that has a token at this column pads it
+    /// differently.
+    fn nearest_spacing_varies(&mut self, g: &GapCandidate, line: usize, column: usize) -> bool {
+        let spacing = g.tok2_begin.saturating_sub(g.range_start);
+        let above: Vec<usize> = (1..line).rev().collect();
+        let below: Vec<usize> = (line + 1..=self.line_count).collect();
+        self.nearest_spacing_differs(&above, column, spacing)
+            || self.nearest_spacing_differs(&below, column, spacing)
+    }
+
+    /// `nearest_spacing_differs?(line_numbers, token, spacing)`.
+    fn nearest_spacing_differs(&mut self, line_numbers: &[usize], column: usize, spacing: usize) -> bool {
+        for &ln in line_numbers {
+            if self.boundary_lines.contains(&ln) {
+                break;
+            }
+            if self.aligner.aligned_comment_line(ln) {
+                continue;
+            }
+            if let Some(other) = self.spacing_before_token_at(ln, column) {
+                return other != spacing;
+            }
+        }
+        false
+    }
+
+    /// `spacing_before_token_at(line_number, column)`: the padding before the
+    /// token that starts at `column` on `line`, when it exists and is not the
+    /// line's first token.
+    fn spacing_before_token_at(&mut self, line: usize, column: usize) -> Option<usize> {
+        self.ensure_tokens_by_line();
+        let idx = self.tokens_on_line(line);
+        let index = idx.iter().position(|&i| self.column(self.tokens[i].begin_pos) == column)?;
+        if index == 0 {
+            return None;
+        }
+        let (prev, tok) = (&self.tokens[idx[index - 1]], &self.tokens[idx[index]]);
+        Some(tok.begin_pos.saturating_sub(prev.end_pos))
+    }
 }
 
 /// `processed_source.line_indentation(line)`: leading spaces/tabs of 1-based
@@ -563,27 +841,48 @@ pub fn ignored_ranges(source: &[u8]) -> Vec<(usize, usize)> {
     w.out
 }
 
-/// Collect the def/optarg `=` byte positions excluded by `remove_equals_in_def`.
-pub fn collect_def_equals(source: &[u8]) -> Vec<usize> {
-    struct DefEq {
-        out: Vec<usize>,
+/// What the alignment logic needs from the file's method definitions.
+#[derive(Default)]
+pub struct DefInfo {
+    /// The def/optarg `=` byte positions excluded by `remove_equals_in_def`.
+    pub equals: Vec<usize>,
+    /// `definition_boundary_lines`: the first and last line of every `def` /
+    /// `defs` (1-based), where an alignment group ends.
+    pub boundary_lines: BTreeSet<usize>,
+}
+
+/// Collect [`DefInfo`] from the shared parse.
+pub fn collect_def_info(source: &[u8]) -> DefInfo {
+    struct DefWalk<'a> {
+        source: &'a [u8],
+        out: DefInfo,
     }
-    impl<'pr> Visit<'pr> for DefEq {
+    impl<'pr> Visit<'pr> for DefWalk<'_> {
         fn visit_optional_parameter_node(
             &mut self,
             node: &ruby_prism::OptionalParameterNode<'pr>,
         ) {
-            self.out.push(node.operator_loc().start_offset());
+            self.out.equals.push(node.operator_loc().start_offset());
             ruby_prism::visit_optional_parameter_node(self, node);
         }
         fn visit_def_node(&mut self, node: &ruby_prism::DefNode<'pr>) {
             if let Some(eq) = node.equal_loc() {
-                self.out.push(eq.start_offset());
+                self.out.equals.push(eq.start_offset());
             }
+            let loc = node.location();
+            // `node.first_line` / `node.last_line`: the line of the node's
+            // first and last byte (the exclusive end may sit on the next
+            // line's newline).
+            self.out.boundary_lines.insert(line_of(self.source, loc.start_offset()) + 1);
+            let last = loc.end_offset().saturating_sub(1).max(loc.start_offset());
+            self.out.boundary_lines.insert(line_of(self.source, last) + 1);
             ruby_prism::visit_def_node(self, node);
         }
     }
-    let mut v = DefEq { out: Vec::new() };
+    let mut v = DefWalk {
+        source,
+        out: DefInfo::default(),
+    };
     super::parse_cache::with_parsed(source, |_s, node| v.visit(node));
     v.out
 }
@@ -610,9 +909,9 @@ pub fn check_extra_spacing(source: &[u8], cfg: Config) -> Vec<ExtraSpacingOffens
 /// (the `cargo test` equivalence case in `bundle.rs` pins them equal).
 pub fn check_with_tokens(source: &[u8], cfg: Config, tokens: &[Token]) -> Vec<ExtraSpacingOffense> {
     let line_index = super::line_index::with_line_index(source, |li| li.clone());
-    let def_equals = collect_def_equals(source);
+    let defs = collect_def_info(source);
     let assignment_set = if cfg.force_equal_sign_alignment {
-        assignment_token_set(tokens, &line_index, &def_equals)
+        assignment_token_set(tokens, &line_index, &defs.equals)
     } else {
         BTreeSet::new()
     };
@@ -621,7 +920,7 @@ pub fn check_with_tokens(source: &[u8], cfg: Config, tokens: &[Token]) -> Vec<Ex
     for w in tokens.windows(2) {
         rule.check_pair(source, &line_index, &w[0], &w[1]);
     }
-    resolve(source, cfg, rule, tokens, &def_equals)
+    resolve(source, cfg, rule, tokens, &defs)
 }
 
 #[cfg(test)]
@@ -708,6 +1007,39 @@ mod tests {
         // "{ a =>  1 }\n": `=>` ends at 6, `1` at 8 -> extra space flagged at [6,7).
         let off = run("{ a =>  1 }\n", cfg(true, false, false));
         assert_eq!(off, vec![(6, 7)]);
+    }
+
+    // Uniform padding across a column is repeated extra spacing (1.90
+    // `spacing_varies?`), while padding that varies is alignment.
+    #[test]
+    fn repeated_uniform_padding_is_flagged() {
+        let src = "let(:low_group)   { create(:a) }\nlet(:medium_group)   { create(:b) }\n";
+        assert_eq!(run(src, cfg(true, false, false)).len(), 2);
+        let aligned = "let(:low_group)      { create(:a) }\nlet(:medium_group)   { create(:b) }\n";
+        assert!(run(aligned, cfg(true, false, false)).is_empty());
+    }
+
+    // A uniformly padded column is still alignment when another column of the
+    // same lines varies (`aligned_on_other_column?`).
+    #[test]
+    fn uniform_padding_with_varying_neighbour_column() {
+        let src = "f 'a', 'var = if',     'test',  'end'\nf 'a', 'var = unless', 'test',  'end'\n";
+        assert!(run(src, cfg(true, false, false)).is_empty());
+    }
+
+    // The nearest same-column token beyond a def boundary does not count.
+    #[test]
+    fn nearest_spacing_stops_at_def_boundary() {
+        let src = "foo(:a)   { bar }\nfoo(:b)   { bar }\ndef unrelated\n  bar\nend\nfoo(:abc) { bar }\n";
+        assert_eq!(run(src, cfg(true, false, false)).len(), 2);
+    }
+
+    // A less-indented line ends the same-indent search (1.90 aligner): the
+    // only aligned line lives in a preceding sibling block.
+    #[test]
+    fn sibling_block_alignment_is_coincidental() {
+        let src = "if foo\n  aaa  = 1\nend\nif bar\n  bbb  = 1\nend\n";
+        assert_eq!(run(src, cfg(true, false, false)).len(), 2);
     }
 
     // ForceEqualSignAlignment flags an `=` not aligned with the preceding one.

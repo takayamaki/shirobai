@@ -198,8 +198,18 @@ impl<'a> Aligner<'a> {
             let Some(index) = first_non_space_index(line) else {
                 continue;
             };
-            if matches!(indent, Some(ind) if ind != index) {
-                continue;
+            if let Some(ind) = indent {
+                // When searching for the nearest line with the same
+                // indentation, more deeply indented lines are nested content
+                // of the current group and are skipped, but a less deeply
+                // indented line ends the enclosing block: an alignment anchor
+                // beyond it would be coincidental (1.90).
+                if index < ind {
+                    break;
+                }
+                if index > ind {
+                    continue;
+                }
             }
             // The first line with a non-space (and matching indent, if given)
             // decides the result; stock returns the predicate value here.
@@ -220,7 +230,7 @@ impl<'a> Aligner<'a> {
 
     /// `aligned_comment_lines`: lines of full-line comments (a comment whose
     /// expression begins its line).
-    fn aligned_comment_line(&self, line: usize) -> bool {
+    pub(crate) fn aligned_comment_line(&self, line: usize) -> bool {
         self.tokens.iter().any(|t| {
             t.comment() && self.line(t.begin_pos) == line && self.begins_its_line(t.begin_pos)
         })
