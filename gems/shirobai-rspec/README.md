@@ -45,7 +45,7 @@ Two things are different from the shirobai-performance shell:
 
 ```ruby
 # Gemfile
-gem "rubocop", "= 1.89.0"
+gem "rubocop", "= 1.90.0"
 gem "rubocop-rspec", "= 3.10.2"
 gem "shirobai"
 gem "shirobai-rspec"

@@ -52,7 +52,13 @@ module Shirobai
           @uri_regexp_cache ||= {}.compare_by_identity
           @uri_regexp_cache[cop_config] ||= begin
             parser = defined?(URI::RFC2396_PARSER) ? URI::RFC2396_PARSER : URI::DEFAULT_PARSER
-            parser.make_regexp(cop_config["URISchemes"])
+            schemes = cop_config["URISchemes"]
+            regexp = parser.make_regexp(schemes)
+
+            # `make_regexp` in uri 1.1.0+ matches schemes case-insensitively, which
+            # makes constant paths like `Http::UploadedFile` look like URIs. Require
+            # the exact case given in `URISchemes` (stock `LineLengthHelp#uri_regexp`).
+            schemes ? /(?=#{Regexp.union(schemes)}:)#{regexp}/ : regexp
           end
         end
 

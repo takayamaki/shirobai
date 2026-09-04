@@ -112,10 +112,13 @@ pub struct SpaceAroundOperatorsOffense {
 /// only these two for `excess_leading_space?`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AlignType {
-    /// `on_assignment` for a plain assignment (`lvasgn` / `casgn` / ... / `masgn`),
-    /// *not* an op-assign (`op_asgn_type?` is `:special_asgn`).
+    /// `on_assignment` for a plain assignment (`lvasgn` / `casgn` / ... /
+    /// `masgn`) and for `||=` / `&&=` (`or_asgn` / `and_asgn`): stock only
+    /// diverts `op_asgn_type?` — the arithmetic `+=` family — to
+    /// `:special_asgn`.
     Assignment,
-    /// Everything else (binary, ternary, pair, class, setter, op-assign, ...).
+    /// Everything else (binary, ternary, pair, class, setter, `+=`-style
+    /// op-assign, ...).
     Other,
 }
 
@@ -618,6 +621,11 @@ impl<'pr> Visit<'pr> for Visitor<'_> {
         // Endless def: `def foo = body`; `loc.assignment` is the `=`.
         if let Some(eq) = node.equal_loc() {
             self.def_equals.push(eq.start_offset());
+            // 1.90 `on_def` / `on_defs`: the endless `=` is checked through the
+            // `:assignment` path with the body as the right operand.
+            if let Some(body) = node.body() {
+                self.on_assignment_plain(eq, body.location());
+            }
         }
         ruby_prism::visit_def_node(self, node);
     }
@@ -652,7 +660,9 @@ impl<'pr> Visit<'pr> for Visitor<'_> {
         ruby_prism::visit_multi_write_node(self, node);
     }
 
-    // Op-assign write nodes (`+=` / `||=` / `&&=`): :special_asgn (Other).
+    // Op-assign write nodes: `+=` (`op_asgn_type?`) is :special_asgn
+    // (Other); `||=` / `&&=` are `or_asgn` / `and_asgn` in parser-gem, which
+    // `on_assignment` types as :assignment.
     fn visit_local_variable_operator_write_node(&mut self, node: &ruby_prism::LocalVariableOperatorWriteNode<'pr>) {
         self.check_op_assign(node.binary_operator_loc(), node.value().location());
         ruby_prism::visit_local_variable_operator_write_node(self, node);
@@ -678,67 +688,68 @@ impl<'pr> Visit<'pr> for Visitor<'_> {
         ruby_prism::visit_constant_path_operator_write_node(self, node);
     }
     fn visit_local_variable_or_write_node(&mut self, node: &ruby_prism::LocalVariableOrWriteNode<'pr>) {
-        self.check_op_assign(node.operator_loc(), node.value().location());
+        self.on_assignment_plain(node.operator_loc(), node.value().location());
         ruby_prism::visit_local_variable_or_write_node(self, node);
     }
     fn visit_instance_variable_or_write_node(&mut self, node: &ruby_prism::InstanceVariableOrWriteNode<'pr>) {
-        self.check_op_assign(node.operator_loc(), node.value().location());
+        self.on_assignment_plain(node.operator_loc(), node.value().location());
         ruby_prism::visit_instance_variable_or_write_node(self, node);
     }
     fn visit_class_variable_or_write_node(&mut self, node: &ruby_prism::ClassVariableOrWriteNode<'pr>) {
-        self.check_op_assign(node.operator_loc(), node.value().location());
+        self.on_assignment_plain(node.operator_loc(), node.value().location());
         ruby_prism::visit_class_variable_or_write_node(self, node);
     }
     fn visit_global_variable_or_write_node(&mut self, node: &ruby_prism::GlobalVariableOrWriteNode<'pr>) {
-        self.check_op_assign(node.operator_loc(), node.value().location());
+        self.on_assignment_plain(node.operator_loc(), node.value().location());
         ruby_prism::visit_global_variable_or_write_node(self, node);
     }
     fn visit_constant_or_write_node(&mut self, node: &ruby_prism::ConstantOrWriteNode<'pr>) {
-        self.check_op_assign(node.operator_loc(), node.value().location());
+        self.on_assignment_plain(node.operator_loc(), node.value().location());
         ruby_prism::visit_constant_or_write_node(self, node);
     }
     fn visit_constant_path_or_write_node(&mut self, node: &ruby_prism::ConstantPathOrWriteNode<'pr>) {
-        self.check_op_assign(node.operator_loc(), node.value().location());
+        self.on_assignment_plain(node.operator_loc(), node.value().location());
         ruby_prism::visit_constant_path_or_write_node(self, node);
     }
     fn visit_local_variable_and_write_node(&mut self, node: &ruby_prism::LocalVariableAndWriteNode<'pr>) {
-        self.check_op_assign(node.operator_loc(), node.value().location());
+        self.on_assignment_plain(node.operator_loc(), node.value().location());
         ruby_prism::visit_local_variable_and_write_node(self, node);
     }
     fn visit_instance_variable_and_write_node(&mut self, node: &ruby_prism::InstanceVariableAndWriteNode<'pr>) {
-        self.check_op_assign(node.operator_loc(), node.value().location());
+        self.on_assignment_plain(node.operator_loc(), node.value().location());
         ruby_prism::visit_instance_variable_and_write_node(self, node);
     }
     fn visit_class_variable_and_write_node(&mut self, node: &ruby_prism::ClassVariableAndWriteNode<'pr>) {
-        self.check_op_assign(node.operator_loc(), node.value().location());
+        self.on_assignment_plain(node.operator_loc(), node.value().location());
         ruby_prism::visit_class_variable_and_write_node(self, node);
     }
     fn visit_global_variable_and_write_node(&mut self, node: &ruby_prism::GlobalVariableAndWriteNode<'pr>) {
-        self.check_op_assign(node.operator_loc(), node.value().location());
+        self.on_assignment_plain(node.operator_loc(), node.value().location());
         ruby_prism::visit_global_variable_and_write_node(self, node);
     }
     fn visit_constant_and_write_node(&mut self, node: &ruby_prism::ConstantAndWriteNode<'pr>) {
-        self.check_op_assign(node.operator_loc(), node.value().location());
+        self.on_assignment_plain(node.operator_loc(), node.value().location());
         ruby_prism::visit_constant_and_write_node(self, node);
     }
     fn visit_constant_path_and_write_node(&mut self, node: &ruby_prism::ConstantPathAndWriteNode<'pr>) {
-        self.check_op_assign(node.operator_loc(), node.value().location());
+        self.on_assignment_plain(node.operator_loc(), node.value().location());
         ruby_prism::visit_constant_path_and_write_node(self, node);
     }
 
     // Attribute op-assign / and/or-assign: `obj.attr += 1` (`self.foo ||= 1`).
     // Prism splits these into Call{Operator,Or,And}WriteNode; parser-gem makes
-    // them an `op_asgn` (`on_op_asgn` -> `on_assignment`, :special_asgn).
+    // `+=` an `op_asgn` (:special_asgn) and `||=` / `&&=` an `or_asgn` /
+    // `and_asgn` (:assignment).
     fn visit_call_operator_write_node(&mut self, node: &ruby_prism::CallOperatorWriteNode<'pr>) {
         self.check_op_assign(node.binary_operator_loc(), node.value().location());
         ruby_prism::visit_call_operator_write_node(self, node);
     }
     fn visit_call_or_write_node(&mut self, node: &ruby_prism::CallOrWriteNode<'pr>) {
-        self.check_op_assign(node.operator_loc(), node.value().location());
+        self.on_assignment_plain(node.operator_loc(), node.value().location());
         ruby_prism::visit_call_or_write_node(self, node);
     }
     fn visit_call_and_write_node(&mut self, node: &ruby_prism::CallAndWriteNode<'pr>) {
-        self.check_op_assign(node.operator_loc(), node.value().location());
+        self.on_assignment_plain(node.operator_loc(), node.value().location());
         ruby_prism::visit_call_and_write_node(self, node);
     }
 
@@ -748,11 +759,11 @@ impl<'pr> Visit<'pr> for Visitor<'_> {
         ruby_prism::visit_index_operator_write_node(self, node);
     }
     fn visit_index_or_write_node(&mut self, node: &ruby_prism::IndexOrWriteNode<'pr>) {
-        self.check_op_assign(node.operator_loc(), node.value().location());
+        self.on_assignment_plain(node.operator_loc(), node.value().location());
         ruby_prism::visit_index_or_write_node(self, node);
     }
     fn visit_index_and_write_node(&mut self, node: &ruby_prism::IndexAndWriteNode<'pr>) {
-        self.check_op_assign(node.operator_loc(), node.value().location());
+        self.on_assignment_plain(node.operator_loc(), node.value().location());
         ruby_prism::visit_index_and_write_node(self, node);
     }
 }
@@ -1155,6 +1166,36 @@ mod tests {
         let off = run(aligned, cfg_off);
         assert_eq!(off.len(), 1);
         assert_eq!(off[0].2, MessageKind::SingleSpace);
+    }
+
+    /// `||=` takes the `:assignment` path: with no other assignment line at
+    /// the same indent (`:none` both ways) the excess leading space is not
+    /// flagged, while `+=` (`:special_asgn`) goes through
+    /// `aligned_with_operator?` and is (redmine bazaar_adapter.rb).
+    #[test]
+    fn or_assign_is_assignment_path() {
+        let or_src = "class << self
+  def a
+    @@bin    ||= BZR
+  end
+
+  def b
+    @@sq_bin ||= sq
+  end
+end
+";
+        assert!(run(or_src, default_cfg()).is_empty());
+        let op_src = "class << self
+  def a
+    @@bin    += BZR
+  end
+
+  def b
+    @@sq_bin += sq
+  end
+end
+";
+        assert_eq!(run(op_src, default_cfg()).len(), 1);
     }
 
     /// Aligned assignments (`:assignment` path, preceding/subsequent `=`) are

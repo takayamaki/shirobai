@@ -105,9 +105,10 @@ pub struct DupMethodEvent {
     /// 1.89 the suffix is `"@#{path}:#{line}:#{begin_pos}"`
     /// (`anon_block_identity`), distinguishing blocks that share a line.
     pub scope_begin: i64,
-    /// A `track_self_alias` event (1.89): `name` carries the humanized
-    /// method name; the wrapper records it and skips the bookkeeping.
-    pub self_alias: bool,
+    /// A `track_intentional_redefinition` event (1.89 self-alias trick, 1.90
+    /// Active Support markers): `name` carries the humanized method name;
+    /// the wrapper records it and skips the bookkeeping.
+    pub intentional_redefinition: bool,
     /// The key carries a scope id (`scope_id` non-nil in stock) — gates the
     /// project-index cross-file check in the wrapper.
     pub scoped: bool,
@@ -116,6 +117,8 @@ pub struct DupMethodEvent {
 }
 
 const RESTRICT_ON_SEND: &[&[u8]] = &[
+    b"silence_redefinition_of_method",
+    b"redefine_method",
     b"alias_method",
     b"attr_reader",
     b"attr_writer",
@@ -727,17 +730,19 @@ impl<'s> DuplicateMethodsRule<'s> {
             line,
             rescue_scope,
             scope_begin,
-            self_alias: false,
+            intentional_redefinition: false,
             scoped,
             inside_def,
         });
     }
 
-    /// Stock `track_self_alias` (1.89): `alias foo foo` /
-    /// `alias_method :foo, :foo` marks an intentional redefinition of a
-    /// method defined in another file. Only tracked when
+    /// Stock `track_intentional_redefinition`: `alias foo foo` /
+    /// `alias_method :foo, :foo` (1.89) and, with
+    /// `ActiveSupportExtensionsEnabled`, `silence_redefinition_of_method
+    /// :foo` / `redefine_method(:foo)` (1.90) mark an intentional
+    /// redefinition of a method defined in another file. Only tracked when
     /// `parent_module_name` resolves, like stock.
-    fn track_self_alias(&mut self, name: &str) {
+    fn track_intentional_redefinition(&mut self, name: &str) {
         let Some(scope) = self.pmn(self.frames.len()) else {
             return;
         };
@@ -753,7 +758,7 @@ impl<'s> DuplicateMethodsRule<'s> {
             line: 0,
             rescue_scope: 0,
             scope_begin: -1,
-            self_alias: true,
+            intentional_redefinition: true,
             scoped: false,
             inside_def: false,
         });
@@ -930,7 +935,7 @@ impl<'s> DuplicateMethodsRule<'s> {
             return;
         };
         if new == old {
-            self.track_self_alias(&new);
+            self.track_intentional_redefinition(&new);
             return;
         }
         if self.if_depth > 0 {
@@ -1016,7 +1021,7 @@ impl<'s> DuplicateMethodsRule<'s> {
                     return;
                 };
                 if new == old {
-                    self.track_self_alias(&new);
+                    self.track_intentional_redefinition(&new);
                     return;
                 }
                 if self.if_depth > 0 {
@@ -1077,6 +1082,20 @@ impl<'s> DuplicateMethodsRule<'s> {
                 }
                 let defined = values.last().unwrap().clone().unwrap();
                 self.found_instance_method(&defined, off, node_start);
+            }
+            // `active_support_redefinition_marker` (1.90): `(send nil?
+            // {:silence_redefinition_of_method :redefine_method} ({sym str}
+            // $_) ...)`. Scope resolution starts from the call node itself —
+            // stock passes `node.block_node || node` because parser hangs
+            // the block above the send, prism below it.
+            b"silence_redefinition_of_method" | b"redefine_method" => {
+                if !self.cfg.active_support_extensions_enabled {
+                    return;
+                }
+                let Some(marked) = args.first().and_then(sym_or_str_value) else {
+                    return;
+                };
+                self.track_intentional_redefinition(&marked);
             }
             b"def_delegators" | b"def_instance_delegators" => {
                 if args.len() < 2 {
@@ -1450,7 +1469,7 @@ mod tests {
     fn events(src: &str) -> Vec<(String, String, i64, i64, u8)> {
         all_events(src)
             .into_iter()
-            .filter(|e| !e.self_alias)
+            .filter(|e| !e.intentional_redefinition)
             .map(|e| (e.key, e.name, e.scope_line, e.sexp_start, e.rescue_scope))
             .collect()
     }
@@ -1667,11 +1686,11 @@ mod tests {
     fn alias_forms() {
         assert_eq!(keys("class A\n  alias foo bar\nend\n"), vec!["A#foo"]);
         assert_eq!(keys("class A\n  alias foo foo\nend\n"), Vec::<String>::new());
-        // ...but 1.89 tracks it as a self-alias event (the intentional
+        // ...but 1.89 tracks it as an intentional-redefinition event (the
         // cross-file redefinition marker).
         let sa: Vec<DupMethodEvent> = all_events("class A\n  alias foo foo\nend\n")
             .into_iter()
-            .filter(|e| e.self_alias)
+            .filter(|e| e.intentional_redefinition)
             .collect();
         assert_eq!(sa.len(), 1);
         assert_eq!(sa[0].name, "A#foo");
@@ -1719,6 +1738,30 @@ mod tests {
             },
         );
         assert_eq!(evts[0].key, "A#foo");
+    }
+
+    // Active Support redefinition markers (1.90): tracked like the
+    // self-alias trick, only with `ActiveSupportExtensionsEnabled`. The
+    // `redefine_method` block hangs off the call in prism, so the scope
+    // still resolves to the enclosing class.
+    #[test]
+    fn active_support_redefinition_markers() {
+        let src = "class A\n  silence_redefinition_of_method :foo\n  redefine_method('bar') do\n    1\n  end\nend\n";
+        let marked = |enabled: bool| {
+            check_duplicate_methods(
+                src.as_bytes(),
+                &Config {
+                    active_support_extensions_enabled: enabled,
+                    delegating_methods: vec!["delegate".to_string()],
+                },
+            )
+            .into_iter()
+            .filter(|e| e.intentional_redefinition)
+            .map(|e| e.name)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(marked(true), vec!["A#foo", "A#bar"]);
+        assert!(marked(false).is_empty());
     }
 
     // delegate prefix handling.

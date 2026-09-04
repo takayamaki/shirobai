@@ -113,7 +113,7 @@ pub fn check_multiline_bundle(
 /// | 15-17 | multiline_operation style / indent / base |
 /// | 18-20 | multiline_method_call style / indent / base |
 /// | 21-23 | argument_alignment style / indent / incompatible |
-/// | 24-26 | first_argument_indentation style / indent / enforce_fixed_no_line_break |
+/// | 24-26 | first_argument_indentation style / indent / fixed_mode (0 off / 1 `with_fixed_indentation` with FirstMethodArgumentLineBreak off: defer all / 2 with it on: defer conflicts) |
 /// | 27-33 | indentation_width width / relative_to_receiver / access_modifier_outdent / indented_internal_methods / end_align / def_end_align_def / use_tabs |
 /// | 34  | closing_paren_indent |
 /// | 35-37 | first_array_element style / indent / enforce_fixed_indentation |
@@ -333,7 +333,7 @@ pub struct BundleConfig {
     pub array_alignment_indent: usize,
     pub first_argument_style: u8,
     pub first_argument_indent: usize,
-    pub first_argument_enforce_fixed_no_line_break: bool,
+    pub first_argument_fixed_mode: u8,
     pub indentation_width: indentation_width::Config,
     pub closing_paren_indent: usize,
     pub first_array_element_style: u8,
@@ -579,7 +579,7 @@ impl BundleConfig {
             frozen_string_literal_comment_style: nums[116] as u8,
             first_argument_style: nums[24] as u8,
             first_argument_indent: nums[25] as usize,
-            first_argument_enforce_fixed_no_line_break: nums[26] != 0,
+            first_argument_fixed_mode: nums[26] as u8,
             indentation_width: indentation_width::Config {
                 width: nums[27] as usize,
                 relative_to_receiver: nums[28] != 0,
@@ -1216,7 +1216,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         source,
         cfg.first_argument_style,
         cfg.first_argument_indent,
-        cfg.first_argument_enforce_fixed_no_line_break,
+        cfg.first_argument_fixed_mode,
     );
     let mut snc_rule = safe_navigation_chain::build_rule(source, &cfg.safe_navigation_nil_methods);
     let mut iw_rule = indentation_width::build_rule(source, cfg.indentation_width, &[], &[]);
@@ -1588,7 +1588,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     };
     // `Layout/ExtraSpacing` is a token-scan cop with an AST side input: it walks
     // the token stream collected up front as adjacent pairs, and its own
-    // `with_parsed` (`collect_def_equals`, sharing the cached parse) supplies the
+    // `with_parsed` (`collect_def_info`, sharing the cached parse) supplies the
     // `remove_equals_in_def` positions the alignment / assignment logic needs.
     let extra_spacing = match &bundle_tokens {
         Some(tokens) if cfg.extra_spacing_enabled => {
@@ -2585,7 +2585,7 @@ mod tests {
             src.as_bytes(),
             0,
             2,
-            false,
+            0,
         );
         assert!(!fa_alone.is_empty());
         assert_eq!(bundle.first_argument_indentation.len(), fa_alone.len());

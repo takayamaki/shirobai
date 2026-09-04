@@ -275,6 +275,9 @@ impl<'a> Aligner<'a> {
     /// `aligned_with_line?`: the FIRST line in the direction that is not a
     /// line-starting comment, not blank (and matches `indent` when given)
     /// decides; absent lines (past `line_limit`) are transparent like blanks.
+    /// In the same-indent pass a less indented line ends the enclosing
+    /// block, so the search stops there (1.90): an anchor beyond it would
+    /// be coincidental.
     fn direction_result(
         &mut self,
         c: &Candidate,
@@ -312,10 +315,13 @@ impl<'a> Aligner<'a> {
             else {
                 continue; // blank line
             };
-            if let Some(ind) = indent
-                && ind != first_non_ws
-            {
-                continue;
+            if let Some(ind) = indent {
+                if first_non_ws < ind {
+                    return false;
+                }
+                if first_non_ws > ind {
+                    continue;
+                }
             }
             return self.aligned_token(c, line, ls, le);
         }
@@ -611,6 +617,19 @@ mod tests {
             run("define  :foo=\nzzzzzzzzzzz<=>b = 9\n", true),
             vec![(6, 8)]
         );
+    }
+
+    // The same-indent pass stops at a less indented line (1.90): the
+    // `false` below is not aligned with `newline_conf` past `end`, even though
+    // a `\s\S` boundary sits at its column there (fluentd
+    // test_formatter_ltsv.rb).
+    #[test]
+    fn same_indent_search_stops_at_shallower_line() {
+        let src = "def a\n  assert_equal \"=\", x\n  assert_equal  false, y\nend\n\ndef b\n  newline_conf, newline = data\nend\n";
+        assert_eq!(run(src, true), vec![(42, 44)]);
+        // Inside one block the alignment still holds.
+        let aligned = "def a\n  assert_equal  \":\", x\n  assert_equal  false, y\nend\n";
+        assert!(run(aligned, true).is_empty());
     }
 
     #[test]

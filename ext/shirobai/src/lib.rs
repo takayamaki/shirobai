@@ -2244,13 +2244,9 @@ fn map_space_inside_string_interpolation(
 
 type IfUnlessModifierOps = Vec<(u8, usize, usize, String)>;
 
-/// One direction-1 rewrite variant: `(replacement, assembled_line)`. The
-/// assembled line is non-empty only when its raw length exceeds max (the
-/// wrapper then applies the `Layout/LineLength` exemptions, 1.89).
-type IfUnlessModifierVariant = (String, String);
 type IfUnlessModifierTuple = (
     u8, usize, usize, usize, usize, u8, usize, usize,
-    IfUnlessModifierVariant, IfUnlessModifierVariant, usize, IfUnlessModifierOps,
+    String, String, usize, IfUnlessModifierOps,
 );
 
 /// `Style/IfUnlessModifier` candidates: `[kind, kw_start, kw_end, node_start,
@@ -2262,10 +2258,7 @@ type IfUnlessModifierTuple = (
 /// after `end` / 16 fits without comment / 32 fits with comment / 64
 /// parenthesize (stock's MSG_USE_MODIFIER_PARENS variant, 1.89). `ops` are
 /// `[op_kind, start, end, text]` with 0 = replace, 1 = remove (direction 2).
-/// The replacement slots are `(replacement, assembled_line)` pairs per
-/// comment variant; the assembled line is non-empty only when its raw length
-/// exceeds max — the wrapper then applies the `Layout/LineLength`
-/// exemptions.
+/// The replacement slots are the `to_modifier_form` text per comment variant.
 #[allow(clippy::type_complexity)]
 fn map_if_unless_modifier(
     v: Vec<shirobai_core::rules::if_unless_modifier::IfUnlessModifierCandidate>,
@@ -2293,8 +2286,8 @@ fn map_if_unless_modifier(
                 flags,
                 c.comment_start,
                 c.comment_end,
-                (c.replacement_no_comment, c.line_no_comment),
-                (c.replacement_with_comment, c.line_with_comment),
+                c.replacement_no_comment,
+                c.replacement_with_comment,
                 c.line_number,
                 ops,
             )
@@ -2785,8 +2778,8 @@ fn extra_spacing_ignored_ranges(source: RString) -> Vec<(usize, usize)> {
 /// the enforced style (0=special_for_inner_method_call_in_parentheses,
 /// 1=consistent, 2=consistent_relative_to_receiver,
 /// 3=special_for_inner_method_call), the configured indentation width and
-/// whether the cop is disabled because `Layout/ArgumentAlignment` enforces
-/// `with_fixed_indentation` while `Layout/FirstMethodArgumentLineBreak` is off.
+/// the `with_fixed_indentation` mode (0 off / 1 defer all / 2 defer
+/// conflicts, see `FixedIndentationMode`).
 /// Returns `[[start, end, column_delta, message, autocorrect, correct_start,
 /// correct_end], ...]`.
 #[allow(clippy::type_complexity)]
@@ -2794,14 +2787,14 @@ fn check_first_argument_indentation(
     source: RString,
     style: u8,
     indent_width: usize,
-    enforce_fixed_with_no_line_break: bool,
+    fixed_mode: u8,
 ) -> Vec<(usize, usize, isize, String, bool, usize, usize)> {
     map_first_argument_indentation(
         shirobai_core::rules::first_argument_indentation::check_first_argument_indentation(
             bytes(&source),
             style,
             indent_width,
-            enforce_fixed_with_no_line_break,
+            fixed_mode,
         ),
     )
 }
@@ -3340,7 +3333,7 @@ fn check_empty_line_after_magic_comment(
 
 /// `Lint/DuplicateMethods`: `[[flags, name, key, sexp_start, sexp_end,
 /// scope_line, scope_begin, off_start, off_end, line], ...]` — one tuple per
-/// stock `found_method` / `track_self_alias` call, in callback order.
+/// stock `found_method` / `track_intentional_redefinition` call, in callback order.
 /// `sexp_start/end >= 0` marks the parser-sexp key fallback (byte range of
 /// the defs node); `scope_line >= 0` asks the wrapper to append the
 /// `"@#{smart_path}:#{line}:#{begin_pos}"` scope id (1.89
@@ -3348,7 +3341,7 @@ fn check_empty_line_after_magic_comment(
 /// `rescue_scope`: 0 none / 1 rescue / 2 ensure. The wrapper replays stock's
 /// cross-file `@definitions` / `@scopes` bookkeeping over this stream.
 /// `flags` bits: 0-1 rescue_scope (0 none / 1 rescue / 2 ensure) / 4
-/// self_alias (a `track_self_alias` event: `name` only) / 8 scoped (the key
+/// intentional_redefinition (a `track_intentional_redefinition` event: `name` only) / 8 scoped (the key
 /// carries a scope id) / 16 inside_def. `scope_begin >= 0` is the parser
 /// begin offset for the 1.89 `anon_block_identity` suffix.
 type DupMethodTuple = (u8, String, String, i64, i64, i64, i64, usize, usize, usize);
@@ -3359,7 +3352,7 @@ fn map_duplicate_methods(
     v.into_iter()
         .map(|e| {
             let flags = e.rescue_scope
-                | (u8::from(e.self_alias) << 2)
+                | (u8::from(e.intentional_redefinition) << 2)
                 | (u8::from(e.scoped) << 3)
                 | (u8::from(e.inside_def) << 4);
             (

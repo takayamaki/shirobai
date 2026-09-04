@@ -2,7 +2,7 @@
 
 source "https://rubygems.org"
 
-gem "rubocop", "= 1.89.0"
+gem "rubocop", "= 1.90.0"
 
 # Plugins required by test corpora
 gem "rubocop-capybara"        # Mastodon

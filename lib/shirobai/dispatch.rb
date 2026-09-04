@@ -441,7 +441,7 @@ module Shirobai
           op[0], op[1], op[2],           # MultilineOperationIndentation style / indent / base
           mc[0], mc[1], mc[2],           # MultilineMethodCallIndentation style / indent / base
           aa[0], aa[1], num(aa[2]),      # ArgumentAlignment style / indent / incompatible
-          fai[0], fai[1], num(fai[2]),   # FirstArgumentIndentation style / indent / enforce flag
+          fai[0], fai[1], fai[2],        # FirstArgumentIndentation style / indent / fixed_mode
           *iw,                           # IndentationWidth packed config (7 nums)
           cpi[0],                        # ClosingParenthesisIndentation indent width
           fae[0], fae[1], num(fae[2]),   # FirstArrayElementIndentation style / indent / enforce flag

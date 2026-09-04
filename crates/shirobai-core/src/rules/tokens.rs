@@ -96,6 +96,12 @@ pub enum ParserTokenType {
 #[derive(Clone, Copy, Debug)]
 pub struct Token {
     pub kind: ParserTokenType,
+    /// The prism `pm_token_type` id the token came from (a `tNL` carries
+    /// `NEWLINE` whatever emitted it). Stands in for parser-gem's `token.type`
+    /// where a cop groups tokens by type (`Layout/ExtraSpacing`'s alignment
+    /// profile): prism's types are at least as fine as parser-gem's for the
+    /// tokens that can share a column.
+    pub type_id: u32,
     pub begin_pos: usize,
     pub end_pos: usize,
 }
@@ -183,6 +189,15 @@ struct RawTok {
 /// by the lexer) map to `""`.
 fn prism_token_name(id: u32) -> &'static str {
     PM_TOKEN_NAMES.get(id as usize).copied().unwrap_or("")
+}
+
+/// The `pm_token_type` id of the prism token `name` (the inverse of
+/// [`prism_token_name`]).
+fn prism_type_id(name: &str) -> u32 {
+    PM_TOKEN_NAMES
+        .iter()
+        .position(|n| *n == name)
+        .map_or(u32::MAX, |i| i as u32)
 }
 
 const EXPR_BEG: u32 = 0x1;
@@ -353,6 +368,7 @@ fn convert(raws: &[RawTok], source: &[u8]) -> Vec<Token> {
     // here before the lex-order emission loop below consults them.
     let nl = TnlPlan::build(raws, source);
 
+    let newline_id = prism_type_id("NEWLINE");
     while i < n {
         let tk = raws[i];
         let prism_name = prism_token_name(tk.type_id);
@@ -366,6 +382,7 @@ fn convert(raws: &[RawTok], source: &[u8]) -> Vec<Token> {
             "IGNORED_NEWLINE" => {
                 if nl.forward_args.contains(&b) {
                     out.push(Token {
+                        type_id: newline_id,
                         kind: ParserTokenType::NewLine,
                         begin_pos: b,
                         end_pos: e,
@@ -394,6 +411,7 @@ fn convert(raws: &[RawTok], source: &[u8]) -> Vec<Token> {
                 ParserTokenType::Other // tLPAREN_ARG: not left_parens?
             };
             out.push(Token {
+                type_id: tk.type_id,
                 kind,
                 begin_pos: b,
                 end_pos: e,
@@ -420,6 +438,7 @@ fn convert(raws: &[RawTok], source: &[u8]) -> Vec<Token> {
                 // Merge `:` + operator into one Other token spanning both.
                 let merged_end = next.start + next.len;
                 out.push(Token {
+                    type_id: tk.type_id,
                     kind: ParserTokenType::Other,
                     begin_pos: b,
                     end_pos: merged_end,
@@ -450,6 +469,7 @@ fn convert(raws: &[RawTok], source: &[u8]) -> Vec<Token> {
             if j < n && prism_token_name(raws[j].type_id) == "STRING_END" {
                 let merged_end = raws[j].start + raws[j].len;
                 out.push(Token {
+                    type_id: tk.type_id,
                     kind: ParserTokenType::Other,
                     begin_pos: b,
                     end_pos: merged_end,
@@ -497,11 +517,13 @@ fn convert(raws: &[RawTok], source: &[u8]) -> Vec<Token> {
                 );
                 if prev_same_line && ends_nl && !next_is_cont {
                     out.push(Token {
+                        type_id: tk.type_id,
                         kind: ParserTokenType::Comment,
                         begin_pos: b,
                         end_pos: cend,
                     });
                     out.push(Token {
+                        type_id: newline_id,
                         kind: ParserTokenType::NewLine,
                         begin_pos: e - 1,
                         end_pos: e,
@@ -510,6 +532,7 @@ fn convert(raws: &[RawTok], source: &[u8]) -> Vec<Token> {
                 } else if prev_same_line && next_is_comment {
                     pending_comment_nl = Some((e - 1, e));
                     out.push(Token {
+                        type_id: tk.type_id,
                         kind: ParserTokenType::Comment,
                         begin_pos: b,
                         end_pos: cend,
@@ -518,11 +541,13 @@ fn convert(raws: &[RawTok], source: &[u8]) -> Vec<Token> {
                 } else if pending_comment_nl.is_some() && !next_is_cont {
                     let (nb, ne) = pending_comment_nl.take().unwrap();
                     out.push(Token {
+                        type_id: tk.type_id,
                         kind: ParserTokenType::Comment,
                         begin_pos: b,
                         end_pos: cend,
                     });
                     out.push(Token {
+                        type_id: newline_id,
                         kind: ParserTokenType::NewLine,
                         begin_pos: nb,
                         end_pos: ne,
@@ -530,6 +555,7 @@ fn convert(raws: &[RawTok], source: &[u8]) -> Vec<Token> {
                     continue;
                 }
                 out.push(Token {
+                    type_id: tk.type_id,
                     kind: ParserTokenType::Comment,
                     begin_pos: b,
                     end_pos: cend,
@@ -558,6 +584,7 @@ fn convert(raws: &[RawTok], source: &[u8]) -> Vec<Token> {
             // really sit on a `\n`).
             "HEREDOC_END" if nl.heredoc_end_nl.contains(&e) => {
                 out.push(Token {
+                    type_id: newline_id,
                     kind: ParserTokenType::NewLine,
                     begin_pos: e - 1,
                     end_pos: e,
@@ -567,6 +594,7 @@ fn convert(raws: &[RawTok], source: &[u8]) -> Vec<Token> {
         }
 
         out.push(Token {
+            type_id: tk.type_id,
             kind,
             begin_pos: b,
             end_pos: e,

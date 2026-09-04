@@ -1,12 +1,15 @@
 //! Shared alignment helper for the `AllowForAlignment` family of cops.
 //!
-//! `Layout/SpaceAroundOperators` and `Layout/SpaceBeforeFirstArg` both honour an
+//! `Layout/SpaceAroundOperators` and `Layout/ExtraSpacing` both honour an
 //! `AllowForAlignment` option that permits extra spacing used to vertically
 //! align a token with something on a preceding or following line. The logic is
 //! the `PrecedingFollowingAlignment` mixin in stock rubocop
 //! (`lib/rubocop/cop/mixin/preceding_following_alignment.rb`). This module hosts
-//! the single implementation both cops drive (copy-divergence is forbidden;
-//! equivalence is held by each cop's cargo tests).
+//! the single implementation both token-stream cops drive (copy-divergence is
+//! forbidden; equivalence is held by each cop's cargo tests).
+//! `Layout/SpaceBeforeFirstArg` runs the same search over a masked byte scan
+//! (it has no token stream); a change to the search rules here must be
+//! mirrored in `space_before_first_arg.rs`.
 //!
 //! [`Aligner`] is bound to one source + its parser-gem token list. It needs the
 //! token list, so callers build it in the walk-outer phase (the token cache
@@ -198,8 +201,18 @@ impl<'a> Aligner<'a> {
             let Some(index) = first_non_space_index(line) else {
                 continue;
             };
-            if matches!(indent, Some(ind) if ind != index) {
-                continue;
+            if let Some(ind) = indent {
+                // When searching for the nearest line with the same
+                // indentation, more deeply indented lines are nested content
+                // of the current group and are skipped, but a less deeply
+                // indented line ends the enclosing block: an alignment anchor
+                // beyond it would be coincidental (1.90).
+                if index < ind {
+                    break;
+                }
+                if index > ind {
+                    continue;
+                }
             }
             // The first line with a non-space (and matching indent, if given)
             // decides the result; stock returns the predicate value here.
@@ -220,7 +233,7 @@ impl<'a> Aligner<'a> {
 
     /// `aligned_comment_lines`: lines of full-line comments (a comment whose
     /// expression begins its line).
-    fn aligned_comment_line(&self, line: usize) -> bool {
+    pub(crate) fn aligned_comment_line(&self, line: usize) -> bool {
         self.tokens.iter().any(|t| {
             t.comment() && self.line(t.begin_pos) == line && self.begins_its_line(t.begin_pos)
         })

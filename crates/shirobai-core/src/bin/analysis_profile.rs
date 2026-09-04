@@ -288,7 +288,7 @@ fn run_cop(cop: &str, sources: &[Vec<u8>]) -> usize {
             for s in sources {
                 sink = sink.wrapping_add(
                     rules::first_argument_indentation::check_first_argument_indentation(
-                        s, 0, 2, false,
+                        s, 0, 2, 0,
                     )
                     .len(),
                 );
