@@ -1,12 +1,15 @@
 //! Shared alignment helper for the `AllowForAlignment` family of cops.
 //!
-//! `Layout/SpaceAroundOperators` and `Layout/SpaceBeforeFirstArg` both honour an
+//! `Layout/SpaceAroundOperators` and `Layout/ExtraSpacing` both honour an
 //! `AllowForAlignment` option that permits extra spacing used to vertically
 //! align a token with something on a preceding or following line. The logic is
 //! the `PrecedingFollowingAlignment` mixin in stock rubocop
 //! (`lib/rubocop/cop/mixin/preceding_following_alignment.rb`). This module hosts
-//! the single implementation both cops drive (copy-divergence is forbidden;
-//! equivalence is held by each cop's cargo tests).
+//! the single implementation both token-stream cops drive (copy-divergence is
+//! forbidden; equivalence is held by each cop's cargo tests).
+//! `Layout/SpaceBeforeFirstArg` runs the same search over a masked byte scan
+//! (it has no token stream); a change to the search rules here must be
+//! mirrored in `space_before_first_arg.rs`.
 //!
 //! [`Aligner`] is bound to one source + its parser-gem token list. It needs the
 //! token list, so callers build it in the walk-outer phase (the token cache
