@@ -495,10 +495,12 @@ impl<'a> Visitor<'a> {
     ///
     /// Since 1.89 (rubocop#15122) stock walks left from the block's send to
     /// the leftmost dotted call on the same line, so a continuation under
-    /// `.dup.sort_by { ... }` aligns with `.dup`, not `.sort_by`. The walk
-    /// stops at a receiver that is not `call_type?` in the parser AST (a
-    /// `:block` — a call carrying a literal block — or a lambda), has no dot,
-    /// or whose dot sits on an earlier line.
+    /// `.dup.sort_by { ... }` aligns with `.dup`, not `.sort_by`. Since 1.90
+    /// the walk unwraps receivers that carry a block of their own
+    /// (`unwrap_block_node`), so `.foo { }.bar { }` continues to `.foo`; in
+    /// prism the block hangs off the `CallNode`, so no unwrapping is needed.
+    /// The walk stops at a receiver that is not a call, has no dot, or whose
+    /// dot sits on an earlier line.
     fn block_receiver_dot(&self, receiver: &Node<'_>) -> Option<(usize, usize)> {
         let c = receiver.as_call_node()?;
         let blk = c.block().and_then(|b| b.as_block_node())?;
@@ -513,9 +515,6 @@ impl<'a> Visitor<'a> {
         let mut node_opt = c.receiver();
         while let Some(r) = node_opt {
             let Some(rc) = r.as_call_node() else { break };
-            if rc.block().and_then(|b| b.as_block_node()).is_some() {
-                break; // parser `:block`, not `call_type?`
-            }
             let Some(rdot) = rc.call_operator_loc() else {
                 break;
             };
