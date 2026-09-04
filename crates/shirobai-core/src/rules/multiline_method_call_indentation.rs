@@ -1252,9 +1252,13 @@ impl<'a> Visitor<'a> {
                         .collect()
                 })
                 .unwrap_or_default();
+            // `operator_rhs?`: `operator_method? && arguments?`. Stock's
+            // OPERATOR_METHODS include `[]` / `[]=`, so an index call is an
+            // operation too — `Hash[ *provider\n .all ]` aligns `.all` with
+            // the splat argument (discourse site_setting_extension.rb, seen
+            // only after Style/RedundantParentheses strips the grouping).
             let binary_op = c.receiver().is_some()
                 && c.call_operator_loc().is_none()
-                && c.name().as_slice() != b"[]"
                 && !args.is_empty();
             return FrameKind::Send {
                 setter: c.is_attribute_write(),
@@ -1466,6 +1470,19 @@ mod tests {
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].2, -1);
         assert!(got[0].3.starts_with("Align `.c` with `.a`"), "{}", got[0].3);
+    }
+
+    // An index call is an operator method: a chain inside `Hash[ ... ]`
+    // aligns with the index's first argument (the splat), not by relative
+    // indentation (discourse site_setting_extension.rb after
+    // RedundantParentheses removed the grouping parens).
+    #[test]
+    fn index_call_argument_is_operation_rhs() {
+        let src = "Hash[\n  *provider\n      .all\n      .map { |s| s }\n      .flatten\n]\n";
+        let got = run(src, Style::Aligned);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0].3.starts_with("Align `.all` with `*provider`"), "{}", got[0].3);
+        assert_eq!(got[0].2, -4);
     }
 
     #[test]
