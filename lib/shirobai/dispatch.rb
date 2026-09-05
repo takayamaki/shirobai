@@ -503,7 +503,7 @@ module Shirobai
         ]
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0], aba[0],
-                 cl[2], mol[2], *af[1], dm[1]]
+                 cl[2], mol[2], *af[1], dm[1], mn[1]]
 
         # One sub-array per origin: `nums[origin]` / `lists[origin]`. Core is
         # origin 0; every plugin origin packs its registered segment or the

@@ -59,11 +59,17 @@ module Shirobai
 
         private
 
-        # Stock's `magic_comments`, verbatim except the fully-qualified
-        # `RuboCop::MagicComment`. `leading_comment_lines` (below) is the only
-        # override.
+        # Stock's `magic_comments`, except that the leading comments are taken
+        # from the front of `comments` instead of through
+        # `each_comment_in_lines`, which builds the processed source's comment
+        # index (one line lookup per comment in the FILE). The leading lines
+        # are a prefix of the file and comments come in source order, so
+        # taking comments while they are still inside the range yields the
+        # same set.
         def magic_comments
-          processed_source.each_comment_in_lines(leading_comment_lines)
+          lines = leading_comment_lines
+          processed_source.comments
+                          .take_while { |comment| lines.include?(comment.loc.line) }
                           .select { |comment| RuboCop::MagicComment.parse(comment.text).valid? }
                           .map { |comment| CommentRange.new(comment) }
         end

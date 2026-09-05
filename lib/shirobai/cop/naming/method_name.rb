@@ -13,8 +13,9 @@ module Shirobai
       # returns the offense candidates. Ruby keeps the `AllowedPatterns`,
       # `ForbiddenIdentifiers` and `ForbiddenPatterns` filters and the
       # `ConfigurableEnforcedStyle` bookkeeping (`config_to_allow_offenses`).
-      # When none of those filters is configured, Rust only returns the
-      # invalid sites (see `on_new_investigation`).
+      # When neither pattern list is configured, Rust only returns the
+      # invalid sites plus the sites named by `ForbiddenIdentifiers` (see
+      # `on_new_investigation`).
       class MethodName < RuboCop::Cop::Base
         include RuboCop::Cop::ConfigurableNaming
         include RuboCop::Cop::AllowedPattern
@@ -34,8 +35,14 @@ module Shirobai
         # computes the filtered flavor (see `bundle_eligible?`). `EnforcedStyle`
         # may be absent when the config does not mention this cop (the slice is
         # then discarded); default to style 0 in that case.
+        # `[style, forbidden_identifiers]`. The forbidden identifiers (list 29)
+        # let the bundle keep a valid-style candidate that stock reports as
+        # forbidden anyway, so a config that sets only `ForbiddenIdentifiers`
+        # stays on the fast path.
         def self.bundle_args(config)
-          [STYLE_INDEX[config.for_badge(badge)["EnforcedStyle"]] || 0]
+          cop_config = config.for_badge(badge)
+          forbidden = Array(cop_config.fetch("ForbiddenIdentifiers", [])).map(&:to_s)
+          [STYLE_INDEX[cop_config["EnforcedStyle"]] || 0, forbidden]
         end
 
         def on_new_investigation
@@ -83,8 +90,11 @@ module Shirobai
 
         # The bundle always computes the filtered (fast-path) flavor, which is
         # only faithful while none of the Ruby-regex filters is configured.
+        # The pattern lists need every site in Ruby; `ForbiddenIdentifiers`
+        # travels to Rust (see `bundle_args`), so it no longer forces the
+        # unfiltered fallback.
         def bundle_eligible?
-          allowed_patterns.empty? && forbidden_identifiers.empty? && forbidden_patterns.empty?
+          allowed_patterns.empty? && forbidden_patterns.empty?
         end
 
         def style_u8

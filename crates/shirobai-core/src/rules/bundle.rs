@@ -231,6 +231,7 @@ pub fn check_multiline_bundle(
 /// | 26  | arguments_forwarding RedundantKeywordRestArgumentNames |
 /// | 27  | arguments_forwarding RedundantBlockArgumentNames |
 /// | 28  | duplicate_methods_delegating (`Lint/DuplicateMethods` `DelegatingMethods`, 1.89) |
+/// | 29  | method_name_forbidden (`Naming/MethodName` `ForbiddenIdentifiers`: valid-style names the filtered flavor keeps) |
 ///
 /// Performance segment `nums[1]` (the shirobai-performance plugin origin):
 ///
@@ -319,6 +320,9 @@ pub struct BundleConfig {
     pub variable_number_flags: u8,
     pub variable_number_allowed_identifiers: Vec<String>,
     pub method_name_style: u8,
+    /// `Naming/MethodName` `ForbiddenIdentifiers`: names the filtered flavor
+    /// returns even when their style is fine (list 29).
+    pub method_name_forbidden: Vec<String>,
     pub safe_navigation_nil_methods: Vec<String>,
     pub dot_position_style: u8,
     pub line_length_max: usize,
@@ -486,7 +490,7 @@ pub const ORIGIN_RAILS: usize = 3;
 pub const N_ORIGINS: usize = 4;
 
 const CORE_NUMS_LEN: usize = 134;
-const CORE_LISTS_LEN: usize = 29;
+const CORE_LISTS_LEN: usize = 30;
 const PERF_NUMS_LEN: usize = 3;
 const PERF_LISTS_LEN: usize = 1;
 
@@ -564,6 +568,8 @@ impl BundleConfig {
             variable_number_flags: nums[9] as u8,
             variable_number_allowed_identifiers: next_list(),
             method_name_style: nums[10] as u8,
+            // Filled after the literal: list 29 follows the DuplicateMethods list.
+            method_name_forbidden: Vec::new(),
             safe_navigation_nil_methods: next_list(),
             dot_position_style: nums[11] as u8,
             line_length_max: nums[12] as usize,
@@ -862,6 +868,7 @@ impl BundleConfig {
             rails: rails_config::RailsConfig::from_segment(rails_nums, &rails_lists)?,
         };
         bundle.duplicate_methods.delegating_methods = next_list();
+        bundle.method_name_forbidden = next_list();
         Ok(bundle)
     }
 }
@@ -1720,9 +1727,15 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         );
 
     // --- Cops off the shared walk (see the doc comment above). ---
-    // The bundle always computes the filtered flavor; a `MethodName` whose
-    // config needs the unfiltered one takes the fallback path on the Ruby side.
-    let method_name = method_name::check_method_name_filtered(source, cfg.method_name_style, true);
+    // The bundle always computes the filtered flavor (keeping the forbidden
+    // identifiers); a `MethodName` whose config needs the unfiltered one
+    // (pattern lists) takes the fallback path on the Ruby side.
+    let method_name = method_name::check_method_name_filtered_keeping(
+        source,
+        cfg.method_name_style,
+        true,
+        &cfg.method_name_forbidden,
+    );
     let line_length = line_length::check_line_length_with_heredocs(
         source,
         cfg.line_length_max,
@@ -2028,6 +2041,7 @@ mod tests {
             ["kwargs", "options", "opts"].map(String::from).to_vec(), // af: RedundantKeywordRestArgumentNames
             ["blk", "block", "proc"].map(String::from).to_vec(), // af: RedundantBlockArgumentNames
             vec!["delegate".to_string()], // duplicate_methods: DelegatingMethods
+            vec![],                       // method_name: ForbiddenIdentifiers
         ];
         // Performance segment (origin 1): enabled, with the SafeMultiline
         // defaults and RuboCop's default preferred method for Detect
