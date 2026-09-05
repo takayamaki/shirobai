@@ -38,7 +38,14 @@ module Shirobai
         # --- stock's `on_new_investigation`, with `last_line` from Rust ---
 
         def on_new_investigation
-          return unless processed_source.raw_source.include?("\\")
+          # Only a backslash at the END of a line can be a continuation; the
+          # per-line scan below is only worth running when one exists. One
+          # regexp pass over the whole source is far cheaper than splitting
+          # every file that merely contains a backslash (a regexp or a string
+          # escape) into lines. `$` matches before "\n" exactly as it does on
+          # the split lines, so the gate never drops a line the scan would
+          # have matched.
+          return unless processed_source.raw_source.match?(/\\$/)
 
           last_line = resolved_last_line
 

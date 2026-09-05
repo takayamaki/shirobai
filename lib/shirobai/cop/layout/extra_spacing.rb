@@ -61,7 +61,6 @@ module Shirobai
           buffer = processed_source.buffer
           source_for_offsets = bundle_eligible? ? processed_source.raw_source : buffer.source
           off = SourceOffsets.for(source_for_offsets)
-          ranges = ignored_ranges(source_for_offsets)
 
           resolved_result.each do |start_pos, end_pos, message, action, edits|
             # `ignored_range?(ast, range.begin_pos)`: applied here (not in Rust)
@@ -69,8 +68,11 @@ module Shirobai
             # memoization — across an autocorrect re-pass on a reused instance the
             # ranges go stale exactly as stock's do. Only the "remove extra space"
             # action (0) is subject to it; the ForceEqualSignAlignment action (1)
-            # is not.
-            next if action == 0 && ranges.any? { |s, e| (s...e).cover?(start_pos) }
+            # is not. Like stock, the ranges are only computed once the first
+            # candidate needs them: most files have no candidate, and the
+            # computation is a second pass over the whole source.
+            next if action == 0 &&
+                    ignored_ranges(source_for_offsets).any? { |s, e| (s...e).cover?(start_pos) }
 
             range = Parser::Source::Range.new(buffer, off[start_pos], off[end_pos])
             add_offense(range, message: message) do |corrector|

@@ -38,6 +38,13 @@ module Shirobai
         end
 
         def on_new_investigation
+          # Under the `lf` style (the effective style everywhere but Windows)
+          # the only possible offense is a line ending in a carriage return, so
+          # a source with no "\r" at all has nothing to report; one `include?`
+          # (a byte search) replaces splitting every clean file into lines.
+          # The `crlf` style looks for a MISSING "\r" and keeps the full scan.
+          return if effective_style == :lf && !processed_source.raw_source.include?("\r")
+
           last_line = resolved_last_line
 
           processed_source.raw_source.each_line.with_index do |line, index|
@@ -61,14 +68,18 @@ module Shirobai
           style == :crlf && index == last_line - 1 && !line.end_with?("\n")
         end
 
-        # Stock's `offense_message`, verbatim (except the fully-qualified
-        # `RuboCop::Platform`).
+        # The style resolution from stock's `offense_message` (with the
+        # fully-qualified `RuboCop::Platform`), shared with the gate above.
+        def effective_style
+          if style == :native
+            RuboCop::Platform.windows? ? :crlf : :lf
+          else
+            style
+          end
+        end
+
+        # Stock's `offense_message`, verbatim.
         def offense_message(line)
-          effective_style = if style == :native
-                              RuboCop::Platform.windows? ? :crlf : :lf
-                            else
-                              style
-                            end
           case effective_style
           when :lf then MSG_DETECTED if line.end_with?("\r", "\r\n")
           else MSG_MISSING unless line.end_with?("\r\n")
