@@ -104,6 +104,20 @@ pub fn check_method_name_filtered(
     style: u8,
     filtered: bool,
 ) -> (Vec<MethodNameCandidate>, bool) {
+    check_method_name_filtered_keeping(source, style, filtered, &[])
+}
+
+/// `check_method_name_filtered` where `keep` names survive the filter even
+/// when their style is fine: the cop's `ForbiddenIdentifiers`, which stock
+/// reports regardless of style. The wrapper still runs stock's forbidden
+/// check on every returned candidate, so `keep` only has to be a superset
+/// of the names that will be reported.
+pub fn check_method_name_filtered_keeping(
+    source: &[u8],
+    style: u8,
+    filtered: bool,
+    keep: &[String],
+) -> (Vec<MethodNameCandidate>, bool) {
     super::parse_cache::with_parsed(source, |source, node| {
         let mut visitor = Visitor {
             source,
@@ -117,7 +131,7 @@ pub fn check_method_name_filtered(
         let mut candidates = visitor.candidates;
         let had_valid = candidates.iter().any(|c| c.valid);
         if filtered {
-            candidates.retain(|c| !c.valid);
+            candidates.retain(|c| !c.valid || keep.contains(&c.name));
         }
         (candidates, had_valid)
     })
@@ -561,5 +575,19 @@ mod tests {
         let (cands, had_valid) = check_method_name_filtered(src.as_bytes(), SNAKE_CASE, true);
         assert!(had_valid);
         assert!(cands.is_empty());
+    }
+
+    #[test]
+    fn filtered_keeps_forbidden_names() {
+        let src = "def __id__; end\ndef fine; end\ndef badOne; end\n";
+        let keep = vec!["__id__".to_string()];
+        let (cands, had_valid) =
+            check_method_name_filtered_keeping(src.as_bytes(), SNAKE_CASE, true, &keep);
+        assert!(had_valid);
+        let names: Vec<&str> = cands.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["__id__", "badOne"]);
+        assert!(cands[0].valid);
+        let (cands, _) = check_method_name_filtered(src.as_bytes(), SNAKE_CASE, true);
+        assert_eq!(cands.len(), 1);
     }
 }
