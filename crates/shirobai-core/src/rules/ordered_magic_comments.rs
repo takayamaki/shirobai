@@ -208,4 +208,13 @@ mod tests {
             Some((3, 2))
         );
     }
+
+    // 1.91: `warn_indent` is a magic comment (simple and Emacs forms).
+    #[test]
+    fn warn_indent_then_encoding() {
+        assert_eq!(run("# warn_indent: true\n# encoding: ascii\n"), Some((2, 1)));
+        assert_eq!(run("# warn-indent: true\n# encoding: ascii\n"), Some((2, 1)));
+        assert_eq!(run("# -*- warn_indent: true -*-\n# encoding: ascii\n"), Some((2, 1)));
+        assert_eq!(run("# encoding: ascii\n# warn_indent: true\n"), None);
+    }
 }

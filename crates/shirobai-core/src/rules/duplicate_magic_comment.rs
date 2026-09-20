@@ -730,9 +730,9 @@ fn simple_fsl_value(line: &[u8]) -> Option<FslValue> {
 ///   is already false: `valid?` = `@comment.start_with?('#')` (no leading
 ///   space) AND `any?` = one of the remaining magic kinds is specified
 ///   (`frozen_string_literal`, `shareable_constant_value`, `rbs_inline`,
-///   `typed`). `rbs_inline` is special: it counts only when the value is
-///   exactly `enabled`/`disabled` (`rbs_inline_specified?` ==
-///   `valid_rbs_inline_value?`).
+///   `warn_indent` since 1.91, `typed`). `rbs_inline` is special: it counts
+///   only when the value is exactly `enabled`/`disabled`
+///   (`rbs_inline_specified?` == `valid_rbs_inline_value?`).
 /// - [`OrderedBucket::None`] — neither.
 ///
 /// The format dispatch mirrors `MagicComment.parse` (Emacs, else Vim, else
@@ -750,15 +750,19 @@ pub(crate) fn ordered_bucket(line: &[u8]) -> OrderedBucket {
     let hash_prefixed = line.first() == Some(&b'#');
 
     if let Some(token) = emacs_token(line) {
-        // EmacsComment: `;`-separated tokens, each stripped. `encoding` and
-        // `frozen_string_literal`/`shareable_constant_value` are the only kinds
-        // Emacs can carry (`rbs_inline`/`typed` extraction is nil).
+        // EmacsComment: `;`-separated tokens, each stripped. `encoding`,
+        // `frozen_string_literal`, `shareable_constant_value` and `warn_indent`
+        // are the only kinds Emacs can carry (`rbs_inline`/`typed` extraction
+        // is nil).
         let mut encoding = false;
         let mut other = false;
         for tok in split_strip(token, b";") {
             if editor_kv_matches(tok, &[b"encoding", b"coding"], b':') {
                 encoding = true;
-            } else if fsl_keyword_kv_matches(tok) || shareable_keyword_kv_matches(tok) {
+            } else if fsl_keyword_kv_matches(tok)
+                || shareable_keyword_kv_matches(tok)
+                || warn_indent_keyword_kv_matches(tok)
+            {
                 other = true;
             }
         }
@@ -790,11 +794,35 @@ pub(crate) fn ordered_bucket(line: &[u8]) -> OrderedBucket {
         && (simple_fsl(line)
             || simple_shareable_specified(line)
             || simple_rbs_inline_specified(line)
+            || simple_warn_indent_specified(line)
             || simple_typed_specified(line))
     {
         return OrderedBucket::OtherValid;
     }
     OrderedBucket::None
+}
+
+/// Emacs editor token match for `\Awarn[_-]indent\s*:\s*TOKEN\z`
+/// (case-SENSITIVE keyword, like `EditorComment#match`). `warn_indent` is a
+/// magic comment since 1.91 (`MagicComment::KEYWORDS[:warn_indent]`).
+fn warn_indent_keyword_kv_matches(tok: &[u8]) -> bool {
+    match warn_indent_keyword_len(tok, false) {
+        Some(klen) => editor_kv_matches(&tok[klen..], &[b""], b':'),
+        None => false,
+    }
+}
+
+/// Length of `warn[_-]indent` at the start of `s`, or None.
+fn warn_indent_keyword_len(s: &[u8], ci: bool) -> Option<usize> {
+    let mut p = eat(s, 0, b"warn", ci)?;
+    p = eat_one_of(s, p, b"_-")?;
+    p = eat(s, p, b"indent", ci)?;
+    Some(p)
+}
+
+/// `warn_indent_specified?` for a SimpleComment line (any TOKEN).
+fn simple_warn_indent_specified(line: &[u8]) -> bool {
+    simple_anchored_token(line, |s| warn_indent_keyword_len(s, true)).is_some()
 }
 
 /// Emacs editor token match for `\Ashareable[_-]constant[_-]value\s*:\s*TOKEN\z`
