@@ -108,8 +108,10 @@ pub struct SpaceAroundOperatorsOffense {
 }
 
 /// Whether an operator routes through the assignment alignment path (`:assignment`)
-/// or the generic operator alignment path (everything else). Stock distinguishes
-/// only these two for `excess_leading_space?`.
+/// or the generic operator alignment path (everything else). Stock's
+/// `excess_leading_space?` distinguishes `:assignment`, `:special_asgn` (which
+/// joins the assignment path only under `ForceEqualSignAlignment`, 1.91) and
+/// the rest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AlignType {
     /// `on_assignment` for a plain assignment (`lvasgn` / `casgn` / ... /
@@ -117,8 +119,9 @@ enum AlignType {
     /// diverts `op_asgn_type?` — the arithmetic `+=` family — to
     /// `:special_asgn`.
     Assignment,
-    /// Everything else (binary, ternary, pair, class, setter, `+=`-style
-    /// op-assign, ...).
+    /// `:special_asgn`: the `+=`-style op-assign family and setter methods.
+    SpecialAsgn,
+    /// Everything else (binary, ternary, pair, class, ...).
     Other,
 }
 
@@ -501,7 +504,11 @@ fn excess_leading_space(
     if !config.allow_for_alignment {
         return false;
     }
-    if align_type != AlignType::Assignment {
+    // `grouped_alignment_type?(type)` (1.91): `:assignment`, or `:special_asgn`
+    // when `Layout/ExtraSpacing` forces equal-sign alignment.
+    let grouped = align_type == AlignType::Assignment
+        || (align_type == AlignType::SpecialAsgn && config.force_equal_sign_alignment);
+    if !grouped {
         // `!aligned_with_operator?(operator)`.
         return !aligner.aligned_with_operator(op_start, op_end);
     }
@@ -777,7 +784,7 @@ impl Visitor<'_> {
             if let Some(arg) = self.first_argument(node) {
                 let (rs, re) = (arg.start_offset(), arg.end_offset());
                 self.check_operator(
-                    AlignType::Other,
+                    AlignType::SpecialAsgn,
                     eq.start_offset(),
                     eq.end_offset(),
                     rs,
@@ -1017,10 +1024,10 @@ impl Visitor<'_> {
         );
     }
 
-    /// `on_assignment` for an op-assign (`op_asgn_type?`): :special_asgn (Other).
+    /// `on_assignment` for an op-assign (`op_asgn_type?`): :special_asgn.
     fn check_op_assign<'pr>(&mut self, op: Location<'pr>, right: Location<'pr>) {
         self.check_operator(
-            AlignType::Other,
+            AlignType::SpecialAsgn,
             op.start_offset(),
             op.end_offset(),
             right.start_offset(),
@@ -1265,5 +1272,20 @@ end
         let off = run("uri.path+= '/'\n", default_cfg());
         assert!(off.iter().any(|o| o.2 == MessageKind::Missing
             && &"uri.path+= '/'\n".as_bytes()[o.0..o.1] == b"+="));
+    }
+
+    /// 1.91 `grouped_alignment_type?`: under `ForceEqualSignAlignment` an
+    /// op-assign (`:special_asgn`) takes the assignment alignment path, so a
+    /// `+=` aligned with a preceding `=` is accepted; without it the generic
+    /// operator rule still flags the padding.
+    #[test]
+    fn op_assign_aligned_with_preceding_assignment_under_force_alignment() {
+        let src = "aaaa = 1\nfoo\nb   += 2\n";
+        let forced = Config {
+            force_equal_sign_alignment: true,
+            ..default_cfg()
+        };
+        assert!(run(src, forced).is_empty());
+        assert_eq!(run(src, default_cfg()).len(), 1);
     }
 }
