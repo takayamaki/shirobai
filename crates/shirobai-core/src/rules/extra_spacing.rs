@@ -1050,4 +1050,15 @@ mod tests {
         // The first `=` (col 2) is not aligned with the block's max -> flagged.
         assert_eq!(off.len(), 1);
     }
+
+    // 1.91: a line carrying another alignable operator (`<<`, `==`, ...)
+    // that is not itself an assignment line ends the equal-sign alignment
+    // group, so the assignments around it are not "unaligned".
+    #[test]
+    fn force_alignment_group_ends_at_an_interrupting_operator_line() {
+        assert!(run("aaaa = b\ne << f\ng += h\n", cfg(true, false, true)).is_empty());
+        assert!(run("aaaa = b\nraise if e == f\ng += h\n", cfg(true, false, true)).is_empty());
+        // Sanity: adjacent assignments still form a group.
+        assert_eq!(run("aaaa = b\ng += h\n", cfg(true, false, true)).len(), 1);
+    }
 }

@@ -91,8 +91,10 @@ module Shirobai
                 if has_value
                   correct_key_value(corrector, buffer, off, deltas, key, op, value)
                 else
-                  # `correct_no_value`: adjust the whole node by the key delta.
-                  adjust(corrector, deltas[0], range)
+                  # `correct_no_value`: adjust the whole node by the key delta,
+                  # clamped so the node is not shifted past the start of its
+                  # line (`clamped_key_delta`, 1.91).
+                  adjust(corrector, clamped_key_delta(deltas[0], range.column), range)
                 end
               end
             rescue Parser::ClobberingError
@@ -109,15 +111,19 @@ module Shirobai
           key_delta, separator_delta, value_delta = deltas
           key_start, _key_end, key_column = key
 
-          key_delta = -key_column if key_delta < -key_column
-
           key_range = Parser::Source::Range.new(buffer, off[key_start], off[key[1]])
           op_range = Parser::Source::Range.new(buffer, off[op[0]], off[op[1]])
           value_range = Parser::Source::Range.new(buffer, off[value[0]], off[value[1]])
 
-          adjust(corrector, key_delta, key_range)
+          adjust(corrector, clamped_key_delta(key_delta, key_column), key_range)
           adjust(corrector, separator_delta, op_range)
           adjust(corrector, value_delta, value_range)
+        end
+
+        # Stock's `clamped_key_delta`: never remove more characters than the
+        # key has before it on its line.
+        def clamped_key_delta(key_delta, key_column)
+          [key_delta, -key_column].max
         end
 
         # Mirrors stock's `adjust`: insert spaces for a positive delta, remove

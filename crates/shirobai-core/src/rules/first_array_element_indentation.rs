@@ -86,7 +86,8 @@ pub fn check_first_array_element_indentation(
 /// Build the rule for use standalone or in a shared-walk bundle. `None` when
 /// the cop is disabled outright: `Layout/ArrayAlignment` enforcing
 /// `with_fixed_indentation` gates both `on_array` and `on_send` unless the
-/// style is `consistent`.
+/// style is `consistent` (`autocorrect_incompatible_with_other_cops?`, whose
+/// per-array part for the `consistent` style runs in `process_array`).
 pub(crate) fn build_rule(
     source: &[u8],
     style: u8,
@@ -102,6 +103,7 @@ pub(crate) fn build_rule(
         line_index: super::line_index::with_line_index(source, |li| li.clone()),
         style,
         indent: indent_width,
+        enforce_fixed_indentation,
         stack: Vec::new(),
         offenses: Vec::new(),
     })
@@ -166,6 +168,10 @@ pub(crate) struct Visitor<'a> {
     line_index: Rc<LineIndex>,
     style: Style,
     indent: usize,
+    /// `enforce_first_argument_with_fixed_indentation?` (`Layout/ArrayAlignment`
+    /// enforces `with_fixed_indentation`). Only reaches the visitor with the
+    /// `consistent` style; the other styles stand down in `build_rule`.
+    enforce_fixed_indentation: bool,
     stack: Vec<Frame>,
     pub(crate) offenses: Vec<FirstArrayElemIndentOffense>,
 }
@@ -312,6 +318,21 @@ impl<'a> Visitor<'a> {
         let open_start = open.start_offset();
         let paren = self.claimed_paren(open_start);
         let first = a.elements().iter().next().map(|e| loc(&e.location()));
+
+        // `autocorrect_incompatible_with_other_cops?` for the `consistent`
+        // style (1.91): under `Layout/ArrayAlignment: with_fixed_indentation`
+        // an array of two or more elements is left alone unless its indent
+        // base is the start of its line (ArrayAlignment does not align
+        // single-element arrays, so those are still checked).
+        if self.enforce_fixed_indentation
+            && a.elements().iter().count() >= 2
+            && !matches!(
+                self.indent_base(open_start, first, paren),
+                (_, BaseType::StartOfLine)
+            )
+        {
+            return;
+        }
 
         if let Some(f) = first {
             if self.line_of(f.0) == self.line_of(open_start) {
@@ -639,5 +660,26 @@ mod tests {
             )
             .is_empty()
         );
+    }
+
+    // 1.91 `autocorrect_incompatible_with_other_cops?` for the `consistent`
+    // style under `Layout/ArrayAlignment: with_fixed_indentation`: an array of
+    // two or more elements whose indent base is not the start of its line is
+    // left to ArrayAlignment; single-element and bracketless arrays are not.
+    #[test]
+    fn consistent_style_defers_multi_element_arrays_to_array_alignment() {
+        let enforced = |src: &str| {
+            check_first_array_element_indentation(src.as_bytes(), 1, 2, true)
+                .into_iter()
+                .map(|o| o.message)
+                .collect::<Vec<_>>()
+        };
+        assert!(enforced("foo bar: [\n      'foo',\n      'bar'\n],\nbaz: 'baz'\n").is_empty());
+        let single = enforced("foo bar: [\n1\n],\nbaz: 3\n");
+        assert_eq!(single.len(), 2);
+        assert!(single[0].contains("relative to the parent hash key"));
+        assert!(enforced("x = 1,\n    2\n").is_empty());
+        // A start-of-line base is still checked (the bracket itself is fine).
+        assert_eq!(enforced("x = [\n1,\n2\n]\n").len(), 1);
     }
 }

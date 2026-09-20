@@ -113,6 +113,14 @@ impl ParenthesesAsGroupedExpressionVisitor {
         let first_arg = &args[0];
         let Some(parens) = first_arg.as_parentheses_node() else { return; };
 
+        // `invalid_bare_argument?` (1.91): the parentheses are required when
+        // their (possibly re-parenthesised) sole expression could not stand as
+        // a bare argument — `and` / `or` / `not`, a modifier `rescue`, or a
+        // modifier `if` / `unless` / `while` / `until`.
+        if invalid_bare_argument(first_arg) {
+            return;
+        }
+
         // `node.operator_method?` / `node.setter_method?` — outer method name.
         // The `ParenthesesNode` gate already rejects block / chain / hash /
         // ternary / unparenthesised range first arguments by construction
@@ -147,6 +155,78 @@ impl ParenthesesAsGroupedExpressionVisitor {
             arg_end: parens.location().end_offset(),
         });
     }
+}
+
+/// Stock's `invalid_bare_argument?`:
+///
+/// ```ruby
+/// node = node.children.first while node&.begin_type? && node.children.one?
+/// return false unless node
+/// keyword_operator?(node) || modifier_expression?(node)
+/// ```
+///
+/// Parser wraps `(...)` in a `begin` whose children are the statements; prism
+/// gives a `ParenthesesNode` whose `body` is a `StatementsNode`. Peeling a
+/// single-statement parenthesis repeatedly lands on the innermost expression
+/// (or on nothing for `()`).
+fn invalid_bare_argument(node: &Node<'_>) -> bool {
+    if let Some(parens) = node.as_parentheses_node() {
+        // `()`: `children.first` is nil.
+        let Some(body) = parens.body() else { return false };
+        if let Some(stmts) = body.as_statements_node() {
+            let children: Vec<Node<'_>> = stmts.body().iter().collect();
+            if children.len() == 1 {
+                return invalid_bare_argument(&children[0]);
+            }
+        }
+        // A multi-statement `begin` is neither a keyword operator nor a
+        // modifier expression.
+        return false;
+    }
+    keyword_operator(node) || modifier_expression(node)
+}
+
+/// `keyword_operator?`: `(operator_keyword? && semantic_operator?)` — an
+/// `and` / `or` spelled with the keyword — or a modifier `rescue`, or a `not`
+/// call (`send_type? && prefix_not?`).
+fn keyword_operator(node: &Node<'_>) -> bool {
+    if let Some(n) = node.as_and_node() {
+        return n.operator_loc().as_slice() == b"and";
+    }
+    if let Some(n) = node.as_or_node() {
+        return n.operator_loc().as_slice() == b"or";
+    }
+    if node.as_rescue_modifier_node().is_some() {
+        return true;
+    }
+    if let Some(c) = node.as_call_node() {
+        // `prefix_not?` = `keyword_not?`: the selector is spelled `not`.
+        return c.message_loc().is_some_and(|m| m.as_slice() == b"not");
+    }
+    false
+}
+
+/// `modifier_expression?`: `type?(:if, :while, :until) && modifier_form?`. In
+/// prism a modifier form has its keyword after the node's start (the body
+/// comes first). `begin ... end while x` is parser's `while_post`, which
+/// `type?(:while)` does not match, so the begin-modifier flag excludes it.
+fn modifier_expression(node: &Node<'_>) -> bool {
+    let node_start = node.location().start_offset();
+    if let Some(n) = node.as_if_node() {
+        return n
+            .if_keyword_loc()
+            .is_some_and(|k| k.start_offset() > node_start);
+    }
+    if let Some(n) = node.as_unless_node() {
+        return n.keyword_loc().start_offset() > node_start;
+    }
+    if let Some(n) = node.as_while_node() {
+        return !n.is_begin_modifier() && n.keyword_loc().start_offset() > node_start;
+    }
+    if let Some(n) = node.as_until_node() {
+        return !n.is_begin_modifier() && n.keyword_loc().start_offset() > node_start;
+    }
+    false
 }
 
 /// rubocop-ast `OPERATOR_METHODS` — every operator that can be defined as a
@@ -406,5 +486,22 @@ mod tests {
         let off = detect("a.func   (x)\n");
         // selector `func` ends at 6, arg `(x)` starts at 9.
         assert_eq!(off, vec![(6, 9, 9, 12)]);
+    }
+
+    // 1.91 `invalid_bare_argument?`: parentheses around an `and` / `or` /
+    // `not`, a modifier `rescue` or a modifier conditional are required, so
+    // they are not a grouped expression; `&&` still is.
+    #[test]
+    fn accepts_parentheses_required_by_keyword_operators_and_modifiers() {
+        assert!(detect("false? (foo and bar)\n").is_empty());
+        assert!(detect("false? (foo or bar)\n").is_empty());
+        assert!(detect("false? (not foo)\n").is_empty());
+        assert!(detect("false? (foo rescue bar)\n").is_empty());
+        assert!(detect("false? (foo if bar)\n").is_empty());
+        assert!(detect("false? (foo unless bar)\n").is_empty());
+        assert!(detect("false? (foo while bar)\n").is_empty());
+        assert!(detect("false? ((foo and bar))\n").is_empty());
+        assert_eq!(detect("false? (foo && bar)\n"), vec![(6, 7, 7, 19)]);
+        assert_eq!(detect("false? (!foo)\n"), vec![(6, 7, 7, 13)]);
     }
 }

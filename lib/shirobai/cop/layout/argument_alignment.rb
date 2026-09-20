@@ -27,20 +27,23 @@ module Shirobai
         def self.badge = RuboCop::Cop::Badge.parse("Layout/ArgumentAlignment")
 
         # Packed args for the bundled run: `[style, indentation_width,
-        # incompatible]`. `incompatible` replicates the instance derivation
-        # exactly: it is only true for the explicit `with_first_argument` style
-        # combined with a separator-aligned `Layout/HashAlignment`.
+        # hash_separator]`. `hash_separator` is stock's
+        # `enforce_hash_argument_with_separator?` (a separator-aligned
+        # `Layout/HashAlignment`). Rust derives the rest from it: with
+        # `with_first_argument` it disables the cop
+        # (`autocorrect_incompatible_with_other_cops?`); with
+        # `with_fixed_indentation` a trailing braceless hash's pairs are left
+        # to HashAlignment (1.91).
         def self.bundle_args(config)
           cop_config = config.for_badge(badge)
           enforced_style = cop_config["EnforcedStyle"]
-          incompatible = enforced_style == "with_first_argument" &&
-                         RuboCop::Cop::Layout::HashAlignment::SEPARATOR_ALIGNMENT_STYLES.any? do |sep_style|
-                           config.for_enabled_cop("Layout/HashAlignment")[sep_style]&.include?("separator")
-                         end
+          hash_separator = RuboCop::Cop::Layout::HashAlignment::SEPARATOR_ALIGNMENT_STYLES.any? do |sep_style|
+            config.for_enabled_cop("Layout/HashAlignment")[sep_style]&.include?("separator")
+          end
           [
             enforced_style == "with_fixed_indentation" ? 1 : 0,
             cop_config["IndentationWidth"] || config.for_cop("Layout/IndentationWidth")["Width"] || 2,
-            incompatible
+            hash_separator
           ]
         end
 

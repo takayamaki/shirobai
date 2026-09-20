@@ -373,6 +373,17 @@ fn offset_after_chars(source: &[u8], begin: usize, n_chars: usize) -> usize {
 
 /// `rindex(/\\(u[\da-f]{0,4}|x[\da-f]{0,2})?\z/)` — the char index of a trailing
 /// escape sequence (the backslash), if the substring ends in one.
+/// `rindex(/\s/)` — the char index of the last whitespace in `substr`.
+fn rindex_whitespace(substr: &str) -> Option<usize> {
+    substr.char_indices().rev().find_map(|(i, c)| {
+        if c.is_whitespace() {
+            Some(substr[..i].chars().count())
+        } else {
+            None
+        }
+    })
+}
+
 fn trailing_escape_char_index(substr: &str) -> Option<usize> {
     let chars: Vec<char> = substr.chars().collect();
     // Find the rightmost backslash whose suffix (to end) matches the pattern.
@@ -881,14 +892,11 @@ impl<'pr> BreakableVisitor<'_> {
         range_end: usize,
     ) -> Option<usize> {
         let substr = self.largest_possible_string(node, parent_quote, range_begin, range_end);
-        // rindex(/\s/)
-        if let Some(space_char_idx) = substr.char_indices().rev().find_map(|(i, c)| {
-            if c.is_whitespace() {
-                Some(substr[..i].chars().count())
-            } else {
-                None
-            }
-        }) {
+        // `breakable_space_position` (1.91): `rindex(/\s/)`, but a space that
+        // is the last character of the string content is no break point (the
+        // split would leave the content unchanged and loop); retry on the
+        // substring before it.
+        if let Some(space_char_idx) = self.breakable_space_position(node, range_begin, &substr) {
             // resize(space_pos + 1)
             return Some(offset_after_chars(
                 self.source,
@@ -916,6 +924,40 @@ impl<'pr> BreakableVisitor<'_> {
         let end_chars = char_count(&self.source[range_begin..range_end]);
         let new_chars = (end_chars as isize + adjustment) as usize;
         Some(offset_after_chars(self.source, range_begin, new_chars))
+    }
+
+    /// `breakable_space_position(node, substr)` — the char index of the last
+    /// whitespace in `substr`, unless that space sits at the end of the string
+    /// content (`space_pos + 1 > string_content_length - 1`); then the last
+    /// whitespace of `substr[0, limit]`.
+    fn breakable_space_position(
+        &self,
+        node: &Node<'pr>,
+        range_begin: usize,
+        substr: &str,
+    ) -> Option<usize> {
+        let limit = self.string_content_length(node, range_begin) as isize - 1;
+        let space_pos = rindex_whitespace(substr)?;
+        if space_pos as isize + 1 > limit {
+            if limit <= 0 {
+                return None;
+            }
+            let head: String = substr.chars().take(limit as usize).collect();
+            return rindex_whitespace(&head);
+        }
+        Some(space_pos)
+    }
+
+    /// `string_content_length(node)`: chars from the node's start to its
+    /// closing delimiter (`loc.end`), or to the node's end when it has none
+    /// (a dstr part).
+    fn string_content_length(&self, node: &Node<'pr>, range_begin: usize) -> usize {
+        let content_end = node
+            .as_string_node()
+            .and_then(|s| s.closing_loc())
+            .map(|c| c.start_offset())
+            .unwrap_or_else(|| node.location().end_offset());
+        char_count(&self.source[range_begin..content_end])
     }
 
     /// `largest_possible_string` — the leading substring (as a `&str`) considered
@@ -1741,5 +1783,18 @@ mod tests {
         assert_eq!(r.len(), 1);
         // Broken as a hash (no string delimiter).
         assert_eq!(r[0].2, "");
+    }
+
+    // 1.91 `breakable_space_position`: a space that is the last character of
+    // the string content is no break point (the split would change nothing
+    // and loop); the previous space is used instead.
+    #[test]
+    fn split_string_skips_a_trailing_space_break_point() {
+        let src = "foo(\"aaaaaaaaaaaaaaaaaaaaaaaaa#{b} cc dd \" \\\n    \"ee\")\n";
+        let got = run(src, 40, true);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0, 0);
+        assert_eq!(got[0].1, src.find("dd \"").unwrap());
+        assert_eq!(got[0].2, "\"");
     }
 }

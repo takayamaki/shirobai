@@ -389,6 +389,7 @@ impl<'a> Aligner<'a> {
         let original_line_indent = self.line_indentation(first);
         let mut relevant_line_indent_at_level = true;
         let assignment_lines = self.assignment_lines();
+        let boundary_lines = self.interrupting_operator_lines(&assignment_lines);
 
         for &line_number in line_range {
             let current_line_indent = self.line_indentation(line_number);
@@ -396,7 +397,11 @@ impl<'a> Aligner<'a> {
                 .line_text(line_number)
                 .map(is_blank_line)
                 .unwrap_or(true);
-            if (current_line_indent < original_line_indent && !blank_line)
+            // A line carrying another alignable operator (`<<`, `==`, ...)
+            // that is not an assignment line ends the group (1.91,
+            // `interrupting_operator_lines` as `relevant_lines` boundaries).
+            if (line_number != first && boundary_lines.contains(&line_number))
+                || (current_line_indent < original_line_indent && !blank_line)
                 || (relevant_line_indent_at_level && blank_line)
             {
                 break;
@@ -411,6 +416,20 @@ impl<'a> Aligner<'a> {
             }
         }
         result
+    }
+
+    /// `interrupting_operator_lines`: the lines of every
+    /// `ASSIGNMENT_OR_COMPARISON_TOKENS` token that are not assignment lines.
+    fn interrupting_operator_lines(
+        &self,
+        assignment_lines: &[usize],
+    ) -> std::collections::BTreeSet<usize> {
+        self.tokens
+            .iter()
+            .filter(|t| t.assignment_or_comparison())
+            .map(|t| self.line(t.begin_pos))
+            .filter(|line| !assignment_lines.contains(line))
+            .collect()
     }
 
     /// `assignment_lines` = lines of `assignment_tokens`.

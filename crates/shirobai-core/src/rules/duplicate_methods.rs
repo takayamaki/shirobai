@@ -223,6 +223,8 @@ enum Kind {
         chain: Option<ConstChain>,
     },
     Lvasgn,
+    /// `@ivar = Class.new do ... end`: an `:ivasgn` parent (1.91).
+    Ivasgn,
     If,
     Other,
 }
@@ -491,6 +493,7 @@ enum PParent<'a> {
     BeginWrap { pp_block: bool },
     Def(usize),
     Casgn,
+    Ivasgn,
     Lvasgn,
     Disallowed,
 }
@@ -564,6 +567,7 @@ impl<'s> DuplicateMethodsRule<'s> {
             }
             Kind::Call(info) => PParent::Call(info),
             Kind::Casgn { .. } => PParent::Casgn,
+            Kind::Ivasgn => PParent::Ivasgn,
             Kind::Lvasgn => PParent::Lvasgn,
             Kind::Def { .. } => PParent::Def(call_idx - 1),
             _ => PParent::Disallowed,
@@ -633,7 +637,9 @@ impl<'s> DuplicateMethodsRule<'s> {
                     None => path_line(),
                 }
             }
-            PParent::Casgn => path_line(),
+            // `:casgn` and `:ivasgn` (1.91) parents have no receiver; the
+            // block gets its unique source-location id.
+            PParent::Casgn | PParent::Ivasgn => path_line(),
             PParent::BeginWrap { pp_block } => {
                 if pp_block {
                     path_line()
@@ -1244,6 +1250,7 @@ impl<'s> DuplicateMethodsRule<'s> {
                 }
             }
             Node::LocalVariableWriteNode { .. } => frame.kind = Kind::Lvasgn,
+            Node::InstanceVariableWriteNode { .. } => frame.kind = Kind::Ivasgn,
             Node::CallNode { .. } => {
                 let c = node.as_call_node().unwrap();
                 let kind = block_kind(&c);
@@ -1904,5 +1911,21 @@ mod tests {
             },
         );
         assert_eq!(&src[evts[0].off_start..evts[0].off_end], "alias_method :a, :b");
+    }
+
+    // 1.91: a Class.new block assigned to an instance variable (`:ivasgn`
+    // parent) gets its own path:line scope id like a casgn one, so singleton
+    // methods in separate blocks are not duplicates of each other.
+    #[test]
+    fn ivasgn_class_new_blocks_get_distinct_scope_ids() {
+        let src = "def setup\n  @first = Class.new do\n    class << self\n      def name; end\n    end\n  end\n\n  Class.new do\n    class << self\n      def name; end\n    end\n  end\nend\n";
+        let evts = events(src);
+        // `def setup`, then the two singleton `name`s.
+        assert_eq!(evts.len(), 3);
+        assert_eq!(evts[1].0, evts[2].0);
+        assert_eq!(evts[1].2, 2); // @path:2 (the ivasgn block)
+        // The second block's parent is the def body's `begin`: no scope id,
+        // as before.
+        assert_eq!(evts[2].2, -1);
     }
 }

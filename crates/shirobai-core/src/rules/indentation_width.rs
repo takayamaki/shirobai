@@ -334,7 +334,11 @@ impl<'a> Visitor<'a> {
         } else {
             (begin_pos as isize - indentation) as usize
         };
-        if indentation >= 0 {
+        // `pos = ind <= begin_pos ? ind..begin_pos : begin_pos..ind` (1.91):
+        // ordered by position, not by the sign of the delta, so an
+        // under-indented tab body (negative delta but `ind` behind
+        // `begin_pos`) still yields a forward range.
+        if ind <= begin_pos {
             (ind, begin_pos)
         } else {
             (begin_pos, ind)
@@ -1306,5 +1310,16 @@ mod tests {
             c.width = 4;
         });
         assert!(got.is_empty());
+    }
+
+    // 1.91: an under-indented tab body yields a forward offense range
+    // (`ind <= begin_pos ? ind..begin_pos : begin_pos..ind`), with the
+    // negative tab count in the message.
+    #[test]
+    fn tabs_under_indented_body_has_forward_range() {
+        let got = run_cfg("\t\ta = if b\n\tc\n\t\tend\n", |c| c.use_tabs = true);
+        assert_eq!(got.len(), 1);
+        assert!(got[0].message.contains("Use 1 (not -1) tabs"), "{}", got[0].message);
+        assert!(got[0].start_offset <= got[0].end_offset);
     }
 }
