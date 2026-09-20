@@ -114,6 +114,9 @@ enum FrameKind {
     },
     /// A block node (`BlockNode`).
     Block,
+    /// A `class` / `module` / `class << self` body: the opening keyword range.
+    /// An implicit-begin `rescue`/`else` in such a body aligns with it (1.91).
+    ClassLike { kw_start: usize, kw_end: usize },
     /// A write node (assignment LHS): the LHS span (start..value_start trimmed),
     /// here approximated by the whole write-node range start and its first line.
     Write,
@@ -413,6 +416,13 @@ impl<'a> Visitor<'a> {
                     let call_start = self.frames[nf - 2].start;
                     return self.start_line_range(call_start);
                 }
+                // `when :class, :module, :sclass then parent.loc.keyword` (1.91).
+                FrameKind::ClassLike { kw_start, kw_end } => {
+                    return AlignRange {
+                        start: *kw_start,
+                        end: *kw_end,
+                    };
+                }
                 _ => {}
             }
         }
@@ -670,6 +680,24 @@ impl<'a> Visitor<'a> {
             }
         } else if node.as_block_node().is_some() {
             FrameKind::Block
+        } else if let Some(n) = node.as_class_node() {
+            let (s, e) = loc(&n.class_keyword_loc());
+            FrameKind::ClassLike {
+                kw_start: s,
+                kw_end: e,
+            }
+        } else if let Some(n) = node.as_module_node() {
+            let (s, e) = loc(&n.module_keyword_loc());
+            FrameKind::ClassLike {
+                kw_start: s,
+                kw_end: e,
+            }
+        } else if let Some(n) = node.as_singleton_class_node() {
+            let (s, e) = loc(&n.class_keyword_loc());
+            FrameKind::ClassLike {
+                kw_start: s,
+                kw_end: e,
+            }
         } else if is_write_node(node) {
             FrameKind::Write
         } else {
@@ -842,5 +870,31 @@ mod tests {
     #[test]
     fn rescue_inside_if_branches_no_offense() {
         assert!(variable("if a\n  a rescue nil\nelse\n  a rescue nil\nend\n").is_empty());
+    }
+
+    // 1.91: an implicit-begin `rescue`/`else` in a class body aligns with
+    // the `class` keyword (`when :class, :module, :sclass then
+    // parent.loc.keyword`), not with `rescue`.
+    #[test]
+    fn class_body_else_aligns_with_class_keyword() {
+        let r = keyword("class MyClass\n  foo\nrescue SomeException\n  bar\n  else\n  baz\nend\n");
+        assert_eq!(r.len(), 1);
+        assert!(r[0].message.contains("Align `else` with `class`."));
+        assert_eq!(r[0].column_delta, -2);
+        assert!(keyword("class MyClass\n  foo\nrescue SomeException\n  bar\nelse\n  baz\nend\n").is_empty());
+    }
+
+    #[test]
+    fn module_body_else_aligns_with_module_keyword() {
+        let r = keyword("module M\n  foo\nrescue E\n  bar\n  else\n  baz\nend\n");
+        assert_eq!(r.len(), 1);
+        assert!(r[0].message.contains("Align `else` with `module`."));
+    }
+
+    #[test]
+    fn sclass_body_else_aligns_with_class_keyword() {
+        let r = keyword("class << self\n  foo\nrescue E\n  bar\n  else\n  baz\nensure\n  q\nend\n");
+        assert_eq!(r.len(), 1);
+        assert!(r[0].message.contains("Align `else` with `class`."));
     }
 }
