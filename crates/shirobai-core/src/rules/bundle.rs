@@ -332,7 +332,7 @@ pub struct BundleConfig {
     pub multiline_method_call: (u8, usize, usize),
     pub argument_alignment_style: u8,
     pub argument_alignment_indent: usize,
-    pub argument_alignment_incompatible: bool,
+    pub argument_alignment_hash_separator: bool,
     pub array_alignment_style: u8,
     pub array_alignment_indent: usize,
     pub first_argument_style: u8,
@@ -579,7 +579,7 @@ impl BundleConfig {
             multiline_method_call: (nums[18] as u8, nums[19] as usize, nums[20] as usize),
             argument_alignment_style: nums[21] as u8,
             argument_alignment_indent: nums[22] as usize,
-            argument_alignment_incompatible: nums[23] != 0,
+            argument_alignment_hash_separator: nums[23] != 0,
             array_alignment_style: nums[112] as u8,
             array_alignment_indent: nums[113] as usize,
             frozen_string_literal_comment_style: nums[116] as u8,
@@ -1212,7 +1212,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         source,
         cfg.argument_alignment_style,
         cfg.argument_alignment_indent,
-        cfg.argument_alignment_incompatible,
+        cfg.argument_alignment_hash_separator,
     );
     let mut ara_rule = array_alignment::build_rule(
         source,
@@ -4486,7 +4486,7 @@ mod tests {
     fn shared_walk_respects_disabled_rules() {
         let src = "foo(bar,\n  baz)\nfoo([\n  1\n])\n";
         let (mut nums, lists) = default_packed();
-        nums[0][23] = 1; // argument_alignment incompatible (with_first_argument)
+        nums[0][23] = 1; // argument_alignment hash_separator (disables with_first_argument)
         nums[0][26] = 1; // first_argument enforce_fixed_no_line_break
         nums[0][37] = 1; // first_array_element enforce_fixed_indentation
         let cfg = BundleConfig::from_packed(&nums, lists).unwrap();

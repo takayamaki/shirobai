@@ -36,9 +36,9 @@ pub fn check_argument_alignment(
     source: &[u8],
     style: u8,
     indent_width: usize,
-    incompatible: bool,
+    hash_separator: bool,
 ) -> Vec<ArgAlignOffense> {
-    let Some(mut rule) = build_rule(source, style, indent_width, incompatible) else {
+    let Some(mut rule) = build_rule(source, style, indent_width, hash_separator) else {
         return Vec::new();
     };
     super::dispatch::run(source, &mut [&mut rule]);
@@ -47,11 +47,15 @@ pub fn check_argument_alignment(
 
 /// Build the rule for use standalone or in a shared-walk bundle. `None` when
 /// the cop is disabled outright (`autocorrect_incompatible_with_other_cops?`).
+/// `hash_separator` is `enforce_hash_argument_with_separator?`: a
+/// separator-aligned `Layout/HashAlignment`. With `with_first_argument` it
+/// disables the cop; with `with_fixed_indentation` it leaves a trailing
+/// braceless hash's pairs to HashAlignment (1.91).
 pub(crate) fn build_rule(
     source: &[u8],
     style: u8,
     indent_width: usize,
-    incompatible: bool,
+    hash_separator: bool,
 ) -> Option<Visitor<'_>> {
     let style = if style == 1 {
         Style::WithFixedIndentation
@@ -59,7 +63,7 @@ pub(crate) fn build_rule(
         Style::WithFirstArgument
     };
     // `autocorrect_incompatible_with_other_cops?`: disables the cop entirely.
-    if incompatible && style == Style::WithFirstArgument {
+    if hash_separator && style == Style::WithFirstArgument {
         return None;
     }
     let line_index = super::line_index::with_line_index(source, |li| li.clone());
@@ -68,6 +72,7 @@ pub(crate) fn build_rule(
         line_index,
         style,
         indent: indent_width,
+        hash_separator,
         offenses: Vec::new(),
     })
 }
@@ -77,6 +82,8 @@ pub(crate) struct Visitor<'a> {
     line_index: Rc<LineIndex>,
     style: Style,
     indent: usize,
+    /// `enforce_hash_argument_with_separator?`.
+    hash_separator: bool,
     pub(crate) offenses: Vec<ArgAlignOffense>,
 }
 
@@ -170,6 +177,10 @@ impl Visitor<'_> {
                     .collect();
                 let last = args.last().unwrap();
                 match braceless_hash_pairs(last) {
+                    // `return items if enforce_hash_argument_with_separator?`
+                    // (1.91): the pairs belong to HashAlignment's separator
+                    // alignment, so they are not alignment items here.
+                    Some(_) if self.hash_separator => {}
                     Some(pairs) => items.extend(pairs),
                     None => items.push(loc(&last.location())),
                 }
@@ -305,5 +316,25 @@ mod tests {
         let got = run("func(foo: 'foo',\n  bar: 'bar')\n", 0);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].2, 3); // `bar` (col 2) aligns under `foo` (col 5)
+    }
+
+    // 1.91: with a separator-aligned `Layout/HashAlignment`, the pairs of a
+    // trailing braceless hash are not alignment items under
+    // `with_fixed_indentation` (they belong to HashAlignment); other
+    // arguments are still checked. Under `with_first_argument` the cop is
+    // disabled outright.
+    #[test]
+    fn hash_separator_leaves_trailing_hash_pairs_to_hash_alignment() {
+        let sep = |src: &str, style: u8| {
+            check_argument_alignment(src.as_bytes(), style, 2, true)
+                .into_iter()
+                .map(|o| o.column_delta)
+                .collect::<Vec<_>>()
+        };
+        assert!(sep("validates :foo,\n          bar: 1,\n       bazqux: 2\n", 1).is_empty());
+        assert_eq!(sep("func(:foo,\n     :bar)\n", 1), vec![-3]);
+        assert!(sep("func(a,\n  b,\nc)\n", 0).is_empty());
+        // Without the separator style the pairs are aligned as before.
+        assert_eq!(run("validates :foo,\n          bar: 1,\n       bazqux: 2\n", 1).len(), 2);
     }
 }

@@ -2658,21 +2658,22 @@ fn check_line_end_concatenation(source: RString) -> Vec<(usize, usize, String, u
 
 /// Ruby entry point for `Layout/ArgumentAlignment`. Takes the source, the
 /// enforced style (0=with_first_argument, 1=with_fixed_indentation), the
-/// configured indentation width and whether autocorrect is incompatible with
-/// `Layout/HashAlignment`'s separator styles (which disables this cop's
-/// autocorrect). Returns `[[start, end, column_delta, autocorrect], ...]`.
+/// configured indentation width and whether `Layout/HashAlignment` aligns on
+/// separators (`enforce_hash_argument_with_separator?`; with
+/// `with_first_argument` that disables the cop). Returns
+/// `[[start, end, column_delta, autocorrect], ...]`.
 fn check_argument_alignment(
     source: RString,
     style: u8,
     indent_width: usize,
-    incompatible: bool,
+    hash_separator: bool,
 ) -> Vec<(usize, usize, isize, bool)> {
     map_argument_alignment(
         shirobai_core::rules::argument_alignment::check_argument_alignment(
             bytes(&source),
             style,
             indent_width,
-            incompatible,
+            hash_separator,
         ),
     )
 }

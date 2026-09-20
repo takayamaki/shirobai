@@ -213,7 +213,7 @@ fn run_perrule(sources: &[Vec<u8>], cfg: &BundleConfig, iterations: usize) {
                 s,
                 cfg.argument_alignment_style,
                 cfg.argument_alignment_indent,
-                cfg.argument_alignment_incompatible,
+                cfg.argument_alignment_hash_separator,
             ));
         }),
         e!("first_argument_indentation", |s: &[u8]| {
