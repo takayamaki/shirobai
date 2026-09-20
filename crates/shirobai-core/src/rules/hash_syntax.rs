@@ -151,6 +151,10 @@ enum FrameKind {
         braces: bool,
         /// `pairs.last` range and whether `key.source == value.source` (omittable).
         last_pair: Option<((usize, usize), bool)>,
+        /// `hash_rockets_enforced?(hash)` (1.91): the whole hash converts to
+        /// rockets (`EnforcedStyle: hash_rockets` or `force_hash_rockets?`),
+        /// so its pairs skip the shorthand checks.
+        rockets_enforced: bool,
     },
     /// Prism `ArgumentsNode`: transparent in parser, skipped when finding a
     /// node's "parser parent".
@@ -334,11 +338,25 @@ impl Visitor<'_> {
             let h = node.as_keyword_hash_node()?;
             (h.elements().iter().collect(), false)
         };
-        let last_pair = elements.iter().filter_map(|e| e.as_assoc_node()).next_back().map(|a| {
-            let p = pair_from_assoc(self.source, &a);
-            (p.range, p.key_source == p.value_source)
-        });
-        Some(FrameKind::Hash { braces, last_pair })
+        let pairs: Vec<Pair> = elements
+            .iter()
+            .filter_map(|e| e.as_assoc_node())
+            .map(|a| pair_from_assoc(self.source, &a))
+            .collect();
+        let last_pair = pairs
+            .last()
+            .map(|p| (p.range, p.key_source == p.value_source));
+        let rockets_enforced = self.hash_rockets_enforced(&pairs);
+        Some(FrameKind::Hash {
+            braces,
+            last_pair,
+            rockets_enforced,
+        })
+    }
+
+    /// `hash_rockets_enforced?(hash_node)` (1.91).
+    fn hash_rockets_enforced(&self, pairs: &[Pair]) -> bool {
+        self.cfg.style == STYLE_HASH_ROCKETS || self.force_hash_rockets(pairs)
     }
 
     fn call_frame(&self, node: &Node<'_>) -> Option<CallFrame> {
@@ -557,10 +575,14 @@ impl Visitor<'_> {
     // ---- shorthand: `on_hash_for_mixed_shorthand` (consistent / either_consistent) ----
 
     fn on_hash_for_mixed_shorthand(&mut self, pairs: &[Pair]) {
+        // `ignore_mixed_hash_shorthand_syntax?`.
         if !self.cfg.ruby31_plus {
             return;
         }
         if self.cfg.shorthand != SHORT_CONSISTENT && self.cfg.shorthand != SHORT_EITHER_CONSISTENT {
+            return;
+        }
+        if self.hash_rockets_enforced(pairs) {
             return;
         }
         let mut omitted = Vec::new();
@@ -616,6 +638,17 @@ impl Visitor<'_> {
 
     fn on_pair(&mut self, pair: &Pair) {
         if self.ignore_hash_shorthand_syntax() {
+            return;
+        }
+        // `hash_rockets_enforced?(pair_node.parent)` (1.91): the parent hash
+        // is the stack top when `on_pair` runs from `enter(AssocNode)`.
+        if matches!(
+            self.stack.last().map(|f| &f.kind),
+            Some(FrameKind::Hash {
+                rockets_enforced: true,
+                ..
+            })
+        ) {
             return;
         }
         if self.cfg.shorthand == SHORT_ALWAYS {
@@ -785,7 +818,9 @@ impl Visitor<'_> {
         // return unless last_pair.key.source == last_pair.value.source
         let hash_idx = self.stack.len().checked_sub(1)?;
         let (hash_braces, last_pair) = match &self.stack[hash_idx].kind {
-            FrameKind::Hash { braces, last_pair } => (*braces, *last_pair),
+            FrameKind::Hash {
+                braces, last_pair, ..
+            } => (*braces, *last_pair),
             _ => return None,
         };
         let (_last_pair_range, last_pair_omittable) = last_pair?;
@@ -1308,5 +1343,24 @@ mod tests {
         let c = cfg(0, 2);
         assert!(offenses("{foo: foo}", &c).is_empty());
         assert!(offenses("{foo:}", &c).is_empty());
+    }
+
+    // 1.91 `hash_rockets_enforced?`: when the whole hash converts to rockets
+    // (`EnforcedStyle: hash_rockets` or `UseHashRocketsWithSymbolValues`),
+    // its pairs skip the shorthand checks instead of also being told to omit
+    // the value (which clobbered the rocket correction).
+    #[test]
+    fn rockets_enforced_hash_skips_shorthand_checks() {
+        // hash_rockets + always: only the rocket offense.
+        assert_eq!(offenses("f(a: a)", &cfg(1, 0)), vec![(2, 4, 1)]);
+        // ruby19 + always + UseHashRocketsWithSymbolValues.
+        let mut c = cfg(0, 0);
+        c.use_hash_rockets_with_symbol_values = true;
+        assert_eq!(offenses("f(a: :sym, b: b)", &c), vec![(2, 4, 1), (11, 13, 1)]);
+        // hash_rockets + consistent: no mixed-shorthand offense either.
+        assert!(offenses("f(a: a, b: 1)", &cfg(1, 3)).iter().all(|o| o.2 == 1));
+        // Without rockets the shorthand check still fires.
+        assert_eq!(offenses("f(a: a)", &cfg(0, 0)).len(), 1);
+        assert_eq!(offenses("f(a: a)", &cfg(0, 0))[0].2, 3);
     }
 }
