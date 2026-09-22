@@ -14,6 +14,11 @@
 #   benches/parity_diff.sh .tmp/discourse /tmp/dc
 #   benches/parity_diff.sh .tmp/rubocop_source /tmp/rc
 #
+# EXTRA_ARGS="..." appends options to BOTH rubocop runs. Pending cops are off
+# under --force-default-config, so a pending-cop unit is checked with
+#   EXTRA_ARGS="--only Style/DirectiveScope,Lint/MisplacedMagicComment"
+# (or --enable-pending-cops) on top of the default run.
+#
 # Requires Gemfile.stock and Gemfile.with_shirobai at repo root.
 # Build shirobai first: `bundle exec rake compile`.
 set -euo pipefail
@@ -31,13 +36,13 @@ sh_json="${prefix}_shirobai.json"
 
 echo "=== stock real-CLI on $corpus ==="
 time BUNDLE_GEMFILE="$root/Gemfile.stock" bundle exec rubocop \
-  --force-default-config --cache false --no-server -f json \
+  --force-default-config ${EXTRA_ARGS:-} --cache false --no-server -f json \
   "$corpus" > "$stock_json" 2>/dev/null || true   # rubocop exits non-zero on offenses
 
 echo
 echo "=== shirobai real-CLI on $corpus ==="
 time BUNDLE_GEMFILE="$root/Gemfile.with_shirobai" bundle exec rubocop \
-  --require shirobai --force-default-config --cache false --no-server -f json \
+  --require shirobai --force-default-config ${EXTRA_ARGS:-} --cache false --no-server -f json \
   "$corpus" > "$sh_json" 2>/dev/null || true
 
 echo

@@ -594,6 +594,49 @@ RSpec.describe "non-ASCII source offset parity with stock RuboCop" do
     end
   end
 
+  # `Style/DirectiveScope` is `Enabled: pending`, so the Team-based runs
+  # above would drop it on both sides (vacuously green); force-enable it.
+  # Offense ranges are the comment objects themselves (no offset crosses the
+  # Rust boundary); the multibyte comment guards the comment index/line
+  # mapping the wrapper reads its candidates through.
+  describe "Style/DirectiveScope (pending cop, force-enabled)" do
+    it "matches stock offenses and autocorrect output after a multibyte comment" do
+      enabled_config = RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new(
+          { "Style/DirectiveScope" => { "Enabled" => true } }, "(test)"
+        ),
+        "(test)"
+      )
+      offenses = expect_parity(
+        "Style/DirectiveScope",
+        "#{prefix}# rubocop:disable Metrics/AbcSize\ndef foo\nend\n# rubocop:enable Metrics/AbcSize\n",
+        enabled_config
+      )
+      expect(offenses).not_to be_empty, "fixture produced no stock offense; fix the source"
+    end
+  end
+
+  # `Lint/MisplacedMagicComment` is `Enabled: pending`, so the Team-based
+  # runs above would drop it on both sides (vacuously green); force-enable it.
+  # Same guard as DirectiveScope: the candidates are read through the comment
+  # index/line mapping, and `move_comment` is stock's own code.
+  describe "Lint/MisplacedMagicComment (pending cop, force-enabled)" do
+    it "matches stock offenses and autocorrect output after a multibyte comment" do
+      enabled_config = RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new(
+          { "Lint/MisplacedMagicComment" => { "Enabled" => true } }, "(test)"
+        ),
+        "(test)"
+      )
+      offenses = expect_parity(
+        "Lint/MisplacedMagicComment",
+        "#{prefix}require 'foo'\n# frozen_string_literal: true\n",
+        enabled_config
+      )
+      expect(offenses).not_to be_empty, "fixture produced no stock offense; fix the source"
+    end
+  end
+
   # `Lint/DuplicateMagicComment` is `Enabled: pending`, so the Team-based
   # runs above would drop it on BOTH sides under the default config
   # (vacuously green); force-enable it. The wrapper passes line numbers

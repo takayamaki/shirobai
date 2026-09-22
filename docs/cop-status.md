@@ -4,7 +4,7 @@ This document tracks which RuboCop cops shirobai has reimplemented in Rust,
 and which cops were attempted but reverted because they did not meet the
 project's drop-in compatibility and speed requirements together.
 
-## Implemented (106 cops)
+## Implemented (108 cops)
 
 shirobai replaces these cops with Rust implementations.
 Every offense position, message, and autocorrected byte matches stock RuboCop
@@ -77,6 +77,7 @@ and RuboCop itself).
 - `Lint/Debugger`
 - `Lint/DuplicateMagicComment`
 - `Lint/DuplicateMethods`
+- `Lint/MisplacedMagicComment`
 - `Lint/OrderedMagicComments`
 - `Lint/ParenthesesAsGroupedExpression`
 - `Lint/RequireParentheses`
@@ -109,6 +110,7 @@ and RuboCop itself).
 - `Style/ArgumentsForwarding`
 - `Style/BlockDelimiters`
 - `Style/ColonMethodCall`
+- `Style/DirectiveScope`
 - `Style/EmptyLiteral`
 - `Style/FileNull`
 - `Style/FrozenStringLiteralComment`
@@ -243,6 +245,42 @@ leading magic comments). This also fixes a latent divergence in
 `Lint/DuplicateMagicComment` / `Lint/OrderedMagicComments` on BOM files with more
 than one leading magic comment; the verification corpora contain no BOM Ruby
 files, so it never surfaced there.
+
+### Note: `Style/DirectiveScope` + `Lint/MisplacedMagicComment` (comment-scan candidates)
+
+Both are `Enabled: pending` cops added in rubocop 1.90 / 1.91, so they run by
+default on every project with `NewCops: enable`. Both walk EVERY comment of
+the file in `on_new_investigation`, and both are token touchers:
+`DirectiveScope` calls `comment_config.comment_only_line?` for every comment
+(its first call materializes `processed_source.tokens`), and
+`MisplacedMagicComment` asks `first_code_token` (`sorted_tokens`) for every
+`frozen_string_literal` comment — nearly every file. In shirobai mode, where
+the toucher program had removed every unconditional token materialization,
+the pair brought the whole token tax back on the `NewCops: enable` corpora.
+
+Same shape as `Style/MagicCommentFormat`: Rust supplies only the
+**candidates** from the cached parse's comment list, and each wrapper runs
+stock's per-comment body verbatim on those (the stock regexps still decide),
+so detection, messages, and autocorrect are stock's own code. Offense ranges
+are the comment objects themselves, so no offset crosses the Rust boundary and
+no `SourceOffsets` conversion is needed.
+
+- `DirectiveScope` (slot `[0, 104]`): the `(index, line)` of every comment
+  containing `rubocop` — a strict superset of `DIRECTIVE_COMMENT_REGEXP`.
+  Files without such a comment never touch tokens; files with one pay stock's
+  `comment_only_line?` as before (rare).
+- `MisplacedMagicComment` (slot `[0, 105]`): the shebang comment stock's
+  `find` would return, plus every `magic_comment_shaped?` comment mentioning
+  `coding` / `frozen` (a superset of every `encoding` /
+  `frozen_string_literal` spelling) as `(index, line, after_code)`, where
+  `after_code` is stock's `begin_pos > first_code_token.begin_pos` computed on
+  byte offsets with the shared leading-comment front scan (`scan_front`).
+
+The `index` is the comment's position in the parse's comment list (the list
+`processed_source.comments` is built from); the wrapper checks it against the
+reported line and falls back to `comment_at_line` if the two lists ever
+disagree. Both edge-case specs assert the token stream is never materialized
+on a file the replacement targets.
 
 ### Note: `Naming/AsciiIdentifiers` (ASCII fast-path, full-Rust)
 
