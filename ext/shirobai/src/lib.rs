@@ -1859,7 +1859,8 @@ fn register_bundle_config(
 /// 96 space_around_equals_in_parameter_default / 97 extra_spacing /
 /// 98 end_of_line / 99 line_continuation_spacing /
 /// 100 space_inside_string_interpolation / 101 magic_comment_format /
-/// 102 ascii_identifiers / 103 rescue_ensure_alignment
+/// 102 ascii_identifiers / 103 rescue_ensure_alignment /
+/// 104 directive_scope / 105 misplaced_magic_comment
 ///
 /// Performance slots (origin 1; every slot empty unless the plugin gem
 /// registered its packed segment):
@@ -2072,6 +2073,12 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         // toucher-batch-4 core slot 103: `Layout/RescueEnsureAlignment`
         // (`[[begin, end], ...]` modifier-`rescue` keyword ranges).
         ary.push(r.rescue_ensure_alignment)?;
+        // comment-scan core slot 104: `Style/DirectiveScope`
+        // (`[[comment_index, line], ...]` of the `rubocop` comments).
+        ary.push(r.directive_scope)?;
+        // comment-scan core slot 105: `Lint/MisplacedMagicComment`
+        // (`[shebang_or_nil, [[comment_index, line, after_code], ...]]`).
+        ary.push(r.misplaced_magic_comment)?;
         // Performance origin (result[1]).
         let perf = ruby.ary_new_capa(5);
         perf.push(map_perf_detect(r.perf_detect))?;
@@ -3472,6 +3479,22 @@ fn check_rescue_ensure_alignment(source: RString) -> Vec<(usize, usize)> {
     shirobai_core::rules::rescue_ensure_alignment::check_rescue_ensure_alignment(bytes(&source))
 }
 
+/// Ruby entry point for `Style/DirectiveScope` (standalone fallback, no
+/// config). Returns `(comment_index, line)` for every comment containing
+/// `rubocop`; the wrapper runs stock's per-comment body on those only.
+fn check_directive_scope(source: RString) -> Vec<(usize, usize)> {
+    shirobai_core::rules::directive_scope::check_directive_scope(bytes(&source))
+}
+
+/// Ruby entry point for `Lint/MisplacedMagicComment` (standalone fallback, no
+/// config). Returns `[shebang_or_nil, [[comment_index, line, after_code], ...]]`;
+/// the wrapper runs stock's `check_comment` on the candidates.
+fn check_misplaced_magic_comment(
+    source: RString,
+) -> shirobai_core::rules::misplaced_magic_comment::MisplacedMagicScan {
+    shirobai_core::rules::misplaced_magic_comment::check_misplaced_magic_comment(bytes(&source))
+}
+
 /// `Style/EmptyLiteral`'s `frozen_string_literals_enabled?` (String.new path),
 /// computed from the leading comment scan without materializing the parser-gem
 /// token stream. `sfbd`: `AllCops/StringLiteralsFrozenByDefault` is literally
@@ -4509,6 +4532,14 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     module.define_module_function(
         "check_rescue_ensure_alignment",
         function!(check_rescue_ensure_alignment, 1),
+    )?;
+    module.define_module_function(
+        "check_directive_scope",
+        function!(check_directive_scope, 1),
+    )?;
+    module.define_module_function(
+        "check_misplaced_magic_comment",
+        function!(check_misplaced_magic_comment, 1),
     )?;
     module.define_module_function(
         "check_frozen_string_literals_enabled",

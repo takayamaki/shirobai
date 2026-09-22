@@ -28,6 +28,9 @@
 #
 # On byte parity the work dir is removed; on divergence it is kept for inspection.
 # Set KEEP=1 to keep it either way.
+# EXTRA_ARGS="..." appends options to BOTH arms, and AC_FLAG replaces the
+# `-a` (e.g. AC_FLAG=-A EXTRA_ARGS="--only Style/Foo" audits an
+# unsafe-autocorrect pending cop, which `-a` alone never corrects).
 #
 # Requires Gemfile.stock and Gemfile.with_shirobai at repo root.
 # Build shirobai first: `bundle exec rake compile`.
@@ -53,7 +56,7 @@ cp -rL "$corpus" "$work/shirobai"
 run_arm() { # <gemfile> <tree> [extra rubocop args...]
   local gemfile="$1" tree="$2"; shift 2
   RUBOCOP_TARGET_RUBY_VERSION="$trv" BUNDLE_GEMFILE="$root/$gemfile" \
-    bundle exec rubocop "$@" -a --force-default-config --cache false --no-server \
+    bundle exec rubocop "$@" ${AC_FLAG:--a} ${EXTRA_ARGS:-} --force-default-config --cache false --no-server \
     "$tree" > "$work/$(basename "$tree").log" 2>&1 || true # non-zero on offenses
   tail -1 "$work/$(basename "$tree").log"
 }

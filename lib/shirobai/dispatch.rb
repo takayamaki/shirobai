@@ -137,6 +137,10 @@ module Shirobai
       ascii_identifiers: [0, 102].freeze,
       # toucher-batch-4 core slot 103.
       rescue_ensure_alignment: [0, 103].freeze,
+      # comment-scan core slots 104-105 (Style/DirectiveScope +
+      # Lint/MisplacedMagicComment: comment-list candidates, no tokens).
+      directive_scope: [0, 104].freeze,
+      misplaced_magic_comment: [0, 105].freeze,
       # shirobai-performance plugin slots (origin 1). Always present in the
       # wire format; the Rust side leaves them empty unless the plugin gem
       # registered its packed segment (`Dispatch.register_plugin_packer`).

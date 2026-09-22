@@ -752,6 +752,22 @@ RSpec.describe "lint-mode correctable parity with stock RuboCop" do
       Shirobai::Cop::Style::MutableConstant,
       "CONST = [1, 2, 3]\n"
     ],
+    # `Style/DirectiveScope` runs stock's per-comment body verbatim on the
+    # Rust candidates; the pair offense carries a replace + remove corrector
+    # (correctable), so the lint-mode status must match stock.
+    "Style/DirectiveScope" => [
+      RuboCop::Cop::Style::DirectiveScope,
+      Shirobai::Cop::Style::DirectiveScope,
+      "# rubocop:disable Metrics/AbcSize\ndef foo\nend\n# rubocop:enable Metrics/AbcSize\n"
+    ],
+    # `Lint/MisplacedMagicComment` runs stock's `check_comment` verbatim on
+    # the Rust candidates; the after-code offense carries a `move_comment`
+    # corrector (correctable), so the lint-mode status must match stock.
+    "Lint/MisplacedMagicComment" => [
+      RuboCop::Cop::Lint::MisplacedMagicComment,
+      Shirobai::Cop::Lint::MisplacedMagicComment,
+      "require 'foo'\n# frozen_string_literal: true\n"
+    ],
   }
 
   cases.each do |name, (stock_klass, shirobai_klass, source)|

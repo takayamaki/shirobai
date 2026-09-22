@@ -32,6 +32,7 @@ use super::{
     leading_empty_lines,
     line_end_concatenation, line_length,
     line_length_breakable, magic_comment_format, method_length, method_name, module_length,
+    directive_scope, misplaced_magic_comment,
     multiline_method_call_brace_layout, nested_parenthesized_calls,
     ordered_magic_comments,
     parentheses_as_grouped_expression,
@@ -1039,6 +1040,16 @@ pub struct BundleResult {
     /// `@modifier_locations` set and runs stock's `on_resbody` / `on_ensure`.
     /// Empty when the cop is disabled (the gate skips the collection).
     pub rescue_ensure_alignment: Vec<rescue_ensure_alignment::ModifierRescuePos>,
+    /// `Style/DirectiveScope`: the `(index, line)` of every comment containing
+    /// `rubocop` (a superset of the directive regexp matches). The wrapper
+    /// runs stock's per-comment body on those only, so files without a
+    /// directive never materialize `processed_source.tokens`.
+    pub directive_scope: Vec<directive_scope::DirectiveCandidate>,
+    /// `Lint/MisplacedMagicComment`: the shebang candidate plus every
+    /// encoding / frozen_string_literal shaped comment as
+    /// `(index, line, after_first_code_token)`. The wrapper runs stock's
+    /// `check_comment` on those, with `first_code_token` replaced by the flag.
+    pub misplaced_magic_comment: misplaced_magic_comment::MisplacedMagicScan,
     pub space_inside_hash_literal_braces:
         Vec<space_inside_hash_literal_braces::SpaceInsideHashLiteralBracesOffense>,
     pub space_inside_array_literal_brackets:
@@ -1706,6 +1717,12 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // first non-comment token line) from the cached parse, so the wrapper avoids
     // `processed_source.tokens`. The rest of the cop is stock Ruby.
     let magic_comment_format = magic_comment_format::check_magic_comment_format(source);
+    // `Style/DirectiveScope` / `Lint/MisplacedMagicComment`: comment-list
+    // scans over the cached parse (no tokens, no AST walk). Both wrappers run
+    // stock's per-comment logic on the returned candidates only.
+    let directive_scope = directive_scope::check_directive_scope(source);
+    let misplaced_magic_comment =
+        misplaced_magic_comment::check_misplaced_magic_comment(source);
     // `Lint/DuplicateMagicComment` is a leading-line scan (comments + the
     // first non-comment token position from the cached parse), no AST walk.
     let duplicate_magic_comment =
@@ -1837,6 +1854,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         magic_comment_format,
         ascii_identifiers,
         rescue_ensure_alignment,
+        directive_scope,
+        misplaced_magic_comment,
         space_inside_hash_literal_braces,
         space_inside_array_literal_brackets,
         space_before_block_braces,
@@ -4577,6 +4596,29 @@ mod tests {
             super::magic_comment_format::check_magic_comment_format(src.as_bytes());
         assert_eq!(alone, 3);
         assert_eq!(bundle.magic_comment_format, alone);
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_directive_scope() {
+        let src = "# rubocop:disable Metrics/AbcSize\ndef foo\nend\n# rubocop:enable Metrics/AbcSize\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone = super::directive_scope::check_directive_scope(src.as_bytes());
+        assert_eq!(alone, vec![(0, 1), (1, 4)]);
+        assert_eq!(bundle.directive_scope, alone);
+    }
+
+    #[test]
+    fn check_all_bundle_matches_standalone_misplaced_magic_comment() {
+        let src = "# frozen_string_literal: true\n#!/usr/bin/env ruby\nputs 1\n# encoding: utf-8\n";
+        let (nums, lists) = default_packed();
+        let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
+        let bundle = check_all_bundle(src.as_bytes(), &cfg);
+        let alone =
+            super::misplaced_magic_comment::check_misplaced_magic_comment(src.as_bytes());
+        assert_eq!(alone, (Some((1, 2)), vec![(0, 1, false), (2, 4, true)]));
+        assert_eq!(bundle.misplaced_magic_comment, alone);
     }
 
     #[test]
