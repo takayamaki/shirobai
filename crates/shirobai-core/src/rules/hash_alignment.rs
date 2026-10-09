@@ -29,6 +29,7 @@ use ruby_prism::{Location, Node};
 use super::line_index::LineIndex;
 
 /// One misaligned pair (or kwsplat). The Ruby wrapper applies the deltas.
+#[derive(Debug)]
 pub struct HashAlignmentOffense {
     /// Index of the hash these offenses came from, in walk (`on_hash`) order.
     /// Stock registers a hash's offenses inside one `on_hash` callback; if one

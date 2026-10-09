@@ -15,6 +15,7 @@ use super::line_index::LineIndex;
 /// One misindented operand. `column_delta` is `correct_column - actual_column`
 /// (positive => the operand must move right). `message` is the fully formatted
 /// RuboCop offense message.
+#[derive(Debug)]
 pub struct OperationIndentOffense {
     pub start_offset: usize,
     pub end_offset: usize,

@@ -40,6 +40,7 @@ use super::line_index::LineIndex;
 /// One offense. `[start_offset, end_offset)` is the offense line range (whole
 /// line `last_line - 1` plus its `\n`), which is also exactly the range the
 /// autocorrect removes.
+#[derive(Debug)]
 pub struct EmptyLinesAroundArgumentsOffense {
     pub start_offset: usize,
     pub end_offset: usize,

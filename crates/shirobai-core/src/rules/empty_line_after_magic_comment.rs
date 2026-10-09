@@ -28,6 +28,7 @@ use super::parse_cache;
 /// One candidate comment before the file's first code line. The Ruby wrapper
 /// runs `MagicComment.parse(text).any?` on the slice `[start, end)` and picks
 /// the latest matching candidate.
+#[derive(Debug)]
 pub struct MagicCommentCandidate {
     /// Comment `source_range` (matches parser-gem `comment.source_range`).
     /// Prism's location ends past a trailing `\r` for CRLF endings, while

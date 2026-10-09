@@ -20,6 +20,7 @@ use super::line_index::LineIndex;
 /// One misindented hanging `)`. `[start_offset, end_offset)` is the closing
 /// paren token (the offense range and the range Ruby realigns by
 /// `column_delta`).
+#[derive(Debug)]
 pub struct ClosingParenIndentOffense {
     pub start_offset: usize,
     pub end_offset: usize,

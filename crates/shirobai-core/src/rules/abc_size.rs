@@ -45,6 +45,7 @@ use super::complexity::{define_method_info, is_iterating};
 /// Per-method ABC result. The Ruby side derives the score
 /// (`Math.sqrt(a**2 + b**2 + c**2).round(2)`), the vector string and the
 /// offense message, so floats never cross the FFI boundary.
+#[derive(Debug)]
 pub struct AbcMethod {
     pub start_offset: usize,
     pub end_offset: usize,

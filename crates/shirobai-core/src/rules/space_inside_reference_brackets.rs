@@ -58,6 +58,7 @@ pub struct Config {
 /// `ignore_node` grouping). `suppress_when_disable_uncorrectable` mirrors the
 /// `autocorrect_with_disable_uncorrectable? && !start_ok` early return on the
 /// right-bracket offense.
+#[derive(Debug)]
 pub struct SpaceInsideReferenceBracketsOffense {
     pub start_offset: usize,
     pub end_offset: usize,
@@ -96,7 +97,7 @@ impl MessageId {
 pub type CorrectorOp = (u8, usize, usize);
 
 /// The wire result: offenses plus one corrector program per offending node.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct ReferenceBracketsResult {
     pub offenses: Vec<SpaceInsideReferenceBracketsOffense>,
     pub node_ops: Vec<Vec<CorrectorOp>>,

@@ -53,6 +53,7 @@ use super::parse_cache;
 ///   tokenizer reports it.
 /// - `[ac_start, ac_end)` is the leading-blank range stock's corrector
 ///   removes (`[0, token.begin_pos)`).
+#[derive(Debug)]
 pub struct LeadingEmptyLinesOffense {
     pub start: usize,
     pub end: usize,

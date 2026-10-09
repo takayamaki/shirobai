@@ -35,6 +35,7 @@ use super::line_index::LineIndex;
 /// One misindented first pair or right brace. `[start_offset, end_offset)` is
 /// the offense range (the first pair node, or the `}` token), which Ruby
 /// reports and realigns by `column_delta` via `AlignmentCorrector`.
+#[derive(Debug)]
 pub struct FirstHashElemIndentOffense {
     pub start_offset: usize,
     pub end_offset: usize,

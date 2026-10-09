@@ -10,6 +10,7 @@ use ruby_prism::Node;
 /// literally can never be an offense, so only these rare candidates cross back
 /// into Ruby, where the per-prefix filtering (`allowed_method_name?`,
 /// `AllowedMethods`, `UseSorbetSigs`) runs verbatim.
+#[derive(Debug)]
 pub struct PredicatePrefixCandidate {
     /// Offense range: the `def` name token, or the macro's symbol argument.
     pub start_offset: usize,

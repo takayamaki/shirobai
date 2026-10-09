@@ -66,6 +66,7 @@ pub struct Config {
 
 /// One record from the walk, in walk order. When `is_offense` is false it is a
 /// pure `correct_style_detected` marker (no caret, no fix).
+#[derive(Debug)]
 pub struct StringLiteralsOffense {
     pub is_offense: bool,
     pub start_offset: usize,

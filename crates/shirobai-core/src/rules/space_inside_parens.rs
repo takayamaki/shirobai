@@ -58,6 +58,7 @@ pub struct Config {
 }
 
 /// One offense: `[start, end)` plus the message/fix selector.
+#[derive(Debug)]
 pub struct SpaceInsideParensOffense {
     pub start_offset: usize,
     pub end_offset: usize,

@@ -32,6 +32,7 @@ use super::line_index::LineIndex;
 /// end_offset)` is the offense range, which Ruby both reports and realigns by
 /// `column_delta` via `AlignmentCorrector` (resolving the element's AST node
 /// for the string-taboo handling; the `]` range stays a range, like stock).
+#[derive(Debug)]
 pub struct FirstArrayElemIndentOffense {
     pub start_offset: usize,
     pub end_offset: usize,

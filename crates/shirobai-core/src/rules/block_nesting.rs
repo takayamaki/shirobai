@@ -16,6 +16,7 @@ use ruby_prism::{Node, Visit};
 /// One reportable offense: the byte range of the offending node. The highlight
 /// is truncated to the first line by RuboCop's offense formatter, so only the
 /// start offset (caret position) and first-line span matter.
+#[derive(Debug)]
 pub struct BlockNestingOffense {
     pub start_offset: usize,
     pub end_offset: usize,

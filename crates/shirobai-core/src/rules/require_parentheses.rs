@@ -19,6 +19,7 @@
 
 use ruby_prism::{Node, Visit};
 
+#[derive(Debug)]
 pub struct RequireParenthesesOffense {
     pub start_offset: usize,
     pub end_offset: usize,

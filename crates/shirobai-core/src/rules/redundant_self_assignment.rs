@@ -38,6 +38,7 @@ use ruby_prism::{
 /// `range_start..range_end` with `rhs_start..rhs_end` source bytes) and `1`
 /// for setter-style autocorrect (delete `range_start..range_end` outright;
 /// `rhs_*` fields are unused / zero for this kind).
+#[derive(Debug)]
 pub struct RedundantSelfAssignmentOffense {
     pub op_start: usize,
     pub op_end: usize,

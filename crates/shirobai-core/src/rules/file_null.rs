@@ -34,6 +34,7 @@ use ruby_prism::{Location, Node};
 
 /// One offense: `add_offense(range, message)` with
 /// `corrector.replace(range, "File::NULL")` (offense range == replace range).
+#[derive(Debug)]
 pub struct FileNullOffense {
     pub start_offset: usize,
     pub end_offset: usize,

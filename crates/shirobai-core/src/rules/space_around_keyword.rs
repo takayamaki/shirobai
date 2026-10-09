@@ -45,6 +45,7 @@ use ruby_prism::{CallNode, Location, Node};
 /// highlight). `before` is true for a missing space *before* the keyword
 /// (autocorrect inserts a space before the range) and false for a missing space
 /// *after* (inserts a space after).
+#[derive(Debug)]
 pub struct SpaceAroundKeywordOffense {
     pub start_offset: usize,
     pub end_offset: usize,

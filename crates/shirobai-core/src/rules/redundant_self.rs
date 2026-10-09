@@ -36,6 +36,7 @@ use ruby_prism::{CallNode, Node, Visit};
 
 /// A redundant `self` receiver. `[self_start, self_end)` is the `self` token
 /// range (the offense range), `[dot_start, dot_end)` is the `.` operator range.
+#[derive(Debug)]
 pub struct RedundantSelfOffense {
     pub self_start: usize,
     pub self_end: usize,

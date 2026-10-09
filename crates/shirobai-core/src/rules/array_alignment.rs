@@ -35,6 +35,7 @@ use super::line_index::LineIndex;
 /// One misaligned element. `column_delta` is `base_column - actual_column`
 /// (display columns). `autocorrect` is false for offenses nested inside an
 /// already-registered offense range (the mixin's `within?` rule).
+#[derive(Debug)]
 pub struct ArrayAlignOffense {
     pub start_offset: usize,
     pub end_offset: usize,

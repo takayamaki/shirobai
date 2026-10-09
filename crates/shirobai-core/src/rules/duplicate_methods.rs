@@ -76,6 +76,7 @@ pub struct Config {
 }
 
 /// One `found_method` call, in stock's callback order.
+#[derive(Debug)]
 pub struct DupMethodEvent {
     /// `method_name` as interpolated into the message. For sexp fallback
     /// events this is only the short method name; the wrapper builds

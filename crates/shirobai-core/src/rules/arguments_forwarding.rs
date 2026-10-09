@@ -61,6 +61,7 @@ pub struct Config {
 }
 
 /// One `add_offense` call in stock's order (range + message + corrector ops).
+#[derive(Debug)]
 pub struct AfOffense {
     pub start: usize,
     pub end: usize,
@@ -70,6 +71,7 @@ pub struct AfOffense {
 }
 
 /// A corrector op. `kind`: 0 replace, 1 remove, 2 insert_before, 3 insert_after.
+#[derive(Debug)]
 pub struct AfOp {
     pub kind: u8,
     pub start: usize,

@@ -21,6 +21,7 @@ use super::line_index::LineIndex;
 /// Ruby side realigns by `column_delta` (the whole chain when the entire call
 /// should be corrected). `autocorrect` is false for offenses nested inside an
 /// already-registered offense range.
+#[derive(Debug)]
 pub struct FirstArgIndentOffense {
     pub start_offset: usize,
     pub end_offset: usize,

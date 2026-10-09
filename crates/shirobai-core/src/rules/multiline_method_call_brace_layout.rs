@@ -39,6 +39,7 @@ use super::line_index::LineIndex;
 /// One misplaced closing `)`. Ruby builds the offense range from
 /// `[offense_start, offense_end)` and hands the autocorrect off to stock's
 /// `MultilineLiteralBraceCorrector` keyed by `(send_node_start, send_node_end)`.
+#[derive(Debug)]
 pub struct MmcblOffense {
     /// Closing brace token (the offense highlight range).
     pub offense_start: usize,

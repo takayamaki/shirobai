@@ -3,6 +3,7 @@
 use ruby_prism::{Node, Visit};
 
 /// An identifier whose numbering does not match the configured style.
+#[derive(Debug)]
 pub struct VariableNumberOffense {
     pub start_offset: usize,
     pub end_offset: usize,

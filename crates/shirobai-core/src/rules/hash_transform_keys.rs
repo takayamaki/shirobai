@@ -21,6 +21,7 @@ use ruby_prism::{BlockNode, CallNode, Location, Node, Visit};
 /// operations the Ruby wrapper plays back verbatim; ranges never overlap by
 /// construction (each touches a different substring of the offense's source
 /// span).
+#[derive(Debug)]
 pub struct HashTransformKeysOffense {
     pub start_offset: usize,
     pub end_offset: usize,

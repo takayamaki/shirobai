@@ -49,6 +49,7 @@ const STYLE_DEF: u8 = 1;
 /// (drives `style_detected` / `correct_style_detected` on the Ruby side). When
 /// the configured style is not in `matching`, `offense` carries the location,
 /// message, and autocorrect target column.
+#[derive(Debug)]
 pub struct DefEndAlignmentRecord {
     /// `end` keyword range (the offense location when misaligned).
     pub end_start: usize,
@@ -61,6 +62,7 @@ pub struct DefEndAlignmentRecord {
 }
 
 /// The offense detail for a misaligned definition `end`.
+#[derive(Debug)]
 pub struct DefEndAlignmentOffense {
     /// Formatted stock message.
     pub message: String,

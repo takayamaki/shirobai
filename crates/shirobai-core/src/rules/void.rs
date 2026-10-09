@@ -18,6 +18,7 @@ use ruby_prism::{CallNode, Node, StatementsNode};
 ///   inside conditional branches and assignment-method defs);
 /// - nonmutating method (`CheckForMethodsWithNoSideEffects`): replace the
 ///   selector with the bang/`each` suggestion.
+#[derive(Debug)]
 pub struct VoidOffense {
     pub start_offset: usize,
     pub end_offset: usize,

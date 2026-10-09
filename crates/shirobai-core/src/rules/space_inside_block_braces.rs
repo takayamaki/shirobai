@@ -53,6 +53,7 @@ pub struct Config {
 /// (the offense highlight, which is also the autocorrect target). `message` is
 /// the fixed message id; the Ruby wrapper formats the string and applies the
 /// `range.source`-based corrector exactly like stock.
+#[derive(Debug)]
 pub struct SpaceInsideBlockBracesOffense {
     pub start_offset: usize,
     pub end_offset: usize,
@@ -60,7 +61,7 @@ pub struct SpaceInsideBlockBracesOffense {
 }
 
 /// The seven fixed messages stock emits.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageId {
     /// `'Space missing inside {.'`
     SpaceMissingLeft,

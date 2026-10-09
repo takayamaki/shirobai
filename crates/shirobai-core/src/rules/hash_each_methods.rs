@@ -10,6 +10,7 @@ use ruby_prism::{
 /// key/value argument. The correction is `replace_*` → `replacement` plus an
 /// optional removal (`remove_end > remove_start`), mirroring stock's
 /// `corrector.replace` + `corrector.remove` pair.
+#[derive(Debug)]
 pub struct HashEachOffense {
     pub start_offset: usize,
     pub end_offset: usize,

@@ -38,6 +38,7 @@ use super::parse_cache;
 
 /// One offense candidate the Ruby wrapper turns into `add_offense` +
 /// `corrector.remove`.
+#[derive(Debug)]
 pub struct EmptyCommentOffense {
     /// Comment source range stock passes to `add_offense` (`comment.source_range`).
     pub offense_start: usize,

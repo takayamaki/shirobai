@@ -47,6 +47,7 @@ use ruby_prism::{CallNode, Node, ProgramNode};
 /// (`Useless `%<current>s` access modifier.`); the autocorrect (whole-line
 /// removal via `range_by_whole_lines`) is derived from the offense range by
 /// the Ruby wrapper with the stock `RangeHelp` helper itself.
+#[derive(Debug)]
 pub struct UselessAccessModifierOffense {
     pub start_offset: usize,
     pub end_offset: usize,
