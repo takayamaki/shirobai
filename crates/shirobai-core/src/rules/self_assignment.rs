@@ -28,6 +28,7 @@ use ruby_prism::{
 /// offset of the AST node stock would key into `processed_source.ast_with_comments`
 /// to decide RBS-annotation exemption; the Ruby wrapper uses it to find that
 /// node when the user has set `AllowRBSInlineAnnotation: true`.
+#[derive(Debug)]
 pub struct SelfAssignmentOffense {
     pub start_offset: usize,
     pub end_offset: usize,

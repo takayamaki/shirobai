@@ -31,6 +31,7 @@ use super::line_index::LineIndex;
 
 /// One offense candidate; the Ruby wrapper finishes the
 /// `next_line_empty_or_allowed_directive_comment?` check.
+#[derive(Debug)]
 pub struct GuardClauseCandidate {
     /// Offense range stock passes to `add_offense`.
     pub offense_start: usize,

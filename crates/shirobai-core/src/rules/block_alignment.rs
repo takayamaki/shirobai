@@ -47,6 +47,7 @@ const STYLE_START_OF_BLOCK: u8 = 1;
 const STYLE_START_OF_LINE: u8 = 2;
 
 /// One checked block whose closing token is misaligned (an offense).
+#[derive(Debug)]
 pub struct BlockAlignmentOffense {
     /// Closing token range (`end` or `}`) — the offense location.
     pub end_start: usize,

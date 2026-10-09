@@ -62,6 +62,7 @@ pub struct Candidate {
 }
 
 /// The resolved (all-offenses-enabled) outcome for one source.
+#[derive(Debug, Default)]
 pub struct BlockDelimitersResult {
     pub offenses: Vec<Candidate>,
     /// Blocks ignored by `on_send`, for the wrapper's cross-pass bookkeeping.

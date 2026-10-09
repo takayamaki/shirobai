@@ -59,6 +59,7 @@ pub struct Edit {
 
 /// One offense. `edits` is non-empty only on the FIRST offense of an
 /// interpolation (stock applies `SpaceCorrector` once per node).
+#[derive(Debug)]
 pub struct SpaceInsideInterpOffense {
     pub start: usize,
     pub end: usize,

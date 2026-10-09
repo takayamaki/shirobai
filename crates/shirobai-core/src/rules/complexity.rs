@@ -9,6 +9,7 @@ use ruby_prism::{Node, Visit, visit_call_node, visit_def_node};
 
 /// Per-method complexity result. Both scores are reported; each cop selects the
 /// one it needs.
+#[derive(Debug)]
 pub struct MethodComplexity {
     pub start_offset: usize,
     pub end_offset: usize,

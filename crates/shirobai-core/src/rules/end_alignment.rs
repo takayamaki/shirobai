@@ -52,6 +52,7 @@ const STYLE_START_OF_LINE: u8 = 2;
 /// styles the `end` already aligns with (drives `style_detected` /
 /// `correct_style_detected` on the Ruby side). When the configured style is not
 /// in `matching`, `offense` carries the offense location + autocorrect target.
+#[derive(Debug)]
 pub struct EndAlignmentRecord {
     /// `end` keyword range (the offense location when misaligned).
     pub end_start: usize,
@@ -65,6 +66,7 @@ pub struct EndAlignmentRecord {
 }
 
 /// The offense detail for a misaligned `end`.
+#[derive(Debug)]
 pub struct EndAlignmentOffense {
     /// Formatted stock message.
     pub message: String,

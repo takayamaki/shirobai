@@ -39,6 +39,7 @@ pub const ENDING_ONLY: u8 = 5;
 /// offense line (column 0, length 1, exactly stock's `source_range(buffer,
 /// line, 0)`); `insert` distinguishes the two `EmptyLineCorrector` arms:
 /// `false` removes the range, `true` inserts `"\n"` before it.
+#[derive(Debug)]
 pub struct EmptyLineOffense {
     pub start_offset: usize,
     pub end_offset: usize,
@@ -55,6 +56,7 @@ pub struct Config {
 }
 
 /// All six cops' offenses for one source.
+#[derive(Default)]
 pub struct FamilyOffenses {
     pub method_body: Vec<EmptyLineOffense>,
     pub class_body: Vec<EmptyLineOffense>,

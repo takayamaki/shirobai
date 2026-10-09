@@ -14,6 +14,7 @@ use super::line_index::LineIndex;
 /// its whole line when the dot stands alone). `insert_pos` is where the dot text
 /// is re-inserted (before the selector for `leading`, after the receiver for
 /// `trailing`).
+#[derive(Debug)]
 pub struct DotPositionOffense {
     pub start_offset: usize,
     pub end_offset: usize,

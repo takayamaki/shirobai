@@ -33,6 +33,7 @@ use super::line_index::LineIndex;
 /// `autocorrect` is false when the child's range is `within?` an
 /// already-registered offense location in this same investigation
 /// (`@current_offenses`), in which case it is reported but not corrected.
+#[derive(Debug)]
 pub struct ConsistencyOffense {
     pub start_offset: usize,
     pub end_offset: usize,

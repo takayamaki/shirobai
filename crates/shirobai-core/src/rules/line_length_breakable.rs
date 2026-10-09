@@ -25,6 +25,7 @@ use std::collections::HashSet;
 /// upstream's `return if breakable_range_by_line_index[...]` guards); block
 /// claims assign unconditionally and overwrite earlier claims, matching
 /// upstream's `check_for_breakable_block`.
+#[derive(Debug)]
 pub struct Breakable {
     pub line_index: usize,
     pub insert_offset: usize,

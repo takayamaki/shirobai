@@ -51,6 +51,7 @@ use super::parse_cache;
 
 /// One offense. `[start, end)` is the 1-byte `source_range(buffer, L, 0)`
 /// range the wrapper passes to both `add_offense` and `corrector.remove`.
+#[derive(Debug)]
 pub struct EmptyLinesOffense {
     pub start: usize,
     pub end: usize,

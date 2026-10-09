@@ -40,6 +40,7 @@ use super::line_index::LineIndex;
 /// One misindented RHS first-line. `column_delta` is
 /// `expected_column - actual_column` (positive => the RHS line must move
 /// right). The message is fixed at `MSG`.
+#[derive(Debug)]
 pub struct AssignmentIndentationOffense {
     /// `[rhs_start, rhs_end)` is the RHS's full source range. The offense
     /// reports against this range; autocorrect shifts every line of it.

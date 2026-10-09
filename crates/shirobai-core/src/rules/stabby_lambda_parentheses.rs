@@ -52,6 +52,7 @@ pub struct Config {
 /// - `require_no_parentheses` (unwanted `(`): `paren_open_start`/`paren_open_end`
 ///   is the `(` 1-byte range (replaced with `''`), `paren_close_start`/`paren_close_end`
 ///   is the `)` 1-byte range (removed).
+#[derive(Debug)]
 pub struct StabbyLambdaParenthesesOffense {
     /// `args.loc.expression` start (offense highlight).
     pub start: usize,

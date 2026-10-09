@@ -12,6 +12,7 @@
 use ruby_prism::{Node, Visit};
 
 /// A line that exceeds `Max`. Ruby decides whether it is ultimately exempt.
+#[derive(Debug)]
 pub struct LineLengthCandidate {
     /// Zero-based line index (matching `processed_source.lines`).
     pub line_index: usize,

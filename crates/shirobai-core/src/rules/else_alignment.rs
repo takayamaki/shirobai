@@ -52,6 +52,7 @@ pub struct Config {
 /// One misaligned keyword (the offense). `else_start..else_end` is the keyword
 /// range (the offense location); `column_delta` is the signed shift the
 /// autocorrect applies to the keyword's line (`base_col - else_col`).
+#[derive(Debug)]
 pub struct ElseAlignmentOffense {
     pub else_start: usize,
     pub else_end: usize,

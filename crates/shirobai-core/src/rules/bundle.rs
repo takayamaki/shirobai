@@ -198,6 +198,8 @@ pub fn check_multiline_bundle(
 /// | 131 | space_inside_string_interpolation style (`Layout/SpaceInsideStringInterpolation` `EnforcedStyle`: 0 = no_space, 1 = space) — toucher-batch-2's first core index |
 /// | 132 | ascii_identifiers (`Naming/AsciiIdentifiers`): 0 = disabled, 1 = enabled with `AsciiConstants` off, 2 = enabled with `AsciiConstants` on — toucher-batch-3's core index |
 /// | 133 | rescue_ensure_alignment (`Layout/RescueEnsureAlignment`): 0 = disabled, 1 = enabled (gates the modifier-`rescue` keyword collection) — toucher-batch-4's core index |
+/// | 134 | enabled_slots low 64 bits: the per-slot enable mask over core slots 0..63 ([`core_slot`]). Bit `n` set means slot `n` is computed; a clear bit leaves that slot at its `Default` value. Carried as `i64` (bit 63 makes it negative) and read back with `as u64` |
+/// | 135 | enabled_slots high 64 bits: the same mask for core slots 64..127 (only 64..105 exist) |
 ///
 /// Core segment `lists[0]` (`Vec<String>`):
 ///
@@ -417,6 +419,13 @@ pub struct BundleConfig {
     /// `Layout/RescueEnsureAlignment` enabled gate: `false` skips collecting
     /// modifier-`rescue` keyword positions on the shared walk.
     pub rescue_ensure_alignment_enabled: bool,
+    /// The per-slot enable mask over the core slots (nums 134 / 135): bit
+    /// `n` is [`core_slot`] slot `n`. A clear bit skips that slot's rule (and
+    /// any walk-outer scan behind it) and leaves the slot at its `Default`
+    /// value. The Ruby side sets the bits of the cops the config enables, plus
+    /// any cop it later had to run anyway (directive opt-in, `--only`). See
+    /// [`BundleConfig::slot_on`] and [`BundleConfig::any_slot_on`].
+    pub enabled_slots: u128,
     pub duplicate_methods: duplicate_methods::Config,
     /// `Style/RedundantFreeze`: `AllCops/TargetRubyVersion >= 3.0`.
     pub redundant_freeze_target_30_plus: bool,
@@ -490,7 +499,178 @@ pub const ORIGIN_RSPEC: usize = 2;
 pub const ORIGIN_RAILS: usize = 3;
 pub const N_ORIGINS: usize = 4;
 
-const CORE_NUMS_LEN: usize = 134;
+/// Defines the [`core_slot`] constants and their `ALL` table in one place.
+macro_rules! core_slots {
+    ($($name:ident = $idx:expr),* $(,)?) => {
+        $(pub const $name: usize = $idx;)*
+        /// Every core slot as `(NAME, index)`, in slot order.
+        pub const ALL: &[(&str, usize)] = &[$((stringify!($name), $name)),*];
+    };
+}
+
+/// Core (origin 0) slot numbers: the index of each cop's entry in the core
+/// result array, and its bit in [`BundleConfig::enabled_slots`]. Mirrors the
+/// core entries of `Shirobai::Dispatch::SLOTS` (same names, upper-cased) and
+/// the core push order of `check_all` in `ext/shirobai/src/lib.rs`.
+pub mod core_slot {
+    core_slots! {
+        DEBUGGER = 0,
+        BLOCK_LENGTH = 1,
+        BLOCK_NESTING = 2,
+        COMPLEXITY = 3,
+        VARIABLE_NUMBER = 4,
+        METHOD_NAME = 5,
+        SAFE_NAVIGATION_CHAIN = 6,
+        MULTILINE_OPERATION = 7,
+        MULTILINE_METHOD_CALL = 8,
+        DOT_POSITION = 9,
+        LINE_LENGTH = 10,
+        LINE_LENGTH_BREAKABLES = 11,
+        LINE_END_CONCATENATION = 12,
+        ARGUMENT_ALIGNMENT = 13,
+        FIRST_ARGUMENT_INDENTATION = 14,
+        REDUNDANT_SELF = 15,
+        INDENTATION_WIDTH = 16,
+        PREDICATE_PREFIX = 17,
+        CLOSING_PARENTHESIS_INDENTATION = 18,
+        FIRST_ARRAY_ELEMENT_INDENTATION = 19,
+        HASH_EACH_METHODS = 20,
+        VOID = 21,
+        USELESS_ACCESS_MODIFIER = 22,
+        EMPTY_LINES_AROUND_METHOD_BODY = 23,
+        EMPTY_LINES_AROUND_CLASS_BODY = 24,
+        EMPTY_LINES_AROUND_MODULE_BODY = 25,
+        EMPTY_LINES_AROUND_BLOCK_BODY = 26,
+        EMPTY_LINES_AROUND_BEGIN_BODY = 27,
+        EMPTY_LINES_AROUND_EXCEPTION_HANDLING_KEYWORDS = 28,
+        BLOCK_DELIMITERS = 29,
+        ABC_SIZE = 30,
+        INDENTATION_CONSISTENCY = 31,
+        EMPTY_LINE_BETWEEN_DEFS = 32,
+        END_ALIGNMENT = 33,
+        BLOCK_ALIGNMENT = 34,
+        ELSE_ALIGNMENT = 35,
+        FIRST_HASH_ELEMENT_INDENTATION = 36,
+        HASH_ALIGNMENT = 37,
+        EMPTY_LINES_AROUND_ARGUMENTS = 38,
+        HASH_SYNTAX = 39,
+        STRING_LITERALS = 40,
+        TRAILING_COMMA_IN_ARGUMENTS = 41,
+        STRING_LITERALS_IN_INTERPOLATION = 42,
+        TRAILING_EMPTY_LINES = 43,
+        SPACE_AROUND_METHOD_CALL_OPERATOR = 44,
+        SPACE_AROUND_KEYWORD = 45,
+        SPACE_INSIDE_BLOCK_BRACES = 46,
+        METHOD_LENGTH = 47,
+        DEF_END_ALIGNMENT = 48,
+        REQUIRE_PARENTHESES = 49,
+        SELF_ASSIGNMENT = 50,
+        NESTED_PARENTHESIZED_CALLS = 51,
+        PARENTHESES_AS_GROUPED_EXPRESSION = 52,
+        PERCENT_LITERAL_DELIMITERS = 53,
+        MULTILINE_METHOD_CALL_BRACE_LAYOUT = 54,
+        ACCESS_MODIFIER_INDENTATION = 55,
+        ASSIGNMENT_INDENTATION = 56,
+        REDUNDANT_SELF_ASSIGNMENT = 57,
+        COLON_METHOD_CALL = 58,
+        STABBY_LAMBDA_PARENTHESES = 59,
+        UNREACHABLE_CODE = 60,
+        HASH_TRANSFORM_KEYS = 61,
+        AMBIGUOUS_BLOCK_ASSOCIATION = 62,
+        EMPTY_LINE_AFTER_GUARD_CLAUSE = 63,
+        EMPTY_COMMENT = 64,
+        EMPTY_LINE_AFTER_MAGIC_COMMENT = 65,
+        EMPTY_LINES = 66,
+        LEADING_EMPTY_LINES = 67,
+        CLASS_LENGTH = 68,
+        MODULE_LENGTH = 69,
+        TRAILING_COMMA_IN_HASH_LITERAL = 70,
+        TRAILING_COMMA_IN_ARRAY_LITERAL = 71,
+        SPACE_INSIDE_HASH_LITERAL_BRACES = 72,
+        SPACE_INSIDE_ARRAY_LITERAL_BRACKETS = 73,
+        SPACE_BEFORE_BLOCK_BRACES = 74,
+        IF_UNLESS_MODIFIER = 75,
+        SPACE_BEFORE_COMMA = 76,
+        SPACE_AFTER_COMMA = 77,
+        SPACE_BEFORE_SEMICOLON = 78,
+        SPACE_AFTER_SEMICOLON = 79,
+        SPACE_AFTER_COLON = 80,
+        SPACE_BEFORE_COMMENT = 81,
+        SPACE_INSIDE_PARENS = 82,
+        SPACE_INSIDE_REFERENCE_BRACKETS = 83,
+        SPACE_BEFORE_FIRST_ARG = 84,
+        DUPLICATE_MAGIC_COMMENT = 85,
+        DUPLICATE_METHODS = 86,
+        ARRAY_ALIGNMENT = 87,
+        FILE_NULL = 88,
+        SEMICOLON = 89,
+        REDUNDANT_FREEZE = 90,
+        FROZEN_STRING_LITERAL_COMMENT = 91,
+        ARGUMENTS_FORWARDING = 92,
+        SPACE_AROUND_OPERATORS = 93,
+        ORDERED_MAGIC_COMMENTS = 94,
+        INITIAL_INDENTATION = 95,
+        SPACE_AROUND_EQUALS_IN_PARAMETER_DEFAULT = 96,
+        EXTRA_SPACING = 97,
+        END_OF_LINE = 98,
+        LINE_CONTINUATION_SPACING = 99,
+        SPACE_INSIDE_STRING_INTERPOLATION = 100,
+        MAGIC_COMMENT_FORMAT = 101,
+        ASCII_IDENTIFIERS = 102,
+        RESCUE_ENSURE_ALIGNMENT = 103,
+        DIRECTIVE_SCOPE = 104,
+        MISPLACED_MAGIC_COMMENT = 105,
+    }
+
+    /// Number of core slots (the length of the core result array).
+    pub const COUNT: usize = 106;
+
+    /// Slots computed by ONE shared rule or scan. The rule runs when any slot
+    /// of its group is on, and then fills every slot of the group (the same
+    /// values the all-on run gives). A slot not listed here is its own group.
+    pub const GROUPS: &[&[usize]] = &[
+        // `empty_lines_around_body`: one rule for the six EmptyLinesAround* cops.
+        &[
+            EMPTY_LINES_AROUND_METHOD_BODY,
+            EMPTY_LINES_AROUND_CLASS_BODY,
+            EMPTY_LINES_AROUND_MODULE_BODY,
+            EMPTY_LINES_AROUND_BLOCK_BODY,
+            EMPTY_LINES_AROUND_BEGIN_BODY,
+            EMPTY_LINES_AROUND_EXCEPTION_HANDLING_KEYWORDS,
+        ],
+        // `Layout/LineLength`: the heredoc rule + line scan + breakables.
+        &[LINE_LENGTH, LINE_LENGTH_BREAKABLES],
+        // One `last_line` computation feeds both cops.
+        &[END_OF_LINE, LINE_CONTINUATION_SPACING],
+        // `punctuation_spacing`: one rule for the six punctuation cops.
+        &[
+            SPACE_BEFORE_COMMA,
+            SPACE_AFTER_COMMA,
+            SPACE_BEFORE_SEMICOLON,
+            SPACE_AFTER_SEMICOLON,
+            SPACE_AFTER_COLON,
+            SPACE_BEFORE_COMMENT,
+        ],
+    ];
+
+    /// The group that `slot` belongs to (a one-slot group when not shared).
+    pub fn group_of(slot: usize) -> Vec<usize> {
+        GROUPS
+            .iter()
+            .find(|g| g.contains(&slot))
+            .map_or_else(|| vec![slot], |g| g.to_vec())
+    }
+
+    /// The `enabled_slots` mask with exactly `slots` on.
+    pub fn mask_of(slots: &[usize]) -> u128 {
+        slots.iter().fold(0u128, |m, &s| m | (1u128 << s))
+    }
+
+    /// The `enabled_slots` mask with every core slot on.
+    pub const ALL_ON: u128 = (1u128 << COUNT) - 1;
+}
+
+const CORE_NUMS_LEN: usize = 136;
 const CORE_LISTS_LEN: usize = 30;
 const PERF_NUMS_LEN: usize = 3;
 const PERF_LISTS_LEN: usize = 1;
@@ -739,6 +919,7 @@ impl BundleConfig {
             ascii_identifiers_enabled: nums[132] != 0,
             ascii_identifiers_constants: nums[132] == 2,
             rescue_ensure_alignment_enabled: nums[133] != 0,
+            enabled_slots: (nums[134] as u64 as u128) | ((nums[135] as u64 as u128) << 64),
             ambiguous_block_association: ambiguous_block_association::Config {
                 allowed_methods: next_list(),
             },
@@ -871,6 +1052,18 @@ impl BundleConfig {
         bundle.duplicate_methods.delegating_methods = next_list();
         bundle.method_name_forbidden = next_list();
         Ok(bundle)
+    }
+
+    /// Whether core slot `slot` ([`core_slot`]) is on in
+    /// [`Self::enabled_slots`]. A rule that fills several slots runs when
+    /// ANY of them is on ([`Self::any_slot_on`]), so it fills them all.
+    pub fn slot_on(&self, slot: usize) -> bool {
+        slot < 128 && (self.enabled_slots >> slot) & 1 == 1
+    }
+
+    /// Whether any slot in `slots` is on (for rules that fill several slots).
+    pub fn any_slot_on(&self, slots: &[usize]) -> bool {
+        slots.iter().any(|&s| self.slot_on(s))
     }
 }
 
@@ -1184,6 +1377,36 @@ pub struct BundleResult {
 /// breakables are derived from the `LineLength` candidates (the `line_index`
 /// of every candidate), exactly like the Ruby wrapper does on the direct path.
 pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
+    use core_slot as S;
+    // --- Per-slot gate. ---
+    // Every core rule and walk-outer scan below runs only when its slot is on
+    // in `cfg.enabled_slots`; an off slot keeps its `Default` value. A rule
+    // or scan that fills several slots runs when ANY of them is on (see
+    // `core_slot::GROUPS`), and then fills all of them exactly as an all-on
+    // run would. The older per-cop enable flags (token cops, AsciiIdentifiers,
+    // RescueEnsureAlignment) stay as they are, ANDed with the slot gate.
+    let elab_on = cfg.any_slot_on(&[
+        S::EMPTY_LINES_AROUND_METHOD_BODY,
+        S::EMPTY_LINES_AROUND_CLASS_BODY,
+        S::EMPTY_LINES_AROUND_MODULE_BODY,
+        S::EMPTY_LINES_AROUND_BLOCK_BODY,
+        S::EMPTY_LINES_AROUND_BEGIN_BODY,
+        S::EMPTY_LINES_AROUND_EXCEPTION_HANDLING_KEYWORDS,
+    ]);
+    let line_length_on = cfg.any_slot_on(&[S::LINE_LENGTH, S::LINE_LENGTH_BREAKABLES]);
+    let end_of_line_on = cfg.any_slot_on(&[S::END_OF_LINE, S::LINE_CONTINUATION_SPACING]);
+    let ps_on = cfg.any_slot_on(&[
+        S::SPACE_BEFORE_COMMA,
+        S::SPACE_AFTER_COMMA,
+        S::SPACE_BEFORE_SEMICOLON,
+        S::SPACE_AFTER_SEMICOLON,
+        S::SPACE_AFTER_COLON,
+        S::SPACE_BEFORE_COMMENT,
+    ]);
+    let space_around_operators_on =
+        cfg.space_around_operators_enabled && cfg.slot_on(S::SPACE_AROUND_OPERATORS);
+    let extra_spacing_on = cfg.extra_spacing_enabled && cfg.slot_on(S::EXTRA_SPACING);
+
     // --- Token-cop gate. ---
     // The token-stream cops (`Layout/SpaceAroundOperators`, and later
     // `Layout/ExtraSpacing`) consume the parser-gem token stream. Collect it
@@ -1194,7 +1417,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // with no re-parse. The gate keeps this off entirely when no token cop is
     // active, so a token-free run never pays the collection pass. Each token cop
     // ORs its enable flag into `collect_tokens`.
-    let collect_tokens = cfg.space_around_operators_enabled || cfg.extra_spacing_enabled;
+    let collect_tokens = space_around_operators_on || extra_spacing_on;
     let bundle_tokens: Option<Vec<super::tokens::Token>> = if collect_tokens {
         Some(super::parse_cache::with_parsed_and_tokens(source, |owner, _root, raw| {
             super::tokens::translate_tokens(owner, raw)
@@ -1209,7 +1432,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // reuses that token-bearing entry. On an all-ASCII file the fast path
     // returns without a lex, so the walk keeps its token-free parse. Gated off
     // entirely when the cop is disabled.
-    let ascii_identifiers = if cfg.ascii_identifiers_enabled {
+    let ascii_identifiers = if cfg.ascii_identifiers_enabled && cfg.slot_on(S::ASCII_IDENTIFIERS) {
         ascii_identifiers::check_ascii_identifiers(source, cfg.ascii_identifiers_constants)
     } else {
         Vec::new()
@@ -1217,190 +1440,179 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
 
     // --- Shared-walk rules, one per merged cop. ---
     let (op_cfg, mc_cfg) = (cfg.multiline_operation, cfg.multiline_method_call);
-    let mut op_rule = op::build_rule(source, op_cfg.0, op_cfg.1, op_cfg.2);
-    let mut mc_rule = mc::build_rule(source, mc_cfg.0, mc_cfg.1, mc_cfg.2);
-    let mut aa_rule = argument_alignment::build_rule(
-        source,
-        cfg.argument_alignment_style,
-        cfg.argument_alignment_indent,
-        cfg.argument_alignment_hash_separator,
-    );
-    let mut ara_rule = array_alignment::build_rule(
-        source,
-        cfg.array_alignment_style,
-        cfg.array_alignment_indent,
-    );
-    let mut fa_rule = first_argument_indentation::build_rule(
-        source,
-        cfg.first_argument_style,
-        cfg.first_argument_indent,
-        cfg.first_argument_fixed_mode,
-    );
-    let mut snc_rule = safe_navigation_chain::build_rule(source, &cfg.safe_navigation_nil_methods);
-    let mut iw_rule = indentation_width::build_rule(source, cfg.indentation_width, &[], &[]);
-    let mut debugger_rule =
-        debugger::build_rule(source, &cfg.debugger_methods, &cfg.debugger_requires);
-    let mut rs_rule = redundant_self::build_rule(&cfg.redundant_self_kernel_methods);
-    let mut vn_rule = variable_number::build_rule(
-        source,
-        cfg.variable_number_style,
-        cfg.variable_number_flags,
-        &cfg.variable_number_allowed_identifiers,
-    );
-    let mut dp_rule = dot_position::build_rule(source, cfg.dot_position_style);
-    let mut lec_rule = line_end_concatenation::build_rule(source);
-    let mut bl_rule = block_length::build_rule(
-        source,
-        cfg.block_length_max,
-        cfg.block_length_count_comments,
-        &cfg.block_length_count_as_one,
-        &cfg.block_length_allowed_methods,
-        cfg.block_length_filtered,
-    );
-    let mut cx_rule = complexity::build_rule(source, cfg.max_cyclomatic, cfg.max_perceived);
-    let mut bn_rule = block_nesting::build_rule(
-        source,
-        cfg.block_nesting_max,
-        cfg.block_nesting_count_blocks,
-        cfg.block_nesting_count_modifier_forms,
-    );
-    let mut heredoc_rule = line_length::build_heredoc_rule(source);
-    let mut pp_rule = predicate_prefix::build_rule(
-        source,
-        &cfg.predicate_prefix_name_prefixes,
-        &cfg.predicate_prefix_macros,
-    );
-    let mut cpi_rule =
-        closing_parenthesis_indentation::build_rule(source, cfg.closing_paren_indent);
-    let mut fae_rule = first_array_element_indentation::build_rule(
-        source,
-        cfg.first_array_element_style,
-        cfg.first_array_element_indent,
-        cfg.first_array_element_enforce_fixed,
-    );
-    let mut hem_rule = hash_each_methods::build_rule(source, &cfg.hash_each_allowed_receivers);
-    let mut void_rule = void::build_rule(source, cfg.void_check_nonmutating);
-    let mut uam_rule = useless_access_modifier::build_rule(
-        &cfg.useless_access_modifier_context_creating,
-        &cfg.useless_access_modifier_method_creating,
-        cfg.useless_access_modifier_active_support,
-    );
-    let mut elab_rule = empty_lines_around_body::build_rule(source, cfg.empty_lines_around_body);
-    let mut elaa_rule = empty_lines_around_arguments::build_rule(source);
-    let mut bd_rule = block_delimiters::build_rule(source, cfg.block_delimiters.clone());
-    let mut abc_rule = abc_size::build_rule(
-        source,
-        cfg.abc_size_max_floor,
-        cfg.abc_size_discount_repeated,
-        cfg.abc_size_it_is_send,
-    );
-    let mut ic_rule = indentation_consistency::build_rule(source, cfg.indentation_consistency);
-    let mut elbd_rule =
-        empty_line_between_defs::build_rule(source, cfg.empty_line_between_defs.clone());
-    let mut ea_rule = end_alignment::build_rule(source, cfg.end_alignment);
-    let mut ba_rule = block_alignment::build_rule(source, cfg.block_alignment);
-    let mut elsea_rule = else_alignment::build_rule(source, cfg.else_alignment);
-    let mut fhe_rule = first_hash_element_indentation::build_rule(
-        source,
-        cfg.first_hash_element_style,
-        cfg.first_hash_element_indent,
-        cfg.first_hash_element_enforce_fixed,
-        cfg.first_hash_element_separators,
-    );
-    let mut ha_rule = hash_alignment::build_rule(source, &cfg.hash_alignment);
-    let mut hs_rule = hash_syntax::build_rule(source, &cfg.hash_syntax);
-    let mut sl_rule = string_literals::build_rule(source, &cfg.string_literals);
-    let mut sli_rule = string_literals_in_interpolation::build_rule(
-        source,
-        &cfg.string_literals_in_interpolation,
-    );
-    let mut tca_rule =
-        trailing_comma_in_arguments::build_rule(source, &cfg.trailing_comma_in_arguments);
-    let mut tchl_rule =
-        trailing_comma_in_hash_literal::build_rule(source, &cfg.trailing_comma_in_hash_literal);
-    let mut tcal_rule =
-        trailing_comma_in_array_literal::build_rule(source, &cfg.trailing_comma_in_array_literal);
-    let mut samco_rule = space_around_method_call_operator::build_rule(source);
-    let mut sak_rule = space_around_keyword::build_rule(source);
-    let mut sibb_rule = space_inside_block_braces::build_rule(source, cfg.space_inside_block_braces);
-    let mut sihlb_rule = space_inside_hash_literal_braces::build_rule(
-        source,
-        cfg.space_inside_hash_literal_braces,
-    );
-    let mut sialb_rule = space_inside_array_literal_brackets::build_rule(
-        source,
-        cfg.space_inside_array_literal_brackets,
-    );
-    let mut sbbb_rule =
-        space_before_block_braces::build_rule(source, cfg.space_before_block_braces);
-    let mut ps_rule = punctuation_spacing::build_rule(source, cfg.punctuation_spacing);
-    let mut sip_rule = space_inside_parens::build_rule(source, cfg.space_inside_parens);
-    let mut sirb_rule =
-        space_inside_reference_brackets::build_rule(source, cfg.space_inside_reference_brackets);
-    let mut sbfa_rule = space_before_first_arg::build_rule(source, cfg.space_before_first_arg);
-    let mut ml_rule = method_length::build_rule(
-        source,
-        cfg.method_length_max,
-        cfg.method_length_count_comments,
-        &cfg.method_length_count_as_one,
-    );
-    let mut cl_rule = class_length::build_rule(
-        source,
-        cfg.class_length_max,
-        cfg.class_length_count_comments,
-        &cfg.class_length_count_as_one,
-    );
-    let mut mol_rule = module_length::build_rule(
-        source,
-        cfg.module_length_max,
-        cfg.module_length_count_comments,
-        &cfg.module_length_count_as_one,
-    );
-    let mut dea_rule = def_end_alignment::build_rule(source, cfg.def_end_alignment);
-    let mut rp_rule = require_parentheses::build_rule();
-    let mut sa_rule = self_assignment::build_rule(source);
-    let mut npc_rule = nested_parenthesized_calls::build_rule(
-        source,
-        &cfg.nested_parenthesized_calls_allowed_methods,
-    );
-    let mut pag_rule = parentheses_as_grouped_expression::build_rule();
-    let mut pld_rule =
-        percent_literal_delimiters::build_rule(source, cfg.percent_literal_delimiters.clone());
-    let mut mmcbl_rule = multiline_method_call_brace_layout::build_rule(
-        source,
-        cfg.multiline_method_call_brace_style,
-    );
-    let mut ami_rule =
-        access_modifier_indentation::build_rule(source, cfg.access_modifier_indentation);
-    let mut ai_rule = assignment_indentation::build_rule(source, cfg.assignment_indentation);
-    let mut rsa_rule = redundant_self_assignment::build_rule(source);
-    let mut cmc_rule = colon_method_call::build_rule();
-    let mut slp_rule =
-        stabby_lambda_parentheses::build_rule(source, cfg.stabby_lambda_parentheses);
-    let mut saepd_rule = space_around_equals_in_parameter_default::build_rule(
-        source,
-        cfg.space_around_equals_in_parameter_default,
-    );
-    let mut sisi_rule = space_inside_string_interpolation::build_rule(
-        source,
-        cfg.space_inside_string_interpolation,
-    );
-    let mut uc_rule = unreachable_code::build_rule();
-    let mut htk_rule = hash_transform_keys::build_rule(source);
-    let mut aba_rule =
-        ambiguous_block_association::build_rule(source, cfg.ambiguous_block_association.clone());
-    let mut ium_rule = if_unless_modifier::build_rule(source, cfg.if_unless_modifier);
-    let mut dm_rule = duplicate_methods::build_rule(source, &cfg.duplicate_methods);
-    let mut fn_rule = file_null::build_rule();
-    let mut semicolon_rule = semicolon::build_rule(source);
-    let mut rf_rule = redundant_freeze::build_rule(source, cfg.redundant_freeze_target_30_plus);
-    let mut af_rule = arguments_forwarding::build_rule(source, &cfg.arguments_forwarding);
+    let mut op_rule = cfg.slot_on(S::MULTILINE_OPERATION).then(|| op::build_rule(source, op_cfg.0, op_cfg.1, op_cfg.2));
+    let mut mc_rule = cfg.slot_on(S::MULTILINE_METHOD_CALL).then(|| mc::build_rule(source, mc_cfg.0, mc_cfg.1, mc_cfg.2));
+    let mut aa_rule = cfg.slot_on(S::ARGUMENT_ALIGNMENT).then(|| argument_alignment::build_rule(
+            source,
+            cfg.argument_alignment_style,
+            cfg.argument_alignment_indent,
+            cfg.argument_alignment_hash_separator,
+        )).flatten();
+    let mut ara_rule = cfg.slot_on(S::ARRAY_ALIGNMENT).then(|| array_alignment::build_rule(
+            source,
+            cfg.array_alignment_style,
+            cfg.array_alignment_indent,
+        ));
+    let mut fa_rule = cfg.slot_on(S::FIRST_ARGUMENT_INDENTATION).then(|| first_argument_indentation::build_rule(
+            source,
+            cfg.first_argument_style,
+            cfg.first_argument_indent,
+            cfg.first_argument_fixed_mode,
+        )).flatten();
+    let mut snc_rule = cfg.slot_on(S::SAFE_NAVIGATION_CHAIN).then(|| safe_navigation_chain::build_rule(source, &cfg.safe_navigation_nil_methods));
+    let mut iw_rule = cfg.slot_on(S::INDENTATION_WIDTH).then(|| indentation_width::build_rule(source, cfg.indentation_width, &[], &[]));
+    let mut debugger_rule = cfg.slot_on(S::DEBUGGER).then(|| debugger::build_rule(source, &cfg.debugger_methods, &cfg.debugger_requires));
+    let mut rs_rule = cfg.slot_on(S::REDUNDANT_SELF).then(|| redundant_self::build_rule(&cfg.redundant_self_kernel_methods));
+    let mut vn_rule = cfg.slot_on(S::VARIABLE_NUMBER).then(|| variable_number::build_rule(
+            source,
+            cfg.variable_number_style,
+            cfg.variable_number_flags,
+            &cfg.variable_number_allowed_identifiers,
+        ));
+    let mut dp_rule = cfg.slot_on(S::DOT_POSITION).then(|| dot_position::build_rule(source, cfg.dot_position_style));
+    let mut lec_rule = cfg.slot_on(S::LINE_END_CONCATENATION).then(|| line_end_concatenation::build_rule(source));
+    let mut bl_rule = cfg.slot_on(S::BLOCK_LENGTH).then(|| block_length::build_rule(
+            source,
+            cfg.block_length_max,
+            cfg.block_length_count_comments,
+            &cfg.block_length_count_as_one,
+            &cfg.block_length_allowed_methods,
+            cfg.block_length_filtered,
+        ));
+    let mut cx_rule = cfg.slot_on(S::COMPLEXITY).then(|| complexity::build_rule(source, cfg.max_cyclomatic, cfg.max_perceived));
+    let mut bn_rule = cfg.slot_on(S::BLOCK_NESTING).then(|| block_nesting::build_rule(
+            source,
+            cfg.block_nesting_max,
+            cfg.block_nesting_count_blocks,
+            cfg.block_nesting_count_modifier_forms,
+        ));
+    let mut heredoc_rule = line_length_on.then(|| line_length::build_heredoc_rule(source));
+    let mut pp_rule = cfg.slot_on(S::PREDICATE_PREFIX).then(|| predicate_prefix::build_rule(
+            source,
+            &cfg.predicate_prefix_name_prefixes,
+            &cfg.predicate_prefix_macros,
+        ));
+    let mut cpi_rule = cfg.slot_on(S::CLOSING_PARENTHESIS_INDENTATION).then(|| closing_parenthesis_indentation::build_rule(source, cfg.closing_paren_indent));
+    let mut fae_rule = cfg.slot_on(S::FIRST_ARRAY_ELEMENT_INDENTATION).then(|| first_array_element_indentation::build_rule(
+            source,
+            cfg.first_array_element_style,
+            cfg.first_array_element_indent,
+            cfg.first_array_element_enforce_fixed,
+        )).flatten();
+    let mut hem_rule = cfg.slot_on(S::HASH_EACH_METHODS).then(|| hash_each_methods::build_rule(source, &cfg.hash_each_allowed_receivers));
+    let mut void_rule = cfg.slot_on(S::VOID).then(|| void::build_rule(source, cfg.void_check_nonmutating));
+    let mut uam_rule = cfg.slot_on(S::USELESS_ACCESS_MODIFIER).then(|| useless_access_modifier::build_rule(
+            &cfg.useless_access_modifier_context_creating,
+            &cfg.useless_access_modifier_method_creating,
+            cfg.useless_access_modifier_active_support,
+        ));
+    let mut elab_rule = elab_on.then(|| empty_lines_around_body::build_rule(source, cfg.empty_lines_around_body));
+    let mut elaa_rule = cfg.slot_on(S::EMPTY_LINES_AROUND_ARGUMENTS).then(|| empty_lines_around_arguments::build_rule(source));
+    let mut bd_rule = cfg.slot_on(S::BLOCK_DELIMITERS).then(|| block_delimiters::build_rule(source, cfg.block_delimiters.clone()));
+    let mut abc_rule = cfg.slot_on(S::ABC_SIZE).then(|| abc_size::build_rule(
+            source,
+            cfg.abc_size_max_floor,
+            cfg.abc_size_discount_repeated,
+            cfg.abc_size_it_is_send,
+        ));
+    let mut ic_rule = cfg.slot_on(S::INDENTATION_CONSISTENCY).then(|| indentation_consistency::build_rule(source, cfg.indentation_consistency));
+    let mut elbd_rule = cfg.slot_on(S::EMPTY_LINE_BETWEEN_DEFS).then(|| empty_line_between_defs::build_rule(source, cfg.empty_line_between_defs.clone()));
+    let mut ea_rule = cfg.slot_on(S::END_ALIGNMENT).then(|| end_alignment::build_rule(source, cfg.end_alignment));
+    let mut ba_rule = cfg.slot_on(S::BLOCK_ALIGNMENT).then(|| block_alignment::build_rule(source, cfg.block_alignment));
+    let mut elsea_rule = cfg.slot_on(S::ELSE_ALIGNMENT).then(|| else_alignment::build_rule(source, cfg.else_alignment));
+    let mut fhe_rule = cfg.slot_on(S::FIRST_HASH_ELEMENT_INDENTATION).then(|| first_hash_element_indentation::build_rule(
+            source,
+            cfg.first_hash_element_style,
+            cfg.first_hash_element_indent,
+            cfg.first_hash_element_enforce_fixed,
+            cfg.first_hash_element_separators,
+        ));
+    let mut ha_rule = cfg.slot_on(S::HASH_ALIGNMENT).then(|| hash_alignment::build_rule(source, &cfg.hash_alignment));
+    let mut hs_rule = cfg.slot_on(S::HASH_SYNTAX).then(|| hash_syntax::build_rule(source, &cfg.hash_syntax));
+    let mut sl_rule = cfg.slot_on(S::STRING_LITERALS).then(|| string_literals::build_rule(source, &cfg.string_literals));
+    let mut sli_rule = cfg.slot_on(S::STRING_LITERALS_IN_INTERPOLATION).then(|| string_literals_in_interpolation::build_rule(
+            source,
+            &cfg.string_literals_in_interpolation,
+        ));
+    let mut tca_rule = cfg.slot_on(S::TRAILING_COMMA_IN_ARGUMENTS).then(|| trailing_comma_in_arguments::build_rule(source, &cfg.trailing_comma_in_arguments));
+    let mut tchl_rule = cfg.slot_on(S::TRAILING_COMMA_IN_HASH_LITERAL).then(|| trailing_comma_in_hash_literal::build_rule(source, &cfg.trailing_comma_in_hash_literal));
+    let mut tcal_rule = cfg.slot_on(S::TRAILING_COMMA_IN_ARRAY_LITERAL).then(|| trailing_comma_in_array_literal::build_rule(source, &cfg.trailing_comma_in_array_literal));
+    let mut samco_rule = cfg.slot_on(S::SPACE_AROUND_METHOD_CALL_OPERATOR).then(|| space_around_method_call_operator::build_rule(source));
+    let mut sak_rule = cfg.slot_on(S::SPACE_AROUND_KEYWORD).then(|| space_around_keyword::build_rule(source));
+    let mut sibb_rule = cfg.slot_on(S::SPACE_INSIDE_BLOCK_BRACES).then(|| space_inside_block_braces::build_rule(source, cfg.space_inside_block_braces));
+    let mut sihlb_rule = cfg.slot_on(S::SPACE_INSIDE_HASH_LITERAL_BRACES).then(|| space_inside_hash_literal_braces::build_rule(
+            source,
+            cfg.space_inside_hash_literal_braces,
+        ));
+    let mut sialb_rule = cfg.slot_on(S::SPACE_INSIDE_ARRAY_LITERAL_BRACKETS).then(|| space_inside_array_literal_brackets::build_rule(
+            source,
+            cfg.space_inside_array_literal_brackets,
+        ));
+    let mut sbbb_rule = cfg.slot_on(S::SPACE_BEFORE_BLOCK_BRACES).then(|| space_before_block_braces::build_rule(source, cfg.space_before_block_braces));
+    let mut ps_rule = ps_on.then(|| punctuation_spacing::build_rule(source, cfg.punctuation_spacing));
+    let mut sip_rule = cfg.slot_on(S::SPACE_INSIDE_PARENS).then(|| space_inside_parens::build_rule(source, cfg.space_inside_parens));
+    let mut sirb_rule = cfg.slot_on(S::SPACE_INSIDE_REFERENCE_BRACKETS).then(|| space_inside_reference_brackets::build_rule(source, cfg.space_inside_reference_brackets));
+    let mut sbfa_rule = cfg.slot_on(S::SPACE_BEFORE_FIRST_ARG).then(|| space_before_first_arg::build_rule(source, cfg.space_before_first_arg));
+    let mut ml_rule = cfg.slot_on(S::METHOD_LENGTH).then(|| method_length::build_rule(
+            source,
+            cfg.method_length_max,
+            cfg.method_length_count_comments,
+            &cfg.method_length_count_as_one,
+        ));
+    let mut cl_rule = cfg.slot_on(S::CLASS_LENGTH).then(|| class_length::build_rule(
+            source,
+            cfg.class_length_max,
+            cfg.class_length_count_comments,
+            &cfg.class_length_count_as_one,
+        ));
+    let mut mol_rule = cfg.slot_on(S::MODULE_LENGTH).then(|| module_length::build_rule(
+            source,
+            cfg.module_length_max,
+            cfg.module_length_count_comments,
+            &cfg.module_length_count_as_one,
+        ));
+    let mut dea_rule = cfg.slot_on(S::DEF_END_ALIGNMENT).then(|| def_end_alignment::build_rule(source, cfg.def_end_alignment));
+    let mut rp_rule = cfg.slot_on(S::REQUIRE_PARENTHESES).then(require_parentheses::build_rule);
+    let mut sa_rule = cfg.slot_on(S::SELF_ASSIGNMENT).then(|| self_assignment::build_rule(source));
+    let mut npc_rule = cfg.slot_on(S::NESTED_PARENTHESIZED_CALLS).then(|| nested_parenthesized_calls::build_rule(
+            source,
+            &cfg.nested_parenthesized_calls_allowed_methods,
+        ));
+    let mut pag_rule = cfg.slot_on(S::PARENTHESES_AS_GROUPED_EXPRESSION).then(parentheses_as_grouped_expression::build_rule);
+    let mut pld_rule = cfg.slot_on(S::PERCENT_LITERAL_DELIMITERS).then(|| percent_literal_delimiters::build_rule(source, cfg.percent_literal_delimiters.clone()));
+    let mut mmcbl_rule = cfg.slot_on(S::MULTILINE_METHOD_CALL_BRACE_LAYOUT).then(|| multiline_method_call_brace_layout::build_rule(
+            source,
+            cfg.multiline_method_call_brace_style,
+        ));
+    let mut ami_rule = cfg.slot_on(S::ACCESS_MODIFIER_INDENTATION).then(|| access_modifier_indentation::build_rule(source, cfg.access_modifier_indentation));
+    let mut ai_rule = cfg.slot_on(S::ASSIGNMENT_INDENTATION).then(|| assignment_indentation::build_rule(source, cfg.assignment_indentation));
+    let mut rsa_rule = cfg.slot_on(S::REDUNDANT_SELF_ASSIGNMENT).then(|| redundant_self_assignment::build_rule(source));
+    let mut cmc_rule = cfg.slot_on(S::COLON_METHOD_CALL).then(colon_method_call::build_rule);
+    let mut slp_rule = cfg.slot_on(S::STABBY_LAMBDA_PARENTHESES).then(|| stabby_lambda_parentheses::build_rule(source, cfg.stabby_lambda_parentheses));
+    let mut saepd_rule = cfg.slot_on(S::SPACE_AROUND_EQUALS_IN_PARAMETER_DEFAULT).then(|| space_around_equals_in_parameter_default::build_rule(
+            source,
+            cfg.space_around_equals_in_parameter_default,
+        ));
+    let mut sisi_rule = cfg.slot_on(S::SPACE_INSIDE_STRING_INTERPOLATION).then(|| space_inside_string_interpolation::build_rule(
+            source,
+            cfg.space_inside_string_interpolation,
+        ));
+    let mut uc_rule = cfg.slot_on(S::UNREACHABLE_CODE).then(unreachable_code::build_rule);
+    let mut htk_rule = cfg.slot_on(S::HASH_TRANSFORM_KEYS).then(|| hash_transform_keys::build_rule(source));
+    let mut aba_rule = cfg.slot_on(S::AMBIGUOUS_BLOCK_ASSOCIATION).then(|| ambiguous_block_association::build_rule(source, cfg.ambiguous_block_association.clone()));
+    let mut ium_rule = cfg.slot_on(S::IF_UNLESS_MODIFIER).then(|| if_unless_modifier::build_rule(source, cfg.if_unless_modifier));
+    let mut dm_rule = cfg.slot_on(S::DUPLICATE_METHODS).then(|| duplicate_methods::build_rule(source, &cfg.duplicate_methods));
+    let mut fn_rule = cfg.slot_on(S::FILE_NULL).then(file_null::build_rule);
+    let mut semicolon_rule = cfg.slot_on(S::SEMICOLON).then(|| semicolon::build_rule(source));
+    let mut rf_rule = cfg.slot_on(S::REDUNDANT_FREEZE).then(|| redundant_freeze::build_rule(source, cfg.redundant_freeze_target_30_plus));
+    let mut af_rule = cfg.slot_on(S::ARGUMENTS_FORWARDING).then(|| arguments_forwarding::build_rule(source, &cfg.arguments_forwarding));
     // `Layout/EmptyLines` joins the shared walk only when the file actually
     // contains `\n\n\n` (stock's prefilter); otherwise the rule's collected
     // lines are unused and we skip both the walk push and the finalize. The
     // rule has to be constructed even when ineligible to keep the borrow
     // shape simple — `el_rule` is consumed only on the eligible path.
-    let empty_lines_eligible = empty_lines::contains_newline_triple(source);
+    let empty_lines_eligible =
+        cfg.slot_on(S::EMPTY_LINES) && empty_lines::contains_newline_triple(source);
     let mut el_rule = empty_lines::build_rule(source);
     // `Layout/RescueEnsureAlignment`: joins the shared walk to collect the
     // modifier-`rescue` keyword positions (its only toucher cost), gated off
@@ -1457,84 +1669,91 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         .map(|c| rails_dynamic_find_by::build_rule(c.dynamic_find_by.clone()));
     let mut rails_pluck_rule = cfg.rails.as_ref().map(|_| rails_pluck::build_rule());
 
-    let mut rules: Vec<&mut dyn super::dispatch::Rule> = vec![
-        &mut op_rule,
-        &mut mc_rule,
-        &mut snc_rule,
-        &mut iw_rule,
-        &mut debugger_rule,
-        &mut rs_rule,
-        &mut vn_rule,
-        &mut dp_rule,
-        &mut lec_rule,
-        &mut bl_rule,
-        &mut cx_rule,
-        &mut bn_rule,
-        &mut heredoc_rule,
-        &mut pp_rule,
-        &mut cpi_rule,
-        &mut hem_rule,
-        &mut void_rule,
-        &mut uam_rule,
-        &mut elab_rule,
-        &mut elaa_rule,
-        &mut bd_rule,
-        &mut abc_rule,
-        &mut ic_rule,
-        &mut elbd_rule,
-        &mut ea_rule,
-        &mut ba_rule,
-        &mut elsea_rule,
-        &mut fhe_rule,
-        &mut ha_rule,
-        &mut hs_rule,
-        &mut sl_rule,
-        &mut sli_rule,
-        &mut tca_rule,
-        &mut tchl_rule,
-        &mut tcal_rule,
-        &mut samco_rule,
-        &mut sak_rule,
-        &mut sibb_rule,
-        &mut sihlb_rule,
-        &mut sialb_rule,
-        &mut sbbb_rule,
-        &mut ps_rule,
-        &mut sip_rule,
-        &mut sirb_rule,
-        &mut sbfa_rule,
-        &mut ml_rule,
-        &mut cl_rule,
-        &mut mol_rule,
-        &mut dea_rule,
-        &mut rp_rule,
-        &mut sa_rule,
-        &mut npc_rule,
-        &mut pag_rule,
-        &mut pld_rule,
-        &mut mmcbl_rule,
-        &mut ami_rule,
-        &mut ai_rule,
-        &mut rsa_rule,
-        &mut cmc_rule,
-        &mut slp_rule,
-        &mut saepd_rule,
-        &mut sisi_rule,
-        &mut uc_rule,
-        &mut htk_rule,
-        &mut aba_rule,
-        &mut ium_rule,
-        &mut dm_rule,
-        &mut semicolon_rule,
-        &mut rf_rule,
-        &mut ara_rule,
-        &mut fn_rule,
-        &mut af_rule,
-    ];
+    let mut rules: Vec<&mut dyn super::dispatch::Rule> = Vec::new();
+    // Same order as the all-on run; off slots leave their rule out.
+    for rule in [
+        op_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        mc_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        snc_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        iw_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        debugger_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        rs_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        vn_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        dp_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        lec_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        bl_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        cx_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        bn_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        heredoc_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        pp_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        cpi_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        hem_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        void_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        uam_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        elab_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        elaa_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        bd_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        abc_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        ic_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        elbd_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        ea_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        ba_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        elsea_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        fhe_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        ha_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        hs_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        sl_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        sli_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        tca_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        tchl_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        tcal_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        samco_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        sak_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        sibb_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        sihlb_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        sialb_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        sbbb_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        ps_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        sip_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        sirb_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        sbfa_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        ml_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        cl_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        mol_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        dea_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        rp_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        sa_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        npc_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        pag_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        pld_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        mmcbl_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        ami_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        ai_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        rsa_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        cmc_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        slp_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        saepd_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        sisi_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        uc_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        htk_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        aba_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        ium_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        dm_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        semicolon_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        rf_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        ara_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        fn_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+        af_rule.as_mut().map(|r| r as &mut dyn super::dispatch::Rule),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        rules.push(rule);
+    }
     if empty_lines_eligible {
         rules.push(&mut el_rule);
     }
-    if cfg.rescue_ensure_alignment_enabled {
+    if cfg.rescue_ensure_alignment_enabled && cfg.slot_on(S::RESCUE_ENSURE_ALIGNMENT) {
         rules.push(&mut rea_rule);
     }
     if let Some(rule) = aa_rule.as_mut() {
@@ -1583,13 +1802,13 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let rails_dynamic_find_by = rails_dfb_rule.map(|r| r.finish()).unwrap_or_default();
     let rails_pluck = rails_pluck_rule.map(|r| r.finish()).unwrap_or_default();
 
-    let multiline_operation = op_rule.offenses;
-    let multiline_method_call = mc_rule.offenses;
+    let multiline_operation = op_rule.map(|r| r.offenses).unwrap_or_default();
+    let multiline_method_call = mc_rule.map(|r| r.offenses).unwrap_or_default();
     // Empty unless the gate pushed the rule onto the shared walk.
     let rescue_ensure_alignment = rea_rule.positions;
     let argument_alignment = aa_rule.map(|r| r.offenses).unwrap_or_default();
-    let array_alignment = ara_rule.offenses;
-    let arguments_forwarding = af_rule.take_offenses();
+    let array_alignment = ara_rule.map(|r| r.offenses).unwrap_or_default();
+    let arguments_forwarding = af_rule.map(|mut r| r.take_offenses()).unwrap_or_default();
     // `Layout/SpaceAroundOperators` is a hybrid: an AST walk (its own
     // `with_parsed`, sharing the cached parse — the shared `dispatch::run` above
     // has already released the parse-cache borrow) collects operator offense
@@ -1598,7 +1817,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // per-cop enable guard matters now that the token stream can be collected
     // for the sibling token cop alone (`Layout/ExtraSpacing`).
     let space_around_operators = match &bundle_tokens {
-        Some(tokens) if cfg.space_around_operators_enabled => {
+        Some(tokens) if space_around_operators_on => {
             let walk = space_around_operators::run_walk(source, cfg.space_around_operators);
             space_around_operators::resolve(source, cfg.space_around_operators, walk, tokens)
         }
@@ -1609,7 +1828,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // `with_parsed` (`collect_def_info`, sharing the cached parse) supplies the
     // `remove_equals_in_def` positions the alignment / assignment logic needs.
     let extra_spacing = match &bundle_tokens {
-        Some(tokens) if cfg.extra_spacing_enabled => {
+        Some(tokens) if extra_spacing_on => {
             extra_spacing::check_with_tokens(source, cfg.extra_spacing, tokens)
         }
         _ => Vec::new(),
@@ -1620,155 +1839,215 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let perf_end_with = pew_rule.map(|r| r.offenses).unwrap_or_default();
     let perf_start_with = psw_rule.map(|r| r.offenses).unwrap_or_default();
     let perf_times_map = ptm_rule.map(|r| r.offenses).unwrap_or_default();
-    let safe_navigation_chain = snc_rule.offenses;
-    let indentation_width = iw_rule.offenses;
-    let debugger = debugger_rule.offenses;
-    let redundant_self = rs_rule.offenses;
-    let variable_number = (vn_rule.offenses, vn_rule.had_correct);
-    let dot_position = dp_rule.offenses;
-    let line_end_concatenation = lec_rule.offenses;
-    let block_length = bl_rule.out;
-    let complexity = cx_rule.out;
-    let block_nesting = (bn_rule.out, bn_rule.deepest);
-    let predicate_prefix = pp_rule.offenses;
-    let closing_parenthesis_indentation = cpi_rule.offenses;
+    let safe_navigation_chain = snc_rule.map(|r| r.offenses).unwrap_or_default();
+    let indentation_width = iw_rule.map(|r| r.offenses).unwrap_or_default();
+    let debugger = debugger_rule.map(|r| r.offenses).unwrap_or_default();
+    let redundant_self = rs_rule.map(|r| r.offenses).unwrap_or_default();
+    let variable_number = vn_rule.map(|r| (r.offenses, r.had_correct)).unwrap_or_default();
+    let dot_position = dp_rule.map(|r| r.offenses).unwrap_or_default();
+    let line_end_concatenation = lec_rule.map(|r| r.offenses).unwrap_or_default();
+    let block_length = bl_rule.map(|r| r.out).unwrap_or_default();
+    let complexity = cx_rule.map(|r| r.out).unwrap_or_default();
+    let block_nesting = bn_rule.map(|r| (r.out, r.deepest)).unwrap_or_default();
+    let predicate_prefix = pp_rule.map(|r| r.offenses).unwrap_or_default();
+    let closing_parenthesis_indentation = cpi_rule.map(|r| r.offenses).unwrap_or_default();
     let first_array_element_indentation = fae_rule.map(|r| r.offenses).unwrap_or_default();
-    let hash_each_methods = hem_rule.offenses;
-    let void = void_rule.offenses;
-    let useless_access_modifier = uam_rule.into_offenses();
-    let empty_lines_around_body = elab_rule.into_offenses();
-    let empty_lines_around_arguments = elaa_rule.offenses;
+    let hash_each_methods = hem_rule.map(|r| r.offenses).unwrap_or_default();
+    let void = void_rule.map(|r| r.offenses).unwrap_or_default();
+    let useless_access_modifier = uam_rule.map(|r| r.into_offenses()).unwrap_or_default();
+    let empty_lines_around_body = elab_rule.map(|r| r.into_offenses()).unwrap_or_default();
+    let empty_lines_around_arguments = elaa_rule.map(|r| r.offenses).unwrap_or_default();
     // The bundle runs with no prior ignored ranges (autocorrect re-passes
     // take the standalone path on the Ruby side).
-    let block_delimiters = block_delimiters::resolve(bd_rule.events, &[]);
-    let abc_size = abc_rule.out;
-    let indentation_consistency = ic_rule.offenses;
-    let empty_line_between_defs = elbd_rule.offenses;
-    let end_alignment = ea_rule.records;
-    let block_alignment = ba_rule.offenses;
-    let else_alignment = elsea_rule.offenses;
-    let first_hash_element_indentation = fhe_rule.offenses;
-    let hash_alignment = ha_rule.offenses;
-    let hash_syntax = hs_rule.offenses;
-    let string_literals = sl_rule.offenses;
-    let string_literals_in_interpolation = sli_rule.offenses;
-    let trailing_comma_in_arguments = tca_rule.offenses;
-    let trailing_comma_in_hash_literal = tchl_rule.checker.offenses;
-    let trailing_comma_in_array_literal = tcal_rule.checker.offenses;
-    let space_around_method_call_operator = samco_rule.offenses;
-    let space_around_keyword = sak_rule.offenses;
-    let space_inside_block_braces = sibb_rule.offenses;
-    let space_inside_hash_literal_braces = sihlb_rule.into_offenses();
-    let space_inside_array_literal_brackets = sialb_rule.into_result();
-    let space_before_block_braces = sbbb_rule.into_result();
-    let punctuation_spacing = ps_rule.into_offenses();
-    let space_inside_parens = sip_rule.into_offenses();
-    let space_inside_reference_brackets = sirb_rule.result;
-    let space_before_first_arg = sbfa_rule.into_offenses();
-    let method_length = ml_rule.out;
-    let class_length = cl_rule.out;
-    let module_length = mol_rule.out;
-    let def_end_alignment = dea_rule.records;
-    let require_parentheses = rp_rule.offenses;
-    let self_assignment = sa_rule.offenses;
-    let nested_parenthesized_calls = npc_rule.offenses;
-    let parentheses_as_grouped_expression = pag_rule.offenses;
-    let percent_literal_delimiters = pld_rule.offenses;
-    let multiline_method_call_brace_layout = mmcbl_rule.offenses;
-    let access_modifier_indentation = ami_rule.records;
-    let assignment_indentation = ai_rule.offenses;
-    let redundant_self_assignment = rsa_rule.offenses;
-    let colon_method_call = cmc_rule.offenses;
-    let stabby_lambda_parentheses = slp_rule.offenses;
-    let space_around_equals_in_parameter_default = saepd_rule.offenses;
-    let space_inside_string_interpolation = sisi_rule.offenses;
-    let unreachable_code = uc_rule.offenses;
-    let hash_transform_keys = htk_rule.offenses;
-    let ambiguous_block_association = aba_rule.offenses;
-    let file_null = fn_rule.into_offenses();
+    let block_delimiters = bd_rule
+        .map(|r| block_delimiters::resolve(r.events, &[]))
+        .unwrap_or_default();
+    let abc_size = abc_rule.map(|r| r.out).unwrap_or_default();
+    let indentation_consistency = ic_rule.map(|r| r.offenses).unwrap_or_default();
+    let empty_line_between_defs = elbd_rule.map(|r| r.offenses).unwrap_or_default();
+    let end_alignment = ea_rule.map(|r| r.records).unwrap_or_default();
+    let block_alignment = ba_rule.map(|r| r.offenses).unwrap_or_default();
+    let else_alignment = elsea_rule.map(|r| r.offenses).unwrap_or_default();
+    let first_hash_element_indentation = fhe_rule.map(|r| r.offenses).unwrap_or_default();
+    let hash_alignment = ha_rule.map(|r| r.offenses).unwrap_or_default();
+    let hash_syntax = hs_rule.map(|r| r.offenses).unwrap_or_default();
+    let string_literals = sl_rule.map(|r| r.offenses).unwrap_or_default();
+    let string_literals_in_interpolation = sli_rule.map(|r| r.offenses).unwrap_or_default();
+    let trailing_comma_in_arguments = tca_rule.map(|r| r.offenses).unwrap_or_default();
+    let trailing_comma_in_hash_literal = tchl_rule.map(|r| r.checker.offenses).unwrap_or_default();
+    let trailing_comma_in_array_literal = tcal_rule.map(|r| r.checker.offenses).unwrap_or_default();
+    let space_around_method_call_operator = samco_rule.map(|r| r.offenses).unwrap_or_default();
+    let space_around_keyword = sak_rule.map(|r| r.offenses).unwrap_or_default();
+    let space_inside_block_braces = sibb_rule.map(|r| r.offenses).unwrap_or_default();
+    let space_inside_hash_literal_braces = sihlb_rule.map(|r| r.into_offenses()).unwrap_or_default();
+    let space_inside_array_literal_brackets = sialb_rule.map(|r| r.into_result()).unwrap_or_default();
+    let space_before_block_braces = sbbb_rule.map(|r| r.into_result()).unwrap_or_default();
+    let punctuation_spacing = ps_rule.map(|r| r.into_offenses()).unwrap_or_default();
+    let space_inside_parens = sip_rule.map(|r| r.into_offenses()).unwrap_or_default();
+    let space_inside_reference_brackets = sirb_rule.map(|r| r.result).unwrap_or_default();
+    let space_before_first_arg = sbfa_rule.map(|r| r.into_offenses()).unwrap_or_default();
+    let method_length = ml_rule.map(|r| r.out).unwrap_or_default();
+    let class_length = cl_rule.map(|r| r.out).unwrap_or_default();
+    let module_length = mol_rule.map(|r| r.out).unwrap_or_default();
+    let def_end_alignment = dea_rule.map(|r| r.records).unwrap_or_default();
+    let require_parentheses = rp_rule.map(|r| r.offenses).unwrap_or_default();
+    let self_assignment = sa_rule.map(|r| r.offenses).unwrap_or_default();
+    let nested_parenthesized_calls = npc_rule.map(|r| r.offenses).unwrap_or_default();
+    let parentheses_as_grouped_expression = pag_rule.map(|r| r.offenses).unwrap_or_default();
+    let percent_literal_delimiters = pld_rule.map(|r| r.offenses).unwrap_or_default();
+    let multiline_method_call_brace_layout = mmcbl_rule.map(|r| r.offenses).unwrap_or_default();
+    let access_modifier_indentation = ami_rule.map(|r| r.records).unwrap_or_default();
+    let assignment_indentation = ai_rule.map(|r| r.offenses).unwrap_or_default();
+    let redundant_self_assignment = rsa_rule.map(|r| r.offenses).unwrap_or_default();
+    let colon_method_call = cmc_rule.map(|r| r.offenses).unwrap_or_default();
+    let stabby_lambda_parentheses = slp_rule.map(|r| r.offenses).unwrap_or_default();
+    let space_around_equals_in_parameter_default = saepd_rule.map(|r| r.offenses).unwrap_or_default();
+    let space_inside_string_interpolation = sisi_rule.map(|r| r.offenses).unwrap_or_default();
+    let unreachable_code = uc_rule.map(|r| r.offenses).unwrap_or_default();
+    let hash_transform_keys = htk_rule.map(|r| r.offenses).unwrap_or_default();
+    let ambiguous_block_association = aba_rule.map(|r| r.offenses).unwrap_or_default();
+    let file_null = fn_rule.map(|r| r.into_offenses()).unwrap_or_default();
     // `Layout/EmptyLineAfterGuardClause` walks the AST on its own (separate
     // `dispatch::run`); joining the shared walk is future work.
-    let empty_line_after_guard_clause =
-        empty_line_after_guard_clause::check_empty_line_after_guard_clause(source);
+    let empty_line_after_guard_clause = if cfg.slot_on(S::EMPTY_LINE_AFTER_GUARD_CLAUSE) {
+        empty_line_after_guard_clause::check_empty_line_after_guard_clause(source)
+    } else {
+        Default::default()
+    };
     // `Layout/EmptyComment` is a comment-only check (no AST walk); it pulls
     // comment ranges from the shared parse cache.
-    let empty_comment = empty_comment::check_empty_comment(source, cfg.empty_comment);
+    let empty_comment = if cfg.slot_on(S::EMPTY_COMMENT) {
+        empty_comment::check_empty_comment(source, cfg.empty_comment)
+    } else {
+        Default::default()
+    };
     // `Layout/EmptyLineAfterMagicComment` is also a comment-only check (no
     // AST walk); it pulls comments and the program first-statement line from
     // the shared parse cache.
-    let empty_line_after_magic_comment =
-        empty_line_after_magic_comment::check_empty_line_after_magic_comment(source);
+    let empty_line_after_magic_comment = if cfg.slot_on(S::EMPTY_LINE_AFTER_MAGIC_COMMENT) {
+        empty_line_after_magic_comment::check_empty_line_after_magic_comment(source)
+    } else {
+        Default::default()
+    };
     // `Layout/LeadingEmptyLines` is a comment + first AST statement lookup
     // from the cached parse, no AST walk.
-    let leading_empty_lines =
-        leading_empty_lines::check_leading_empty_lines(source);
+    let leading_empty_lines = if cfg.slot_on(S::LEADING_EMPTY_LINES) {
+        leading_empty_lines::check_leading_empty_lines(source)
+    } else {
+        Default::default()
+    };
     // `Layout/InitialIndentation`: a cheap leading-byte scan (no AST walk, no
     // token materialization) answering "is the first non-comment token
     // indented?". The wrapper turns a `true` into stock's exact offense.
-    let initial_indentation =
-        initial_indentation::check_initial_indentation(source);
+    let initial_indentation = if cfg.slot_on(S::INITIAL_INDENTATION) {
+        initial_indentation::check_initial_indentation(source)
+    } else {
+        Default::default()
+    };
     // `Layout/EndOfLine`: stock's `last_line` (end line of the last top-level
     // statement) from the cached parse, so the wrapper avoids `tokens.last`.
-    let end_of_line = end_of_line::check_end_of_line(source);
+    // Shared by both cops: on when either slot is on.
+    let end_of_line = if end_of_line_on {
+        end_of_line::check_end_of_line(source)
+    } else {
+        0
+    };
     // `Layout/LineContinuationSpacing`: same `last_line` definition as
     // `Layout/EndOfLine`, so it reuses the single computation.
     let line_continuation_spacing = end_of_line;
     // `Style/MagicCommentFormat`: stock's `leading_comment_lines` boundary (the
     // first non-comment token line) from the cached parse, so the wrapper avoids
     // `processed_source.tokens`. The rest of the cop is stock Ruby.
-    let magic_comment_format = magic_comment_format::check_magic_comment_format(source);
+    let magic_comment_format = if cfg.slot_on(S::MAGIC_COMMENT_FORMAT) {
+        magic_comment_format::check_magic_comment_format(source)
+    } else {
+        Default::default()
+    };
     // `Style/DirectiveScope` / `Lint/MisplacedMagicComment`: comment-list
     // scans over the cached parse (no tokens, no AST walk). Both wrappers run
     // stock's per-comment logic on the returned candidates only.
-    let directive_scope = directive_scope::check_directive_scope(source);
-    let misplaced_magic_comment =
-        misplaced_magic_comment::check_misplaced_magic_comment(source);
+    let directive_scope = if cfg.slot_on(S::DIRECTIVE_SCOPE) {
+        directive_scope::check_directive_scope(source)
+    } else {
+        Default::default()
+    };
+    let misplaced_magic_comment = if cfg.slot_on(S::MISPLACED_MAGIC_COMMENT) {
+        misplaced_magic_comment::check_misplaced_magic_comment(source)
+    } else {
+        Default::default()
+    };
     // `Lint/DuplicateMagicComment` is a leading-line scan (comments + the
     // first non-comment token position from the cached parse), no AST walk.
-    let duplicate_magic_comment =
-        duplicate_magic_comment::check_duplicate_magic_comment(source);
+    let duplicate_magic_comment = if cfg.slot_on(S::DUPLICATE_MAGIC_COMMENT) {
+        duplicate_magic_comment::check_duplicate_magic_comment(source)
+    } else {
+        Default::default()
+    };
     // `Lint/OrderedMagicComments` shares that same leading-line scan (no AST
     // walk); it reports at most one offense (the encoding/other line pair).
-    let ordered_magic_comments =
-        ordered_magic_comments::check_ordered_magic_comments(source);
+    let ordered_magic_comments = if cfg.slot_on(S::ORDERED_MAGIC_COMMENTS) {
+        ordered_magic_comments::check_ordered_magic_comments(source)
+    } else {
+        Default::default()
+    };
     // `Style/RedundantFreeze`: string-receiver offenses are conditional on the
     // once-per-file `frozen_string_literals_enabled?` decision, folded in here.
-    let redundant_freeze =
-        rf_rule.finalize(cfg.redundant_freeze_string_literals_frozen_by_default);
+    let redundant_freeze = rf_rule
+        .map(|r| r.finalize(cfg.redundant_freeze_string_literals_frozen_by_default))
+        .unwrap_or_default();
     // `Style/FrozenStringLiteralComment` is a leading-byte scan (comments +
     // first non-comment token position from the cached parse), no AST walk.
-    let frozen_string_literal_comment =
+    let frozen_string_literal_comment = if cfg.slot_on(S::FROZEN_STRING_LITERAL_COMMENT) {
         frozen_string_literal_comment::check_frozen_string_literal_comment(
-            source,
-            cfg.frozen_string_literal_comment_style,
-        );
+                source,
+                cfg.frozen_string_literal_comment_style,
+            )
+    } else {
+        Default::default()
+    };
 
     // --- Cops off the shared walk (see the doc comment above). ---
     // The bundle always computes the filtered flavor (keeping the forbidden
     // identifiers); a `MethodName` whose config needs the unfiltered one
     // (pattern lists) takes the fallback path on the Ruby side.
-    let method_name = method_name::check_method_name_filtered_keeping(
-        source,
-        cfg.method_name_style,
-        true,
-        &cfg.method_name_forbidden,
-    );
-    let line_length = line_length::check_line_length_with_heredocs(
-        source,
-        cfg.line_length_max,
-        cfg.line_length_tab_width,
-        &heredoc_rule.ranges,
-    );
-    let candidate_lines: HashSet<usize> = line_length.iter().map(|c| c.line_index).collect();
-    let line_length_breakables = line_length_breakable::compute_breakables_filtered(
-        source,
-        cfg.line_length_max,
-        cfg.line_length_split_strings,
-        Some(&candidate_lines),
-    );
+    let method_name = if cfg.slot_on(S::METHOD_NAME) {
+        method_name::check_method_name_filtered_keeping(
+            source,
+            cfg.method_name_style,
+            true,
+            &cfg.method_name_forbidden,
+        )
+    } else {
+        Default::default()
+    };
+    // `Layout/LineLength` owns both slots (candidates + breakables), and the
+    // heredoc rule above feeds the candidates: all three run together.
+    let (line_length, line_length_breakables) = match &heredoc_rule {
+        Some(heredoc_rule) => {
+            let line_length = line_length::check_line_length_with_heredocs(
+                source,
+                cfg.line_length_max,
+                cfg.line_length_tab_width,
+                &heredoc_rule.ranges,
+            );
+            let candidate_lines: HashSet<usize> =
+                line_length.iter().map(|c| c.line_index).collect();
+            let line_length_breakables = line_length_breakable::compute_breakables_filtered(
+                source,
+                cfg.line_length_max,
+                cfg.line_length_split_strings,
+                Some(&candidate_lines),
+            );
+            (line_length, line_length_breakables)
+        }
+        None => Default::default(),
+    };
     // `Layout/TrailingEmptyLines` is also a pure source scan (no walk).
-    let trailing_empty_lines =
-        trailing_empty_lines::check_trailing_empty_lines(source, &cfg.trailing_empty_lines);
+    let trailing_empty_lines = if cfg.slot_on(S::TRAILING_EMPTY_LINES) {
+        trailing_empty_lines::check_trailing_empty_lines(source, &cfg.trailing_empty_lines)
+    } else {
+        Default::default()
+    };
     // `Layout/EmptyLines` finalizes the shared walk's collected token-bearing
     // lines (or stays empty when the prefilter skipped the walk).
     let empty_lines = if empty_lines_eligible {
@@ -1842,7 +2121,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         hash_transform_keys,
         ambiguous_block_association,
         empty_line_after_guard_clause,
-        if_unless_modifier: ium_rule.candidates,
+        if_unless_modifier: ium_rule.map(|r| r.candidates).unwrap_or_default(),
         empty_comment,
         empty_line_after_magic_comment,
         empty_lines,
@@ -1865,9 +2144,9 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         space_before_first_arg,
         duplicate_magic_comment,
         ordered_magic_comments,
-        duplicate_methods: dm_rule.events,
+        duplicate_methods: dm_rule.map(|r| r.events).unwrap_or_default(),
         file_null,
-        semicolon: semicolon_rule.into_offenses(),
+        semicolon: semicolon_rule.map(|r| r.into_offenses()).unwrap_or_default(),
         redundant_freeze,
         frozen_string_literal_comment,
         arguments_forwarding,
@@ -1911,38 +2190,14 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bundle_matches_standalone() {
-        // A file that triggers both cops at once.
-        let src = "if a +\n    b\n  something\nend\nFoo.a\n     .b\n      .c\n";
-        let (op_off, mc_off) = check_multiline_bundle(src.as_bytes(), 0, 2, 2, 0, 2, 2);
-        let op_alone = op::check_multiline_operation_indentation(src.as_bytes(), 0, 2, 2);
-        let mc_alone = mc::check_multiline_method_call_indentation(src.as_bytes(), 0, 2, 2);
-        assert_eq!(op_off.len(), op_alone.len());
-        assert_eq!(mc_off.len(), mc_alone.len());
-        assert!(!op_off.is_empty());
-        assert!(!mc_off.is_empty());
-        for (a, b) in op_off.iter().zip(&op_alone) {
-            assert_eq!(
-                (a.start_offset, a.column_delta),
-                (b.start_offset, b.column_delta)
-            );
-        }
-        for (a, b) in mc_off.iter().zip(&mc_alone) {
-            assert_eq!(
-                (a.start_offset, a.column_delta),
-                (b.start_offset, b.column_delta)
-            );
-        }
-    }
-
-    /// A packed config with RuboCop-default-ish values, mirroring what the
-    /// Ruby side sends for an all-defaults run.
-    fn default_packed() -> (Vec<Vec<i64>>, Vec<Vec<Vec<String>>>) {
+/// Fixtures shared by the unit tests and the integration tests in `tests/`.
+#[doc(hidden)]
+pub mod test_support {
+    /// The core segment (`nums[0]` / `lists[0]`) with RuboCop-default-ish
+    /// values and every core slot on, mirroring what the Ruby side sends for
+    /// an all-defaults run.
+    pub fn default_core_packed() -> (Vec<i64>, Vec<Vec<String>>) {
+        use super::core_slot;
         let nums = vec![
             25, 0, 1, // block_length: max / count_comments / filtered
             3, 0, 0, // block_nesting: max / count_blocks / count_modifier_forms
@@ -2008,6 +2263,8 @@ mod tests {
             0, // space_inside_string_interpolation: style (no_space) — index 131
             2, // ascii_identifiers: enabled + AsciiConstants on (default) — index 132
             1, // rescue_ensure_alignment: enabled (default) — index 133
+            core_slot::ALL_ON as u64 as i64, // enabled_slots low 64 bits (all on) — index 134
+            (core_slot::ALL_ON >> 64) as u64 as i64, // enabled_slots high bits (all on) — index 135
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
@@ -2062,6 +2319,43 @@ mod tests {
             vec!["delegate".to_string()], // duplicate_methods: DelegatingMethods
             vec![],                       // method_name: ForbiddenIdentifiers
         ];
+        (nums, lists)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundle_matches_standalone() {
+        // A file that triggers both cops at once.
+        let src = "if a +\n    b\n  something\nend\nFoo.a\n     .b\n      .c\n";
+        let (op_off, mc_off) = check_multiline_bundle(src.as_bytes(), 0, 2, 2, 0, 2, 2);
+        let op_alone = op::check_multiline_operation_indentation(src.as_bytes(), 0, 2, 2);
+        let mc_alone = mc::check_multiline_method_call_indentation(src.as_bytes(), 0, 2, 2);
+        assert_eq!(op_off.len(), op_alone.len());
+        assert_eq!(mc_off.len(), mc_alone.len());
+        assert!(!op_off.is_empty());
+        assert!(!mc_off.is_empty());
+        for (a, b) in op_off.iter().zip(&op_alone) {
+            assert_eq!(
+                (a.start_offset, a.column_delta),
+                (b.start_offset, b.column_delta)
+            );
+        }
+        for (a, b) in mc_off.iter().zip(&mc_alone) {
+            assert_eq!(
+                (a.start_offset, a.column_delta),
+                (b.start_offset, b.column_delta)
+            );
+        }
+    }
+
+    /// A packed config with RuboCop-default-ish values, mirroring what the
+    /// Ruby side sends for an all-defaults run.
+    fn default_packed() -> (Vec<Vec<i64>>, Vec<Vec<Vec<String>>>) {
+        let (nums, lists) = test_support::default_core_packed();
         // Performance segment (origin 1): enabled, with the SafeMultiline
         // defaults and RuboCop's default preferred method for Detect
         // (`PreferredMethods['detect']` resolves to `find`).

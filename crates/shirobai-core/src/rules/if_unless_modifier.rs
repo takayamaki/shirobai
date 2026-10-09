@@ -56,6 +56,7 @@ pub struct Config {
 
 /// One corrector operation the wrapper applies verbatim.
 /// `kind`: 0 = replace `[start, end)` with `text`, 1 = remove `[start, end)`.
+#[derive(Debug)]
 pub struct Op {
     pub kind: u8,
     pub start: usize,
@@ -70,6 +71,7 @@ pub struct Op {
 /// running `comment_disables_cop?`; for direction 2 the wrapper applies the
 /// `Layout/LineLength` regex exemptions and, if the offense stands, plays
 /// back `ops`.
+#[derive(Debug)]
 pub struct IfUnlessModifierCandidate {
     pub kind: u8,
     pub keyword_start: usize,

@@ -52,6 +52,7 @@ pub const STYLE_FINAL_NEWLINE: u8 = 0;
 pub const STYLE_FINAL_BLANK_LINE: u8 = 1;
 
 /// The single offense a file can carry (there is at most one).
+#[derive(Debug)]
 pub struct TrailingEmptyLinesOffense {
     /// Reported caret range `[report_start, report_end)` (byte offsets).
     pub report_start: usize,

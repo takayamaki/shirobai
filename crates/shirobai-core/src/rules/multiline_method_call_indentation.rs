@@ -22,6 +22,7 @@ use super::line_index::LineIndex;
 /// One misindented method-call selector. `column_delta` is
 /// `correct_column - actual_column`. `block_*` ranges (0 = none) tell the Ruby
 /// side to additionally realign a trailing multiline block.
+#[derive(Debug)]
 pub struct MethodCallIndentOffense {
     pub start_offset: usize,
     pub end_offset: usize,

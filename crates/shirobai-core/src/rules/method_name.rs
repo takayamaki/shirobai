@@ -3,6 +3,7 @@
 use ruby_prism::{Node, Visit};
 
 /// A method-name site whose name may violate the configured style.
+#[derive(Debug)]
 pub struct MethodNameCandidate {
     /// Offense range used for the style-violation message.
     pub start_offset: usize,

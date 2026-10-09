@@ -20,6 +20,7 @@ use ruby_prism::{Node, Visit};
 
 /// A multiline string concatenation (`"a" +` / `"a" <<` at line end followed by
 /// a string literal on the next line) that should use `\` continuation.
+#[derive(Debug)]
 pub struct LineEndConcatOffense {
     /// Offense range: the operator token (`+` or `<<`).
     pub start_offset: usize,

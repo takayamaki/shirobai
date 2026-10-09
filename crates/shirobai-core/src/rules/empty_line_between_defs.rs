@@ -34,6 +34,7 @@ use super::line_index::LineIndex;
 /// `insert` selects the arm (`true` = `insert_after(range_between(pos, pos+1),
 /// "\n" * n)`, `false` = `remove(range_between(pos, pos + n))`), where `pos` is
 /// the computed `newline_pos`.
+#[derive(Debug)]
 pub struct EmptyLineBetweenDefsOffense {
     pub start_offset: usize,
     pub end_offset: usize,

@@ -66,6 +66,7 @@ pub struct Config {
 /// One offense. `[start_offset, end_offset)` is the caret range; it is also the
 /// range the corrector op operates on (`FIX_AVOID` removes it, `FIX_PUT`
 /// inserts a comma after it).
+#[derive(Debug)]
 pub struct TrailingCommaInArgumentsOffense {
     pub start_offset: usize,
     pub end_offset: usize,

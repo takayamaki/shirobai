@@ -41,6 +41,7 @@ pub struct Config {
 
 /// One offense: `range_between(arg.end_pos, value.begin_pos)`. The message and
 /// autocorrect replacement are style-fixed, so the wrapper needs only the range.
+#[derive(Debug)]
 pub struct SpaceAroundEqualsOffense {
     /// `arg.end_pos` (`name_loc` end).
     pub start: usize,

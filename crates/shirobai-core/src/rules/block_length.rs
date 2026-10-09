@@ -8,6 +8,7 @@ use super::code_length::{CodeLength, Fold};
 /// `AllowedMethods` exclusion (incl. receiver-qualified entries) is applied
 /// here too; the regex-based `AllowedPatterns` filtering always stays on the
 /// Ruby side, which has the exact regexp semantics.
+#[derive(Debug)]
 pub struct BlockLengthCandidate {
     pub start_offset: usize,
     pub end_offset: usize,

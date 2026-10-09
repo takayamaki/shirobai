@@ -68,6 +68,7 @@ pub struct Config {
 /// `from_empty` marks the empty-braces axis: stock calls
 /// `opposite_style_detected` inside the offense block only for non-empty
 /// braces, so the wrapper mirrors that per offense.
+#[derive(Debug)]
 pub struct SpaceBeforeBlockBracesOffense {
     pub start_offset: usize,
     pub end_offset: usize,
@@ -93,7 +94,7 @@ pub struct SpaceBeforeBlockBracesOffense {
 ///   `add_offense`, unconditionally on the offense path).
 /// - `saw_empty` — some empty-brace block reached `check_empty` (the lazy
 ///   `Unknown EnforcedStyleForEmptyBraces selected!` raise point).
-#[derive(Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Summary {
     pub a_correct: bool,
     pub b_match_first: bool,
@@ -103,6 +104,7 @@ pub struct Summary {
 }
 
 /// Offenses in document order plus the style-detection summary.
+#[derive(Debug, Default)]
 pub struct SpaceBeforeBlockBracesResult {
     pub offenses: Vec<SpaceBeforeBlockBracesOffense>,
     pub summary: Summary,

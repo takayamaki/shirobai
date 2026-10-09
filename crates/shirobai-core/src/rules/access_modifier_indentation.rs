@@ -55,6 +55,7 @@ pub struct Config {
 /// non-zero (the wrapper then emits an offense and an `AlignmentCorrector`
 /// shift); `None` means the modifier already aligns with the configured style
 /// (the wrapper calls `correct_style_detected`).
+#[derive(Debug)]
 pub struct AccessModifierIndentationRecord {
     /// `bare_access_modifier?` send range (offense highlight).
     pub start: usize,
@@ -63,6 +64,7 @@ pub struct AccessModifierIndentationRecord {
     pub offense: Option<AccessModifierIndentationOffense>,
 }
 
+#[derive(Debug)]
 pub struct AccessModifierIndentationOffense {
     /// Formatted stock `MSG`: `"<Style> access modifiers like `<name>`."`.
     pub message: String,

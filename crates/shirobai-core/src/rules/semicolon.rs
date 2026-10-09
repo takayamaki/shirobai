@@ -41,6 +41,7 @@ use std::collections::{HashMap, HashSet};
 use ruby_prism::Node;
 
 /// One reported path-(a) semicolon.
+#[derive(Debug)]
 pub struct PathAOffense {
     /// Byte offset of the `;`.
     pub offset: usize,

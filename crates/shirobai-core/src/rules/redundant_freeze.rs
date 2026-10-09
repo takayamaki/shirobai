@@ -50,6 +50,7 @@ use super::duplicate_magic_comment::frozen_string_literals_enabled;
 /// One offense. `[off_start, off_end)` is the highlight (the send node); the
 /// two remove ranges reproduce stock's `corrector.remove(node.loc.dot)` +
 /// `corrector.remove(node.loc.selector)`.
+#[derive(Debug)]
 pub struct RedundantFreezeOffense {
     pub off_start: usize,
     pub off_end: usize,

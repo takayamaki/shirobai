@@ -88,6 +88,7 @@ pub struct Config {
 /// `ignore_node` grouping). `suppress_when_disable_uncorrectable` mirrors the
 /// `autocorrect_with_disable_uncorrectable? && !start_ok` early return: the
 /// wrapper drops the offense when that mode is active.
+#[derive(Debug)]
 pub struct SpaceInsideArrayLiteralBracketsOffense {
     pub start_offset: usize,
     pub end_offset: usize,
@@ -122,7 +123,7 @@ impl MessageId {
 }
 
 /// One corrector call of the node's correction program.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum Op {
     /// `corrector.remove(range)`.
     Remove(usize, usize),
@@ -150,6 +151,7 @@ impl Op {
 /// only ever replayed on a node's first offense, and shipping one per checked
 /// node made the wire volume scale with the number of array literals instead
 /// of the number of offenses.
+#[derive(Debug, Default)]
 pub struct ArrayBracketsResult {
     pub offenses: Vec<SpaceInsideArrayLiteralBracketsOffense>,
     pub node_ops: Vec<Vec<Op>>,

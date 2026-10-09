@@ -33,6 +33,7 @@ use super::block_length::top_level_const_name;
 use super::code_length::{CodeLength, Fold};
 
 /// A module definition whose measured length exceeds `Max`.
+#[derive(Debug)]
 pub struct ModuleLengthCandidate {
     pub start_offset: usize,
     pub end_offset: usize,

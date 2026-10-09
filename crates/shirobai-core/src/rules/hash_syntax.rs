@@ -34,6 +34,7 @@ use ruby_prism::{Location, Node};
 
 /// A single corrector op. `kind`: 0 replace, 1 remove, 2 insert_before,
 /// 3 insert_after. For remove the text is empty.
+#[derive(Debug)]
 pub struct Op {
     pub kind: u8,
     pub start: usize,
@@ -43,7 +44,7 @@ pub struct Op {
 
 /// Detection side effect the wrapper replays through the genuine stock methods,
 /// so `config_to_allow_offenses` / `detected_styles` match exactly.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Detect {
     /// `opposite_style_detected` (an `EnforcedStyle` offense was found).
     OppositeStyle,
@@ -59,6 +60,7 @@ pub enum Detect {
 
 /// One record from the walk, in walk order. When `is_offense` is false it is a
 /// pure detection marker (`correct_style_detected`) with no caret and no ops.
+#[derive(Debug)]
 pub struct HashSyntaxOffense {
     pub is_offense: bool,
     pub start_offset: usize,

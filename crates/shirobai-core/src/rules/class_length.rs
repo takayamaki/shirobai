@@ -48,6 +48,7 @@ use super::block_length::top_level_const_name;
 use super::code_length::{CodeLength, Fold};
 
 /// A class definition whose measured length exceeds `Max`.
+#[derive(Debug)]
 pub struct ClassLengthCandidate {
     pub start_offset: usize,
     pub end_offset: usize,

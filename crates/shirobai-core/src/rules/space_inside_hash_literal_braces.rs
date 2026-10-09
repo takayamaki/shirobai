@@ -55,6 +55,7 @@ pub struct Config {
 
 /// One offense: `[start, end)` is the reported range (also the autocorrect
 /// anchor); `message` picks the fixed stock message.
+#[derive(Debug)]
 pub struct SpaceInsideHashLiteralBracesOffense {
     pub start_offset: usize,
     pub end_offset: usize,

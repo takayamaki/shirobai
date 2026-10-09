@@ -27,6 +27,7 @@ use ruby_prism::{Node, Visit, visit_call_node, visit_def_node};
 use super::code_length::{CodeLength, Fold};
 
 /// A method whose body length exceeds `Max`.
+#[derive(Debug)]
 pub struct MethodLengthCandidate {
     pub start_offset: usize,
     pub end_offset: usize,

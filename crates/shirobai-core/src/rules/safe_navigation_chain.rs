@@ -3,6 +3,7 @@
 use ruby_prism::{CallNode, Node};
 
 /// An ordinary method call chained after a safe-navigation call.
+#[derive(Debug)]
 pub struct SafeNavChainOffense {
     pub start_offset: usize,
     pub end_offset: usize,

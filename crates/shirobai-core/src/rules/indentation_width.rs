@@ -22,6 +22,7 @@ use super::line_index::LineIndex;
 /// (`offending_range`). `[correct_start, correct_end)` is the node range that
 /// Ruby realigns by `column_delta`. `autocorrect` is false when the correction
 /// would overlap an already-registered correction range (`other_offense_in_same_range?`).
+#[derive(Debug)]
 pub struct IndentationOffense {
     pub start_offset: usize,
     pub end_offset: usize,

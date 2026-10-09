@@ -30,6 +30,7 @@ use ruby_prism::{
 
 /// One offending whitespace run. `(start, end)` is both the offense highlight
 /// and the autocorrect removal range (stock `corrector.remove(range)`).
+#[derive(Debug)]
 pub struct SpaceAroundMethodCallOperatorOffense {
     pub start_offset: usize,
     pub end_offset: usize,
