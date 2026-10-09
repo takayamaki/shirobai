@@ -226,6 +226,131 @@ module Shirobai
       rails: [[0, 0].freeze, [[].freeze, [].freeze, [].freeze, [].freeze].freeze].freeze
     }.freeze
 
+    # Core wrapper `cop_name` => the core `SLOTS` keys its wrapper reads
+    # through `offenses_for`. This is how the per-slot enable mask
+    # (`BundleConfig::enabled_slots`, core nums 134 / 135) is built: a core
+    # slot is computed only when a cop that reads it is enabled (or forced,
+    # see `offenses_for`). One cop can own several slots (Layout/LineLength),
+    # and several cops can share one slot (the two complexity cops). Cops
+    # that never go through the bundle map to an empty list.
+    COP_KEYS = {
+      "Lint/Debugger" => %i[debugger].freeze,
+      "Metrics/BlockLength" => %i[block_length].freeze,
+      "Metrics/BlockNesting" => %i[block_nesting].freeze,
+      "Metrics/PerceivedComplexity" => %i[complexity].freeze,
+      "Metrics/CyclomaticComplexity" => %i[complexity].freeze,
+      "Naming/VariableNumber" => %i[variable_number].freeze,
+      "Naming/MethodName" => %i[method_name].freeze,
+      "Lint/SafeNavigationChain" => %i[safe_navigation_chain].freeze,
+      "Layout/MultilineOperationIndentation" => %i[multiline_operation].freeze,
+      "Layout/MultilineMethodCallIndentation" => %i[multiline_method_call].freeze,
+      "Layout/DotPosition" => %i[dot_position].freeze,
+      "Layout/LineLength" => %i[line_length line_length_breakables].freeze,
+      "Style/LineEndConcatenation" => %i[line_end_concatenation].freeze,
+      "Layout/ArgumentAlignment" => %i[argument_alignment].freeze,
+      "Layout/FirstArgumentIndentation" => %i[first_argument_indentation].freeze,
+      "Style/RedundantSelf" => %i[redundant_self].freeze,
+      "Layout/IndentationWidth" => %i[indentation_width].freeze,
+      "Naming/PredicatePrefix" => %i[predicate_prefix].freeze,
+      "Layout/ClosingParenthesisIndentation" => %i[closing_parenthesis_indentation].freeze,
+      "Layout/FirstArrayElementIndentation" => %i[first_array_element_indentation].freeze,
+      "Style/HashEachMethods" => %i[hash_each_methods].freeze,
+      "Lint/Void" => %i[void].freeze,
+      "Lint/UselessAccessModifier" => %i[useless_access_modifier].freeze,
+      "Layout/EmptyLinesAroundMethodBody" => %i[empty_lines_around_method_body].freeze,
+      "Layout/EmptyLinesAroundClassBody" => %i[empty_lines_around_class_body].freeze,
+      "Layout/EmptyLinesAroundModuleBody" => %i[empty_lines_around_module_body].freeze,
+      "Layout/EmptyLinesAroundBlockBody" => %i[empty_lines_around_block_body].freeze,
+      "Layout/EmptyLinesAroundBeginBody" => %i[empty_lines_around_begin_body].freeze,
+      "Layout/EmptyLinesAroundExceptionHandlingKeywords" => %i[empty_lines_around_exception_handling_keywords].freeze,
+      "Style/BlockDelimiters" => %i[block_delimiters].freeze,
+      "Metrics/AbcSize" => %i[abc_size].freeze,
+      "Layout/IndentationConsistency" => %i[indentation_consistency].freeze,
+      "Layout/EmptyLineBetweenDefs" => %i[empty_line_between_defs].freeze,
+      "Layout/EndAlignment" => %i[end_alignment].freeze,
+      "Layout/BlockAlignment" => %i[block_alignment].freeze,
+      "Layout/ElseAlignment" => %i[else_alignment].freeze,
+      "Layout/FirstHashElementIndentation" => %i[first_hash_element_indentation].freeze,
+      "Layout/HashAlignment" => %i[hash_alignment].freeze,
+      "Layout/EmptyLinesAroundArguments" => %i[empty_lines_around_arguments].freeze,
+      "Style/HashSyntax" => %i[hash_syntax].freeze,
+      "Style/StringLiterals" => %i[string_literals].freeze,
+      "Style/TrailingCommaInArguments" => %i[trailing_comma_in_arguments].freeze,
+      "Style/StringLiteralsInInterpolation" => %i[string_literals_in_interpolation].freeze,
+      "Layout/TrailingEmptyLines" => %i[trailing_empty_lines].freeze,
+      "Layout/SpaceAroundMethodCallOperator" => %i[space_around_method_call_operator].freeze,
+      "Layout/SpaceAroundKeyword" => %i[space_around_keyword].freeze,
+      "Layout/SpaceInsideBlockBraces" => %i[space_inside_block_braces].freeze,
+      "Metrics/MethodLength" => %i[method_length].freeze,
+      "Layout/DefEndAlignment" => %i[def_end_alignment].freeze,
+      "Lint/RequireParentheses" => %i[require_parentheses].freeze,
+      "Lint/SelfAssignment" => %i[self_assignment].freeze,
+      "Style/NestedParenthesizedCalls" => %i[nested_parenthesized_calls].freeze,
+      "Lint/ParenthesesAsGroupedExpression" => %i[parentheses_as_grouped_expression].freeze,
+      "Style/PercentLiteralDelimiters" => %i[percent_literal_delimiters].freeze,
+      "Layout/MultilineMethodCallBraceLayout" => %i[multiline_method_call_brace_layout].freeze,
+      "Layout/AccessModifierIndentation" => %i[access_modifier_indentation].freeze,
+      "Layout/AssignmentIndentation" => %i[assignment_indentation].freeze,
+      "Style/RedundantSelfAssignment" => %i[redundant_self_assignment].freeze,
+      "Style/ColonMethodCall" => %i[colon_method_call].freeze,
+      "Style/StabbyLambdaParentheses" => %i[stabby_lambda_parentheses].freeze,
+      "Lint/UnreachableCode" => %i[unreachable_code].freeze,
+      "Style/HashTransformKeys" => %i[hash_transform_keys].freeze,
+      "Lint/AmbiguousBlockAssociation" => %i[ambiguous_block_association].freeze,
+      "Layout/EmptyLineAfterGuardClause" => %i[empty_line_after_guard_clause].freeze,
+      "Layout/EmptyComment" => %i[empty_comment].freeze,
+      "Layout/EmptyLineAfterMagicComment" => %i[empty_line_after_magic_comment].freeze,
+      "Layout/EmptyLines" => %i[empty_lines].freeze,
+      "Layout/LeadingEmptyLines" => %i[leading_empty_lines].freeze,
+      "Metrics/ClassLength" => %i[class_length].freeze,
+      "Metrics/ModuleLength" => %i[module_length].freeze,
+      "Style/TrailingCommaInHashLiteral" => %i[trailing_comma_in_hash_literal].freeze,
+      "Style/TrailingCommaInArrayLiteral" => %i[trailing_comma_in_array_literal].freeze,
+      "Layout/SpaceInsideHashLiteralBraces" => %i[space_inside_hash_literal_braces].freeze,
+      "Layout/SpaceInsideArrayLiteralBrackets" => %i[space_inside_array_literal_brackets].freeze,
+      "Layout/SpaceBeforeBlockBraces" => %i[space_before_block_braces].freeze,
+      "Style/IfUnlessModifier" => %i[if_unless_modifier].freeze,
+      "Layout/SpaceBeforeComma" => %i[space_before_comma].freeze,
+      "Layout/SpaceAfterComma" => %i[space_after_comma].freeze,
+      "Layout/SpaceBeforeSemicolon" => %i[space_before_semicolon].freeze,
+      "Layout/SpaceAfterSemicolon" => %i[space_after_semicolon].freeze,
+      "Layout/SpaceAfterColon" => %i[space_after_colon].freeze,
+      "Layout/SpaceBeforeComment" => %i[space_before_comment].freeze,
+      "Layout/SpaceInsideParens" => %i[space_inside_parens].freeze,
+      "Layout/SpaceInsideReferenceBrackets" => %i[space_inside_reference_brackets].freeze,
+      "Layout/SpaceBeforeFirstArg" => %i[space_before_first_arg].freeze,
+      "Lint/DuplicateMagicComment" => %i[duplicate_magic_comment].freeze,
+      "Lint/DuplicateMethods" => %i[duplicate_methods].freeze,
+      "Layout/ArrayAlignment" => %i[array_alignment].freeze,
+      "Style/FileNull" => %i[file_null].freeze,
+      "Style/Semicolon" => %i[semicolon].freeze,
+      "Style/RedundantFreeze" => %i[redundant_freeze].freeze,
+      "Style/FrozenStringLiteralComment" => %i[frozen_string_literal_comment].freeze,
+      "Style/ArgumentsForwarding" => %i[arguments_forwarding].freeze,
+      "Layout/SpaceAroundOperators" => %i[space_around_operators].freeze,
+      "Lint/OrderedMagicComments" => %i[ordered_magic_comments].freeze,
+      "Layout/InitialIndentation" => %i[initial_indentation].freeze,
+      "Layout/SpaceAroundEqualsInParameterDefault" => %i[space_around_equals_in_parameter_default].freeze,
+      "Layout/ExtraSpacing" => %i[extra_spacing].freeze,
+      "Layout/EndOfLine" => %i[end_of_line].freeze,
+      "Layout/LineContinuationSpacing" => %i[line_continuation_spacing].freeze,
+      "Layout/SpaceInsideStringInterpolation" => %i[space_inside_string_interpolation].freeze,
+      "Style/MagicCommentFormat" => %i[magic_comment_format].freeze,
+      "Naming/AsciiIdentifiers" => %i[ascii_identifiers].freeze,
+      "Layout/RescueEnsureAlignment" => %i[rescue_ensure_alignment].freeze,
+      "Style/DirectiveScope" => %i[directive_scope].freeze,
+      "Lint/MisplacedMagicComment" => %i[misplaced_magic_comment].freeze,
+      "Style/MutableConstant" => [].freeze,
+      "Style/EmptyLiteral" => [].freeze
+    }.freeze
+
+    # The core (origin 0) `SLOTS` index of every core key.
+    CORE_SLOT_INDEX = SLOTS.each_with_object({}) do |(key, (origin, rule)), h|
+      h[key] = rule if origin.zero?
+    end.freeze
+
+    MASK_64 = 0xFFFF_FFFF_FFFF_FFFF
+
     class << self
       # Registration point for plugin gems: `origin` is the ORIGINS key and
       # the block is a callable `(config) -> [nums, lists]` producing that
@@ -263,8 +388,23 @@ module Shirobai
       # (the safety net: the wrapper then takes its standalone entry point,
       # so a gate/relevant_file? disagreement can only cost speed, never
       # offenses).
+      #
+      # Core slots are computed only for the cops the config enables (the
+      # slot mask). A wrapper can still run when its cop is disabled in the
+      # config: stock `Team.mobilize` keeps config-disabled cops on a
+      # `standby_registry` and wakes them for a `# rubocop:enable Foo`
+      # directive (`Team#opted_in_standby_cops`), `--only` can name a
+      # disabled cop, and specs drive wrappers directly. So when a core key
+      # is outside the mask, it joins the config's forced set and this file
+      # is checked again with the wider mask. The forced set lives as long as
+      # the config, so later files start with that slot on and each key
+      # re-runs at most once per config.
       def offenses_for(processed_source, config, cop_key)
         src = processed_source.raw_source
+        if !active_keys(config).include?(cop_key) && CORE_SLOT_INDEX.key?(cop_key)
+          force_slot!(config, cop_key)
+          @cached_source = nil
+        end
         unless defined?(@cached_source) && @cached_source.equal?(src) && @cached_config.equal?(config)
           inactive = inactive_origins(config, processed_source)
           result = Shirobai.check_all(src, bundle_token(config, inactive))
@@ -281,14 +421,17 @@ module Shirobai
 
       # The Rust-side token for `config` with the given gated-off origins,
       # registering its packed bundle config on first sight. Memoized per
-      # (config object identity, inactive origin set): a lint run shares one
-      # `Config` object across all cops in the team, so a run registers
-      # O(#distinct configs x #distinct gate outcomes) entries (each spec
-      # example registers one; entries are small and never evicted).
+      # (config object identity, inactive origin set, forced key snapshot): a
+      # lint run shares one `Config` object across all cops in the team, so a
+      # run registers O(#distinct configs x #distinct gate outcomes x #forced
+      # growths) entries (each spec example registers one; entries are small
+      # and never evicted).
       def bundle_token(config, inactive = EMPTY_INACTIVE)
         @bundle_tokens ||= {}.compare_by_identity
+        forced = forced_keys(config)
         per_config = (@bundle_tokens[config] ||= {})
-        per_config[inactive] ||= begin
+        per_inactive = (per_config[inactive] ||= {})
+        per_inactive[forced] ||= begin
           # A new Config means config resolution just happened — the moment
           # any third-party plugin gem (rubocop-capybara et al.) named in
           # `plugins:` / `require:` has finished loading. Re-align the
@@ -296,13 +439,70 @@ module Shirobai
           # set (see `Inject.align_for`), so their skip entries point at the
           # replacement classes before any correction round runs.
           Inject.align_for(config)
-          Shirobai.register_bundle_config(*packed_config(config, inactive))
+          Shirobai.register_bundle_config(*packed_config(config, inactive, forced))
         end
+      end
+
+      # The core `SLOTS` keys of the cops enabled in `config` (a frozen
+      # Set). Read from `Registry#enabled`, which `Inject.align_for` already
+      # calls for every new config, so this adds no registry work.
+      def enabled_keys(config)
+        @enabled_keys ||= {}.compare_by_identity
+        @enabled_keys[config] ||= begin
+          keys = Set.new
+          RuboCop::Cop::Registry.global.enabled(config).each do |klass|
+            cop_keys = COP_KEYS[klass.cop_name]
+            keys.merge(cop_keys) if cop_keys
+          end
+          keys.freeze
+        end
+      end
+
+      # The core keys forced on for `config` (see `offenses_for`): a sorted,
+      # frozen Array, replaced (never mutated) when it grows, so it can key
+      # the token memo.
+      def forced_keys(config)
+        @forced_keys ||= {}.compare_by_identity
+        @forced_keys.fetch(config, EMPTY_FORCED)
       end
 
       private
 
       EMPTY_INACTIVE = [].freeze
+      EMPTY_FORCED = [].freeze
+
+      # enabled_keys | forced_keys for `config`, as one frozen Set. The last
+      # config is kept in two ivars so the per-call check in `offenses_for`
+      # is one identity compare plus one Set lookup.
+      def active_keys(config)
+        return @last_active_keys if @last_active_config.equal?(config)
+
+        @active_keys ||= {}.compare_by_identity
+        active = (@active_keys[config] ||= enabled_keys(config))
+        @last_active_config = config
+        @last_active_keys = active
+      end
+
+      def force_slot!(config, cop_key)
+        @forced_keys ||= {}.compare_by_identity
+        @forced_keys[config] = (forced_keys(config) + [cop_key]).sort.freeze
+        @active_keys ||= {}.compare_by_identity
+        @active_keys[config] = (active_keys(config) | [cop_key]).freeze
+        @last_active_config = nil
+      end
+
+      # The `enabled_slots` mask (core nums 134 / 135) as two signed 64-bit
+      # values: low word = slots 0..63, high word = slots 64..127.
+      def slot_mask_nums(config, forced)
+        mask = 0
+        enabled_keys(config).each { |key| mask |= 1 << CORE_SLOT_INDEX.fetch(key) }
+        forced.each { |key| mask |= 1 << CORE_SLOT_INDEX.fetch(key) }
+        [signed64(mask & MASK_64), signed64(mask >> 64)]
+      end
+
+      def signed64(word)
+        [word].pack("Q").unpack1("q")
+      end
 
       # The gated origins whose gate turns the current file down. Frozen and
       # deterministic (ORIGINS order) so it doubles as the token memo key.
@@ -324,7 +524,7 @@ module Shirobai
       # `config.for_badge`, exactly like `RuboCop::Cop::Base#cop_config`).
       # Origins in `inactive` pack their dormant segment even when their
       # packer is registered (the per-file gate said no).
-      def packed_config(config, inactive = EMPTY_INACTIVE)
+      def packed_config(config, inactive = EMPTY_INACTIVE, forced = EMPTY_FORCED)
         dbg = Cop::Lint::Debugger.bundle_args(config)
         bl = Cop::Metrics::BlockLength.bundle_args(config)
         bn = Cop::Metrics::BlockNesting.bundle_args(config)
@@ -503,8 +703,10 @@ module Shirobai
           es[0][0], es[0][1], es[0][2],
           *sisi[0], # SpaceInsideStringInterpolation style (1 num, index 131)
           *aid[0], # AsciiIdentifiers 0=disabled / 1=enabled,AsciiConstants off / 2=enabled,on (1 num, index 132)
-          *rea[0] # RescueEnsureAlignment 0=disabled / 1=enabled (1 num, index 133)
+          *rea[0], # RescueEnsureAlignment 0=disabled / 1=enabled (1 num, index 133)
+          *slot_mask_nums(config, forced) # enabled_slots low / high 64 bits (2 nums, indices 134 / 135)
         ]
+        force_cop_gates!(nums, config, forced)
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
                  uam[0], uam[1], *bd[1], elbd[1], ha[0], ha[1], ml[2], npc[0], pld[0], aba[0],
                  cl[2], mol[2], *af[1], dm[1], mn[1]]
@@ -523,6 +725,23 @@ module Shirobai
           packed_lists << seg_lists
         end
         [packed_nums, packed_lists]
+      end
+
+      # Four cops also carry their own enable num, packed from `Enabled`
+      # being literally false (SpaceAroundOperators 121, ExtraSpacing 128,
+      # AsciiIdentifiers 132, RescueEnsureAlignment 133). When such a cop is
+      # forced (it runs although the config disables it), its num must say
+      # "on" too, or the Rust side leaves the forced slot empty.
+      def force_cop_gates!(nums, config, forced)
+        return if forced.empty?
+
+        nums[121] = 1 if forced.include?(:space_around_operators)
+        nums[128] = 1 if forced.include?(:extra_spacing)
+        if forced.include?(:ascii_identifiers)
+          cop_config = config.for_badge(Cop::Naming::AsciiIdentifiers.badge)
+          nums[132] = cop_config.fetch("AsciiConstants", true) ? 2 : 1
+        end
+        nums[133] = 1 if forced.include?(:rescue_ensure_alignment)
       end
 
       def num(value)
