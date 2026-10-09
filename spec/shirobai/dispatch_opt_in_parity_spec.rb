@@ -32,13 +32,12 @@ RSpec.describe "Directive opt-in of config-disabled cops" do
     Lint/Debugger
   ]
 
-  def registry_of(classes)
-    RuboCop::Cop::Registry.new(classes)
-  end
-
-  def cli_like_offenses(classes, source, config)
-    registry = registry_of(classes)
-    team = RuboCop::Cop::Team.mobilize(registry, config, {})
+  # `options` is what `Runner` passes down: `--only` arrives as
+  # `{ only: [...] }` on both the registry (`Runner#mobilized_cop_classes`
+  # via `filter_by_badge`) and the team (`Runner#assemble_team`).
+  def cli_like_offenses(classes, source, config, options = {})
+    registry = RuboCop::Cop::Registry.new(classes, options)
+    team = RuboCop::Cop::Team.mobilize(registry, config, options)
     ps = RuboCop::ProcessedSource.new(source, RuboCop::TargetRuby::DEFAULT_VERSION, "probe.rb")
     ps.config = config
     ps.registry = registry
@@ -49,12 +48,12 @@ RSpec.describe "Directive opt-in of config-disabled cops" do
     end.sort
   end
 
-  def expect_cli_parity(source, config)
+  def expect_cli_parity(source, config, options = {})
     shirobai_classes = cop_names.map { |name| RuboCop::Cop::Registry.global.find_by_cop_name(name) }
     expect(shirobai_classes.map(&:name)).to all(start_with("Shirobai::"))
     stock_classes = shirobai_classes.map { |klass| Shirobai::Inject.stock_counterpart(klass) }
-    stock = cli_like_offenses(stock_classes, source, config)
-    expect(cli_like_offenses(shirobai_classes, source, config)).to eq(stock)
+    stock = cli_like_offenses(stock_classes, source, config, options)
+    expect(cli_like_offenses(shirobai_classes, source, config, options)).to eq(stock)
     stock
   end
 
@@ -140,5 +139,31 @@ RSpec.describe "Directive opt-in of config-disabled cops" do
     expect(stock.map(&:first)).to include(
       "Layout/SpaceAroundOperators", "Naming/AsciiIdentifiers", "Layout/RescueEnsureAlignment"
     )
+  end
+  it "reports config-disabled cops named by --only" do
+    # `Registry#enabled_cop_name?` returns true for any `--only` name, so the
+    # team runs these cops although the config disables them.
+    disabled = config_from(<<~YAML)
+      AllCops:
+        NewCops: disable
+        SuggestExtensions: false
+      Layout/ExtraSpacing:
+        Enabled: false
+      Layout/SpaceAroundOperators:
+        Enabled: false
+      Layout/IndentationWidth:
+        Enabled: false
+    YAML
+    source = <<~RUBY
+      # frozen_string_literal: true
+
+      x  = 1+2
+      def foo
+          bar(x)
+      end
+    RUBY
+    only = %w[Layout/ExtraSpacing Layout/SpaceAroundOperators Layout/IndentationWidth]
+    stock = expect_cli_parity(source, disabled, { only: only })
+    expect(stock.map(&:first).uniq).to match_array(only)
   end
 end

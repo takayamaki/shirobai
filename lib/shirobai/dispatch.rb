@@ -729,19 +729,20 @@ module Shirobai
 
       # Four cops also carry their own enable num, packed from `Enabled`
       # being literally false (SpaceAroundOperators 121, ExtraSpacing 128,
-      # AsciiIdentifiers 132, RescueEnsureAlignment 133). When such a cop is
-      # forced (it runs although the config disables it), its num must say
-      # "on" too, or the Rust side leaves the forced slot empty.
+      # AsciiIdentifiers 132, RescueEnsureAlignment 133). Whenever such a cop
+      # is in the mask (enabled, or forced because it runs although the config
+      # disables it), its num must say "on" too, or the Rust side leaves the
+      # slot empty. The wrappers' `bundle_args` stay as they are.
       def force_cop_gates!(nums, config, forced)
-        return if forced.empty?
-
-        nums[121] = 1 if forced.include?(:space_around_operators)
-        nums[128] = 1 if forced.include?(:extra_spacing)
-        if forced.include?(:ascii_identifiers)
+        keys = enabled_keys(config)
+        on = ->(key) { keys.include?(key) || forced.include?(key) }
+        nums[121] = 1 if on.(:space_around_operators)
+        nums[128] = 1 if on.(:extra_spacing)
+        if on.(:ascii_identifiers)
           cop_config = config.for_badge(Cop::Naming::AsciiIdentifiers.badge)
           nums[132] = cop_config.fetch("AsciiConstants", true) ? 2 : 1
         end
-        nums[133] = 1 if forced.include?(:rescue_ensure_alignment)
+        nums[133] = 1 if on.(:rescue_ensure_alignment)
       end
 
       def num(value)
