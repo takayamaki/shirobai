@@ -83,7 +83,7 @@ RSpec.describe Shirobai::Cop::Style::Semicolon do
 
   # --- Quirk 4: leading token-index strictness. ---
 
-  it "flags `{ ;`, `-> { ;` and `#{ ;` at the leading index" do
+  it "flags `{ ;`, `-> { ;` and `\#{ ;` at the leading index" do
     expect_autocorrect_parity(stock_klass, shirobai_klass, "foo {; bar }\n", cfg)
     expect_autocorrect_parity(stock_klass, shirobai_klass, "foo -> {; bar }\n", cfg)
     expect_autocorrect_parity(stock_klass, shirobai_klass, "-> {; x }\n", cfg)
