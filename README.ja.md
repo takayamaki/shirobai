@@ -46,21 +46,21 @@ shirobaiは日本語話者なら当然わかるでしょう、白バイです。
   の位置・メッセージ・autocorrect 後のバイトすべてが stock RuboCop と一致する。
   PENDING autocorrect は許容しない。完全互換に到達できない cop は ship しない方針。
 - **実プロジェクトでの速度** — 実 CLI、各プロジェクトの `.rubocop.yml`、
-  plugin gem 込み、3 round 中央値（Mastodon と Redmine は 5 round）:
+  plugin gem 込み、5 round 中央値:
 
   | コーパス | files | offenses | stock | shirobai (core のみ) | + plugin gem |
   |---|---|---|---|---|---|
-  | Mastodon | 3,206 | 14 | 117.92s | 87.42s (-25.9%) | 78.43s (**-33.5%**) |
-  | Discourse | 10,229 | 25 | 123.60s | 91.64s (-25.9%) | 87.97s (**-28.8%**) |
-  | Redmine | 1,058 | 10 | 54.62s | 38.19s (**-30.1%**) | 37.25s (-31.8%) |
-  | fluentd | 456 | 0 | 5.92s | 6.16s (+4.1%) | 7.06s (+19.2%) |
+  | Mastodon | 3,206 | 14 | 109.97s | 74.36s (-32.4%) | 63.87s (**-41.9%**) |
+  | Discourse | 10,229 | 25 | 179.37s | 121.38s (-32.3%) | 113.59s (**-36.7%**) |
+  | Redmine | 1,058 | 10 | 54.56s | 37.21s (-31.8%) | 35.74s (**-34.5%**) |
+  | fluentd | 456 | 0 | 5.75s | 6.07s (+5.5%) | 6.27s (+9.0%) |
 
   「shirobai (core のみ)」列は core gem 単体、「+ plugin gem」列はその上に
   shirobai-rspec / shirobai-rails / shirobai-performance を足した値
   （各 shell は、対象コーパスの config が該当 stock plugin を実際に load する
   ときだけ require する。実ユーザーと同じ入れ方）。
   計測環境: GitHub Actions `ubuntu-latest`（4-vCPU 共有 runner）、
-  shirobai は [`f361158`](https://github.com/takayamaki/shirobai/commit/f361158) 時点
+  shirobai は [`2ba4154`](https://github.com/takayamaki/shirobai/commit/2ba4154) 時点
   （RuboCop 1.91.0 / rubocop-rails 2.37.0 / rubocop-performance 1.27.0）。
   各実行はまず stock と shirobai が **同じ offense 集合** を報告することを検証してから、
   同じコードを lint する中央値時間を測る。
@@ -68,11 +68,11 @@ shirobaiは日本語話者なら当然わかるでしょう、白バイです。
   （`.github/workflows/bench.yml`）。
 
   plugin cop に時間を使うプロジェクトは、core gem 単体では届かない分を
-  plugin gem で取り返せる（plugin 依存の大きい Discourse は core -25.9% →
-  plugin gem 込み -28.8%。spec の重い Mastodon は shirobai-rspec/-rails で
-  8 ポイント上乗せ）。Redmine では plugin shell はほぼ収支トントン
-  （rubocop-rails 2.37 が自前の重い cop を高速化したため）。core gem 単体が
-  ちょうどいい構成もある。
+  plugin gem で取り返せる（plugin 依存の大きい Discourse は core -32.3% →
+  plugin gem 込み -36.7%。spec の重い Mastodon は shirobai-rspec/-rails で
+  9.5 ポイント上乗せ）。Redmine では plugin shell の上乗せは 3 ポイント未満
+  （rubocop-rails 2.37 が自前の重い cop を高速化したため）。core gem 単体でも
+  ほぼ十分な構成もある。
   fluentd は正直な注意書きで、config がほとんどの default cop を無効化して
   いるため置き換え対象が少なく、native extension の固定ロードコストが削減分を
   わずかに上回る。plugin shell はそこに固定費を足すだけになる。
