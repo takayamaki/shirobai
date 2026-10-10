@@ -4,11 +4,16 @@ source "https://rubygems.org"
 
 gem "rubocop", "= 1.91.0"
 
-# Plugins required by test corpora
-gem "rubocop-capybara"        # Mastodon
-gem "rubocop-discourse"       # Discourse
-gem "rubocop-i18n"            # Mastodon
-gem "rubocop-performance"     # Mastodon, Redmine, fluentd
-gem "rubocop-rails"           # Mastodon, Redmine
-gem "rubocop-rspec"           # Mastodon
-gem "rubocop-rspec_rails"     # Mastodon
+# Plugins required by test corpora. Every version is pinned: Gemfile.lock is
+# not tracked, so an unpinned gem floats to the newest release on each run.
+# rubocop-rails / -rspec / -performance match the shirobai plugin gemspecs
+# (a stock arm on a newer release than the shirobai-* shell can never agree
+# on offenses). The others are the versions the README benchmark was taken
+# with, so later runs stay comparable with it.
+gem "rubocop-capybara", "= 3.0.0"    # Mastodon
+gem "rubocop-discourse", "= 3.18.0"  # Discourse
+gem "rubocop-i18n", "= 3.3.0"        # Mastodon
+gem "rubocop-performance", "= 1.27.0" # Mastodon, Redmine, fluentd
+gem "rubocop-rails", "= 2.37.0"      # Mastodon, Redmine
+gem "rubocop-rspec", "= 3.10.2"      # Mastodon
+gem "rubocop-rspec_rails", "= 2.32.0" # Mastodon
