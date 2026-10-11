@@ -1,5 +1,5 @@
 # frozen_string_literal: true
 
 module Shirobai
-  VERSION = "2026.0920.1100"
+  VERSION = "2026.1011.1700"
 end
