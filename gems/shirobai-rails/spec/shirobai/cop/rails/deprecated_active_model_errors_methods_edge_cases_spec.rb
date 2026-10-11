@@ -97,4 +97,20 @@ RSpec.describe "Rails/DeprecatedActiveModelErrorsMethods edge cases" do
     corrected = expect_autocorrect_parity(*pair, "user.errors[:name] << 'msg'\r\n", config)
     expect(corrected).to include("user.errors.add(:name, 'msg')")
   end
+
+  context "when rubocop-rails resolves the target Rails version itself (2.38)" do
+    # rubocop-rails 2.38 (rubocop-rails#1655): stock `extend`s
+    # `TargetRailsVersion`, so its `target_rails_version` comes from
+    # `RuboCop::Cop::TargetRailsVersion.resolve` instead of RuboCop core. The
+    # Rails <= 6.0 gate on the incompatible methods must read the same
+    # resolver. The config names 7.2 on purpose: a wrapper that still asks
+    # core would flag `keys`.
+    let(:config) { rails_config(7.2) }
+
+    before { allow(RuboCop::Cop::TargetRailsVersion).to receive(:resolve).and_return(6.0) }
+
+    it "skips `errors.keys` when the resolver reports Rails 6.0" do
+      expect_lint_parity(*pair, "user.errors.keys\nuser.errors[:name] << 'msg'\n", config)
+    end
+  end
 end

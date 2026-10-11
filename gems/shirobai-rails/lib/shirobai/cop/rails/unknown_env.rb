@@ -17,8 +17,15 @@ module Shirobai
       # predicate form only, and only on Rails >= 7.1) is packed into the
       # segment so the Rust filter matches; the comparison and `case` forms
       # never allow `local`, mirroring stock.
+      #
+      # The Rails version behind that gate comes from rubocop-rails's own
+      # resolver (`RuboCop::Cop::TargetRailsVersion.resolve`, 2.38+), the same
+      # one stock reads through `extend TargetRailsVersion`; the class-level
+      # `bundle_args` and the instance-level fallback both ask it, never
+      # RuboCop core's `Config#target_rails_version`.
       class UnknownEnv < RuboCop::Cop::Base
         include Shirobai::Cop::BundleEligible
+        extend RuboCop::Cop::TargetRailsVersion
 
         MSG = "Unknown environment `%<name>s`."
         MSG_SIMILAR = "Unknown environment `%<name>s`. Did you mean `%<similar>s`?"
@@ -31,7 +38,7 @@ module Shirobai
         def self.bundle_args(config)
           cop = config.for_badge(badge)
           environments = cop["Environments"] || []
-          supports_local = config.target_rails_version >= 7.1
+          supports_local = RuboCop::Cop::TargetRailsVersion.resolve(config) >= 7.1
           [[supports_local ? 1 : 0], [environments]]
         end
 
