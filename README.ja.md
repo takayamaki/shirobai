@@ -61,7 +61,7 @@ shirobaiは日本語話者なら当然わかるでしょう、白バイです。
   ときだけ require する。実ユーザーと同じ入れ方）。
   計測環境: GitHub Actions `ubuntu-latest`（4-vCPU 共有 runner）、
   shirobai は [`2ba4154`](https://github.com/takayamaki/shirobai/commit/2ba4154) 時点
-  （RuboCop 1.91.0 / rubocop-rails 2.37.0 / rubocop-performance 1.27.0）。
+  （RuboCop 1.91.0 / rubocop-rails 2.38.0 / rubocop-performance 1.27.0）。
   各実行はまず stock と shirobai が **同じ offense 集合** を報告することを検証してから、
   同じコードを lint する中央値時間を測る。
   任意のコミットで再実行するには `gh workflow run bench.yml`
@@ -210,7 +210,7 @@ disable コメント、`--only` / `--except`、`--auto-correct`、ResultCache �
 | `gems/shirobai-rails/` | プラグイン gem（rubocop-rails cop） |
 | `vendor/rubocop-performance/` | git submodule、1.27.0 を pin（プラグイン vendor spec 用） |
 | `vendor/rubocop-rspec/` | git submodule、3.10.2 を pin（プラグイン vendor spec 用） |
-| `vendor/rubocop-rails/` | git submodule、2.37.0 を pin（プラグイン vendor spec 用） |
+| `vendor/rubocop-rails/` | git submodule、2.38.0 を pin（プラグイン vendor spec 用） |
 
 ## ビルドとテスト
 

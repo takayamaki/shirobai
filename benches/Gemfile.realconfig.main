@@ -22,6 +22,6 @@ gem "rubocop-capybara", "= 3.0.0"    # Mastodon
 gem "rubocop-discourse", "= 3.18.0"  # Discourse
 gem "rubocop-i18n", "= 3.3.0"        # Mastodon
 gem "rubocop-performance", "= 1.27.0" # Mastodon, Redmine, fluentd
-gem "rubocop-rails", "= 2.37.0"      # Mastodon, Redmine
+gem "rubocop-rails", "= 2.38.0"      # Mastodon, Redmine
 gem "rubocop-rspec", "= 3.10.2"      # Mastodon
 gem "rubocop-rspec_rails", "= 2.32.0" # Mastodon

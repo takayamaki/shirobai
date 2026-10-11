@@ -71,7 +71,7 @@ The image is simple: RuboCop hops on a shiro-bai and gets faster.
   config loads the matching stock plugin, exactly as a real user would).
   Measured on GitHub Actions `ubuntu-latest` (4-vCPU shared runner)
   against shirobai at commit [`2ba4154`](https://github.com/takayamaki/shirobai/commit/2ba4154)
-  (RuboCop 1.91.0 / rubocop-rails 2.37.0 / rubocop-performance 1.27.0).
+  (RuboCop 1.91.0 / rubocop-rails 2.38.0 / rubocop-performance 1.27.0).
   Each run first verifies that stock and shirobai report the **same offense set**
   on the corpus's own config; the table shows the median time to lint the same code.
   Rerun on any commit via `gh workflow run bench.yml`
@@ -227,7 +227,7 @@ Each directory has its own `README.md` with details.
 | `gems/shirobai-rails/` | Plugin gem (rubocop-rails cops) |
 | `vendor/rubocop-performance/` | Git submodule pinned to 1.27.0 for plugin vendor specs |
 | `vendor/rubocop-rspec/` | Git submodule pinned to 3.10.2 for plugin vendor specs |
-| `vendor/rubocop-rails/` | Git submodule pinned to 2.37.0 for plugin vendor specs |
+| `vendor/rubocop-rails/` | Git submodule pinned to 2.38.0 for plugin vendor specs |
 
 ## Building and testing
 
