@@ -18,10 +18,15 @@ module Shirobai
       # methods, `skip_autocorrect?` (uncorrectable `details << ...`) and the
       # receiver-walk offense range all run on the parser AST, so offenses and
       # `-A` bytes match stock exactly.
+      #
+      # `extend TargetRailsVersion` mirrors stock (rubocop-rails 2.38+): the
+      # `target_rails_version` the Rails <= 6.0 gate reads comes from
+      # rubocop-rails's own resolver, not RuboCop core's.
       class DeprecatedActiveModelErrorsMethods < RuboCop::Cop::Base
         include RuboCop::Cop::RangeHelp
         include Shirobai::Cop::Rails::CandidateSupport
         extend RuboCop::Cop::AutoCorrector
+        extend RuboCop::Cop::TargetRailsVersion
 
         MSG = 'Avoid manipulating ActiveModel errors as hash directly.'
         AUTOCORRECTABLE_METHODS = %i[<< clear keys].freeze
