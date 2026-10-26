@@ -38,14 +38,8 @@ module Shirobai
         def on_new_investigation
           candidates = Dispatch.offenses_for(processed_source, config, :class_length)
           off = SourceOffsets.for(processed_source.raw_source)
-          candidates.each do |start, fin, head_end, length, sclass|
+          candidates.each do |start, fin, head_end, length, _sclass|
             validate_count_as_one!
-
-            # Stock's LSP location reads `node.loc.begin` for a
-            # `class << self`, which `Parser::Source::Map::Definition` does
-            # not define — stock raises (a swallowed cop error) and reports
-            # nothing, so report nothing here too.
-            next if sclass && RuboCop::LSP.enabled?
 
             stop = RuboCop::LSP.enabled? ? head_end : fin
             range = Parser::Source::Range.new(processed_source.buffer, off[start], off[stop])
