@@ -192,12 +192,24 @@ impl ExtraSpacingRule {
 }
 
 /// `assignment_tokens`: every `equal_sign?` token minus the def/optarg `=`
-/// positions (`remove_equals_in_def`), deduplicated to the first per line.
+/// positions (`remove_equals_in_def`), deduplicated to the first per line,
+/// minus a line whose first `=` comes after a comparison (1.92).
 pub fn assignment_token_set(
     tokens: &[Token],
     line_index: &LineIndex,
     def_equals: &[usize],
 ) -> BTreeSet<usize> {
+    // `first_operator_on_line` (1.92, rubocop#15759): the first
+    // `ASSIGNMENT_OR_COMPARISON_TOKENS` token of each line, over all tokens.
+    let mut first_operator: std::collections::BTreeMap<usize, usize> =
+        std::collections::BTreeMap::new();
+    for t in tokens {
+        if t.assignment_or_comparison() {
+            first_operator
+                .entry(line_index.line_of(t.begin_pos))
+                .or_insert(t.begin_pos);
+        }
+    }
     let mut seen_lines = BTreeSet::new();
     let mut out = BTreeSet::new();
     for t in tokens {
@@ -208,7 +220,9 @@ pub fn assignment_token_set(
             continue;
         }
         let line = line_index.line_of(t.begin_pos);
-        if seen_lines.insert(line) {
+        // First `=` per line, kept only when no comparison (or other
+        // operator of the set) comes before it on that line.
+        if seen_lines.insert(line) && first_operator.get(&line) == Some(&t.begin_pos) {
             out.insert(t.begin_pos);
         }
     }
@@ -283,6 +297,17 @@ pub fn resolve(
     // ForceEqualSignAlignment: check_assignment.
     if cfg.force_equal_sign_alignment && !rule.asgns.is_empty() {
         let mut corrected: BTreeSet<usize> = BTreeSet::new();
+        // `interrupting_operator_lines`: `relevant_assignment_lines` stops at
+        // a line with an assignment or comparison operator that is not an
+        // assignment line, in the corrector's grouping too.
+        let asgn_lines: BTreeSet<usize> =
+            rule.assignment_set.iter().map(|&p| line_index.line_of(p)).collect();
+        let interrupting: BTreeSet<usize> = tokens
+            .iter()
+            .filter(|t| t.assignment_or_comparison())
+            .map(|t| line_index.line_of(t.begin_pos))
+            .filter(|l| !asgn_lines.contains(l))
+            .collect();
         for a in &rule.asgns {
             // `return unless aligned_with_preceding_equals_operator(token) == :no`.
             if aligner.aligned_with_preceding_equals_operator(a.begin, a.end)
@@ -291,7 +316,7 @@ pub fn resolve(
                 continue;
             }
             let edits =
-                align_equal_signs(source, &line_index, &rule.assignment_set, a.begin, &mut corrected);
+                align_equal_signs(source, &line_index, &rule.assignment_set, &interrupting, a.begin, &mut corrected);
             out.push(ExtraSpacingOffense {
                 start_offset: a.begin,
                 end_offset: a.end,
@@ -315,11 +340,12 @@ fn align_equal_signs(
     source: &[u8],
     line_index: &LineIndex,
     assignment_set: &BTreeSet<usize>,
+    interrupting: &BTreeSet<usize>,
     asgn_begin: usize,
     corrected: &mut BTreeSet<usize>,
 ) -> Vec<Edit> {
     let line = line_index.line_of(asgn_begin);
-    let lines = all_relevant_assignment_lines(source, line_index, assignment_set, line);
+    let lines = all_relevant_assignment_lines(source, line_index, assignment_set, interrupting, line);
     // tokens = assignment_tokens on those lines, in source order.
     let block_tokens: Vec<usize> = assignment_set
         .iter()
@@ -408,6 +434,7 @@ fn all_relevant_assignment_lines(
     source: &[u8],
     line_index: &LineIndex,
     assignment_set: &BTreeSet<usize>,
+    interrupting: &BTreeSet<usize>,
     line: usize,
 ) -> BTreeSet<usize> {
     let asgn_lines: BTreeSet<usize> =
@@ -416,10 +443,10 @@ fn all_relevant_assignment_lines(
     let down: Vec<usize> = (1..=line).rev().collect();
     let up: Vec<usize> = (line..=last_line).collect();
     let mut out = BTreeSet::new();
-    for ln in relevant_assignment_lines(source, line_index, &asgn_lines, &down) {
+    for ln in relevant_assignment_lines(source, line_index, &asgn_lines, interrupting, &down) {
         out.insert(ln);
     }
-    for ln in relevant_assignment_lines(source, line_index, &asgn_lines, &up) {
+    for ln in relevant_assignment_lines(source, line_index, &asgn_lines, interrupting, &up) {
         out.insert(ln);
     }
     out
@@ -431,9 +458,10 @@ fn relevant_assignment_lines(
     source: &[u8],
     line_index: &LineIndex,
     asgn_lines: &BTreeSet<usize>,
+    interrupting: &BTreeSet<usize>,
     line_range: &[usize],
 ) -> Vec<usize> {
-    relevant_lines(source, line_index, line_range, &BTreeSet::new(), |ln| {
+    relevant_lines(source, line_index, line_range, interrupting, |ln| {
         asgn_lines.contains(&ln)
     })
 }
@@ -1049,6 +1077,14 @@ mod tests {
         let off = run(src, cfg(true, false, true));
         // The first `=` (col 2) is not aligned with the block's max -> flagged.
         assert_eq!(off.len(), 1);
+    }
+
+    // Stock 1.92.1 (rubocop#15759): an `=` behind a comparison on its line is
+    // not an assignment token, so the assignments around it are not flagged.
+    #[test]
+    fn equal_sign_behind_comparison_is_not_an_assignment() {
+        let src = "transitions = self\nif target && target != name && (target_transition = detect { |t| t.name == target })\n  transitions = transitions[index(target_transition) + 1..]\nend\n";
+        assert!(run(src, cfg(true, false, true)).is_empty());
     }
 
     // 1.91: a line carrying another alignable operator (`<<`, `==`, ...)

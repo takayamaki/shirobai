@@ -443,6 +443,15 @@ impl<'a> Aligner<'a> {
     /// `assignment_tokens`: all `equal_sign?` tokens minus the def/optarg `=`
     /// positions, deduplicated to the first per line.
     fn assignment_tokens(&self) -> Vec<usize> {
+        // 1.92 (rubocop#15759): keep a line's first `=` only when it is also
+        // the line's first `ASSIGNMENT_OR_COMPARISON_TOKENS` token
+        // (`first_operator_on_line`).
+        let mut first_operator = std::collections::BTreeMap::new();
+        for t in self.tokens {
+            if t.assignment_or_comparison() {
+                first_operator.entry(self.line(t.begin_pos)).or_insert(t.begin_pos);
+            }
+        }
         let mut seen_lines = std::collections::BTreeSet::new();
         let mut out = Vec::new();
         for t in self.tokens {
@@ -453,7 +462,7 @@ impl<'a> Aligner<'a> {
                 continue;
             }
             let line = self.line(t.begin_pos);
-            if seen_lines.insert(line) {
+            if seen_lines.insert(line) && first_operator.get(&line) == Some(&t.begin_pos) {
                 out.push(t.begin_pos);
             }
         }

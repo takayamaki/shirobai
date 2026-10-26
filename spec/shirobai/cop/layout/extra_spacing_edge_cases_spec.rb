@@ -117,3 +117,49 @@ RSpec.describe Shirobai::Cop::Layout::ExtraSpacing do
     expect(lint_offenses(klasses.first, result, cfg)).to eq(lint_offenses(klasses.last, result, cfg))
   end
 end
+
+# 1.92 (rubocop#15759): with ForceEqualSignAlignment an `=` that follows a
+# comparison on its line is not an assignment token, so it neither anchors
+# nor joins an alignment group. Also pins that the corrector groups stop at
+# an interrupting operator line (`<<`), as stock's relevant_assignment_lines
+# does for both detection and correction.
+RSpec.describe Shirobai::Cop::Layout::ExtraSpacing do
+  include EdgeCaseParity
+
+  klasses = [
+    RuboCop::Cop::Layout::ExtraSpacing,
+    Shirobai::Cop::Layout::ExtraSpacing
+  ]
+
+  let(:force_config) do
+    RuboCop::ConfigLoader.merge_with_default(
+      RuboCop::Config.new({ "Layout/ExtraSpacing" => { "ForceEqualSignAlignment" => true } }, "(test)"),
+      "(test)"
+    )
+  end
+
+  it "matches stock for an = behind a comparison" do
+    source = <<~RUBY
+      transitions = self
+      if target && target != name && (target_transition = detect { |t| t.name == target })
+        transitions = transitions[index(target_transition) + 1..]
+      end
+      a = 1
+      b << (c = 2)
+      dd = 3
+      x == y && (zz = 4)
+      yy  = 5
+      q   += 1
+      a = a + 1
+      bbb = 2
+    RUBY
+    expect_lint_parity(*klasses, source, force_config)
+    expect_autocorrect_parity(*klasses, source, force_config)
+  end
+
+  it "matches stock when an interrupting << line splits the correction group" do
+    source = "a = 1\nbbbb = 2\nx << y\ncccccc = 3\n"
+    expect_lint_parity(*klasses, source, force_config)
+    expect_autocorrect_parity(*klasses, source, force_config)
+  end
+end
