@@ -289,14 +289,11 @@ impl RedundantFreezeVisitor<'_> {
         {
             return true;
         }
-        // Arm 2: `(send !{(str _) array} {:+ :- :* :** :/ :%} {float int})` —
-        // receiver is not a string literal and not an array literal; one
+        // Arm 2: `(send #numeric_operation? {:+ :- :* :** :/ :%} {float int})`
+        // (1.92, rubocop#15841): the receiver must itself be numeric; one
         // numeric argument.
         if args.len() == 1 && is_arm2_op(name) {
-            let recv_ok = match &recv {
-                Some(r) => r.as_string_node().is_none() && r.as_array_node().is_none(),
-                None => true,
-            };
+            let recv_ok = recv.as_ref().is_some_and(numeric_operation);
             let arg = &args[0];
             if recv_ok && (arg.as_integer_node().is_some() || arg.as_float_node().is_some()) {
                 return true;
@@ -309,6 +306,33 @@ impl RedundantFreezeVisitor<'_> {
         }
         false
     }
+}
+
+/// `numeric_operation?` (1.92):
+/// `{float int (begin #numeric_operation?)
+///   (send #numeric_operation? {:+ :- :* :** :/ :%} #numeric_operation?)}`.
+/// `send` excludes a safe-navigation call (parser `csend`); a parser `send`
+/// has no literal block (that would be a `block` node).
+fn numeric_operation(node: &Node<'_>) -> bool {
+    if node.as_integer_node().is_some() || node.as_float_node().is_some() {
+        return true;
+    }
+    if node.as_parentheses_node().is_some() {
+        return parens_single_child(node).is_some_and(|c| numeric_operation(&c));
+    }
+    let Some(call) = node.as_call_node() else {
+        return false;
+    };
+    if call.is_safe_navigation() || call.block().is_some() || !is_arm2_op(call.name().as_slice()) {
+        return false;
+    }
+    let args: Vec<Node<'_>> = call
+        .arguments()
+        .map(|a| a.arguments().iter().collect())
+        .unwrap_or_default();
+    args.len() == 1
+        && numeric_operation(&args[0])
+        && call.receiver().is_some_and(|r| numeric_operation(&r))
 }
 
 /// `ParenthesesNode` holding exactly one child; `None` otherwise (zero or
@@ -482,9 +506,9 @@ mod tests {
             "(2 > 1).freeze\n",
             "('a' > 'b').freeze\n",
             "(a > b).freeze\n",
-            "(a + 1).freeze\n",
+            "((1 + 2) * 3).freeze\n",
             "(1 + b).freeze\n",
-            "(\"x#{y}\" + 1).freeze\n",
+            "((1) * 2).freeze\n",
             "[1,2].count.freeze\n",
             "[1,2].size.freeze\n",
             "x.length.freeze\n",
@@ -510,6 +534,12 @@ mod tests {
             "(a % b).freeze\n",
             "([1,2].count).freeze\n",
             "foo.count.bar.freeze\n",
+            // 1.92 (rubocop#15841): arm 2 needs a numeric receiver.
+            "(a + 1).freeze\n",
+            "(\"x#{y}\" + 1).freeze\n",
+            "((1 + a) * 3).freeze\n",
+            "((1; 2) * 3).freeze\n",
+            "(x.size * 2).freeze\n",
         ] {
             assert_eq!(count(src), 0, "{src}");
         }

@@ -272,9 +272,9 @@ fn map_line_length(
 
 fn map_line_length_breakables(
     v: Vec<shirobai_core::rules::line_length_breakable::Breakable>,
-) -> Vec<(usize, usize, usize, String)> {
+) -> Vec<(usize, usize, usize, String, Vec<usize>)> {
     v.into_iter()
-        .map(|b| (b.line_index, b.insert_offset, b.end_offset, b.delimiter))
+        .map(|b| (b.line_index, b.insert_offset, b.end_offset, b.delimiter, b.extra_breaks))
         .collect()
 }
 
@@ -683,14 +683,23 @@ fn map_useless_access_modifier(
 }
 
 /// Shared by all six `EmptyLinesAroundBody`-family slots: `[[start, end,
-/// insert, message], ...]` — `[start, end)` is the first character of the
-/// offense line; `insert` selects the `EmptyLineCorrector` arm (`false` =
-/// remove the range, `true` = insert `"\n"` before it).
+/// insert, message, block_body_deferred], ...]` — `[start, end)` is the first
+/// character of the offense line; `insert` selects the `EmptyLineCorrector`
+/// arm (`false` = remove the range, `true` = insert `"\n"` before it);
+/// `block_body_deferred` is EHK's `left_to_block_body_cop?` candidate flag.
 fn map_empty_lines(
     v: Vec<shirobai_core::rules::empty_lines_around_body::EmptyLineOffense>,
-) -> Vec<(usize, usize, bool, String)> {
+) -> Vec<(usize, usize, bool, String, bool)> {
     v.into_iter()
-        .map(|o| (o.start_offset, o.end_offset, o.insert, o.message))
+        .map(|o| {
+            (
+                o.start_offset,
+                o.end_offset,
+                o.insert,
+                o.message,
+                o.block_body_deferred,
+            )
+        })
         .collect()
 }
 
@@ -737,12 +746,27 @@ fn map_indentation_width(
         .collect()
 }
 
+/// `Layout/IndentationConsistency`: `[offenses, groups]` —
+/// offenses `[[start, end, column_delta, autocorrect, group], ...]`, groups
+/// `[[id, forced_base_or_nil, [[start, end], ...]], ...]` (only recorded when
+/// the source has a `rubocop:` directive).
+#[allow(clippy::type_complexity)]
 fn map_indentation_consistency(
     v: Vec<shirobai_core::rules::indentation_consistency::ConsistencyOffense>,
-) -> Vec<(usize, usize, isize, bool)> {
-    v.into_iter()
-        .map(|o| (o.start_offset, o.end_offset, o.column_delta, o.autocorrect))
-        .collect()
+    groups: Vec<shirobai_core::rules::indentation_consistency::ConsistencyGroup>,
+) -> (
+    Vec<(usize, usize, isize, bool, usize)>,
+    Vec<(usize, Option<isize>, Vec<(usize, usize)>)>,
+) {
+    (
+        v.into_iter()
+            .map(|o| (o.start_offset, o.end_offset, o.column_delta, o.autocorrect, o.group))
+            .collect(),
+        groups
+            .into_iter()
+            .map(|g| (g.id, g.forced_base, g.items))
+            .collect(),
+    )
 }
 
 /// `Layout/EmptyLineBetweenDefs`: `[[start, end, message, insert, pos, n], ...]`
@@ -1248,15 +1272,25 @@ fn map_redundant_freeze(
         .collect()
 }
 
-/// `Layout/BlockAlignment`: `[[end_start, end_end, message, align_column], ...]`
+/// `Layout/BlockAlignment`: `[[end_start, end_end, message, align_column,
+/// anchor_offset, anchor_begins_line], ...]`
 /// — `[end_start, end_end)` is the closing-token range (`end` / `}`);
 /// `message`/`align_column` carry the offense detail (only misaligned blocks
 /// are emitted).
 fn map_block_alignment(
     v: Vec<shirobai_core::rules::block_alignment::BlockAlignmentOffense>,
-) -> Vec<(usize, usize, String, usize)> {
+) -> Vec<(usize, usize, String, usize, usize, bool)> {
     v.into_iter()
-        .map(|o| (o.end_start, o.end_end, o.message, o.align_column))
+        .map(|o| {
+            (
+                o.end_start,
+                o.end_end,
+                o.message,
+                o.align_column,
+                o.anchor_offset,
+                o.anchor_begins_line,
+            )
+        })
         .collect()
 }
 
@@ -1944,7 +1978,10 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_empty_lines(elab.exception_keywords))?;
         ary.push(map_block_delimiters(r.block_delimiters))?;
         ary.push(map_abc_size(r.abc_size))?;
-        ary.push(map_indentation_consistency(r.indentation_consistency))?;
+        ary.push(map_indentation_consistency(
+            r.indentation_consistency,
+            r.indentation_consistency_groups,
+        ))?;
         ary.push(map_empty_line_between_defs(r.empty_line_between_defs))?;
         ary.push(map_end_alignment(r.end_alignment))?;
         ary.push(map_block_alignment(r.block_alignment))?;
@@ -2641,7 +2678,7 @@ fn check_line_length_breakables(
     max: usize,
     split_strings: bool,
     candidate_lines: Vec<usize>,
-) -> Vec<(usize, usize, usize, String)> {
+) -> Vec<(usize, usize, usize, String, Vec<usize>)> {
     let candidates: std::collections::HashSet<usize> = candidate_lines.into_iter().collect();
     map_line_length_breakables(
         shirobai_core::rules::line_length_breakable::compute_breakables_filtered(
@@ -3167,12 +3204,12 @@ fn check_empty_lines_around_body(
     module_style: u8,
     block_style: u8,
 ) -> (
-    Vec<(usize, usize, bool, String)>,
-    Vec<(usize, usize, bool, String)>,
-    Vec<(usize, usize, bool, String)>,
-    Vec<(usize, usize, bool, String)>,
-    Vec<(usize, usize, bool, String)>,
-    Vec<(usize, usize, bool, String)>,
+    Vec<(usize, usize, bool, String, bool)>,
+    Vec<(usize, usize, bool, String, bool)>,
+    Vec<(usize, usize, bool, String, bool)>,
+    Vec<(usize, usize, bool, String, bool)>,
+    Vec<(usize, usize, bool, String, bool)>,
+    Vec<(usize, usize, bool, String, bool)>,
 ) {
     let r = shirobai_core::rules::empty_lines_around_body::check_empty_lines_around_body(
         bytes(&source),
@@ -3243,19 +3280,23 @@ fn check_indentation_width(
 /// autocorrect re-passes, when the bundle is not eligible). `internal` is true
 /// for the `indented_internal_methods` EnforcedStyle. Returns
 /// `[[start, end, column_delta, autocorrect], ...]`.
+#[allow(clippy::type_complexity)]
 fn check_indentation_consistency(
     source: RString,
     internal: bool,
-) -> Vec<(usize, usize, isize, bool)> {
+) -> (
+    Vec<(usize, usize, isize, bool, usize)>,
+    Vec<(usize, Option<isize>, Vec<(usize, usize)>)>,
+) {
     let cfg = shirobai_core::rules::indentation_consistency::Config {
         indented_internal_methods: internal,
     };
-    map_indentation_consistency(
-        shirobai_core::rules::indentation_consistency::check_indentation_consistency(
+    let (offenses, groups) =
+        shirobai_core::rules::indentation_consistency::check_indentation_consistency_with_groups(
             bytes(&source),
             cfg,
-        ),
-    )
+        );
+    map_indentation_consistency(offenses, groups)
 }
 
 /// Ruby entry point for `Layout/EmptyLineBetweenDefs`. `nums` is
@@ -4296,7 +4337,10 @@ fn check_assignment_indentation(source: RString, indentation_width: usize) -> Ve
 /// Ruby entry point for `Layout/BlockAlignment`. `style` is the
 /// `EnforcedStyleAlignWith` selector (0 = either, 1 = start_of_block,
 /// 2 = start_of_line). Returns the shape documented on `map_block_alignment`.
-fn check_block_alignment(source: RString, style: u8) -> Vec<(usize, usize, String, usize)> {
+fn check_block_alignment(
+    source: RString,
+    style: u8,
+) -> Vec<(usize, usize, String, usize, usize, bool)> {
     let cfg = shirobai_core::rules::block_alignment::Config { style };
     map_block_alignment(shirobai_core::rules::block_alignment::check_block_alignment(
         bytes(&source),

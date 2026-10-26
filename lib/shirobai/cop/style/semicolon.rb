@@ -109,30 +109,42 @@ module Shirobai
           register_semicolon_range(range, after_expression, token_before_semicolon)
         end
 
-        # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
+        # rubocop:disable Metrics/MethodLength
         def register_semicolon_range(range, after_expression, token_before_semicolon)
           add_offense(range) do |corrector|
             if after_expression
               replace_semicolon_with_line_break(corrector, range)
             else
-              node = nil
               # Prevents becoming one range instance with the subsequent line
               # when an endless range without parentheses precedes the `;`.
               # See: https://github.com/rubocop/rubocop/issues/10791
               if token_before_semicolon&.regexp_dots?
                 node = find_node(range_nodes, token_before_semicolon)
+                corrector.wrap(node, "(", ")") if node
               elsif token_before_semicolon&.type == :tLABEL
-                node = find_node(value_omission_pair_nodes, token_before_semicolon).parent
-                space = node.parent.loc.selector.end.join(node.source_range.begin)
-                corrector.remove(space)
+                parenthesize_arguments(corrector, value_omission_hash(token_before_semicolon))
               end
 
-              corrector.wrap(node, "(", ")") if node
               corrector.remove(range)
             end
           end
         end
-        # rubocop:enable Metrics/AbcSize, Metrics/MethodLength
+        # rubocop:enable Metrics/MethodLength
+
+        # Verbatim from stock 1.92 (rubocop#15928, #15995).
+        def value_omission_hash(token_before_semicolon)
+          find_node(value_omission_pair_nodes, token_before_semicolon)&.parent
+        end
+
+        def parenthesize_arguments(corrector, hash_node)
+          return unless hash_node
+
+          call = hash_node.parent
+          before_arguments = args_begin(call).begin.join(call.first_argument.source_range.begin)
+
+          corrector.replace(before_arguments, "(")
+          corrector.insert_after(call.last_argument, ")")
+        end
 
         def replace_semicolon_with_line_break(corrector, range)
           # Replacing the semicolon with a newline would move the rest of the

@@ -15,16 +15,16 @@ module Shirobai
       # `EnforcedStyleAlignWith`. Per misaligned keyword Rust returns the keyword
       # range, the formatted message, and the signed column delta.
       #
-      # The autocorrect mirrors `AlignmentCorrector.correct` for the single-line
-      # keyword range: shift the keyword's line by the column delta (insert
-      # spaces at the line start for a positive delta, remove leading whitespace
-      # for a negative one). As in stock, the correction is skipped (offense
-      # still registered) when `Layout/IndentationStyle` is `tabs`.
+      # The autocorrect is stock's own `AlignmentCorrector.correct` on the bare
+      # keyword range, exactly as stock calls it: the edit anchors at the
+      # keyword (not at its line start), it is skipped under
+      # `Layout/IndentationStyle: tabs`, and since rubocop 1.92 a range argument
+      # makes every string body in the file taboo, so an `else` inside a
+      # multiline interpolation is reported as unsupported and not moved.
       #
       # Offenses come from the per-file bundled run (`Shirobai::Dispatch`); the
       # behaviour is purely config-driven, so this cop is always bundle eligible.
       class ElseAlignment < RuboCop::Cop::Base
-        include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
 
         STYLE_TO_U8 = { keyword: 0, variable: 1, start_of_line: 2 }.freeze
@@ -42,14 +42,11 @@ module Shirobai
         def on_new_investigation
           buffer = processed_source.buffer
           off = SourceOffsets.for(processed_source.raw_source)
-          tabs = using_tabs?
 
           records_for_source.each do |else_start, else_end, message, column_delta|
             else_range = Parser::Source::Range.new(buffer, off[else_start], off[else_end])
             add_offense(else_range, message: message) do |corrector|
-              next if tabs
-
-              align_keyword(corrector, buffer, else_range, column_delta)
+              RuboCop::Cop::AlignmentCorrector.correct(corrector, processed_source, else_range, column_delta)
             end
           end
         end
@@ -58,27 +55,6 @@ module Shirobai
 
         def records_for_source
           Dispatch.offenses_for(processed_source, config, :else_alignment)
-        end
-
-        # `AlignmentCorrector.correct` for a single-line range: shift the
-        # keyword's line by `column_delta`. The keyword begins its line, so its
-        # line start is `else_begin - else_column`; a positive delta inserts that
-        # many spaces there, a negative one removes `-delta` leading characters.
-        def align_keyword(corrector, buffer, else_range, column_delta)
-          line_begin = else_range.begin_pos - else_range.column
-          if column_delta.positive?
-            corrector.insert_before(
-              Parser::Source::Range.new(buffer, line_begin, line_begin),
-              " " * column_delta
-            )
-          elsif column_delta.negative?
-            range = Parser::Source::Range.new(buffer, line_begin, line_begin - column_delta)
-            corrector.remove(range)
-          end
-        end
-
-        def using_tabs?
-          config.for_cop("Layout/IndentationStyle")["EnforcedStyle"] == "tabs"
         end
       end
     end

@@ -17,7 +17,7 @@ module Shirobai
       # range, a message selector, the delta triple and the byte ranges of the
       # key / operator / value (parser geometry). Ruby applies the realignment
       # via `corrector.insert_before` / `corrector.remove`, exactly like stock's
-      # `adjust` (including the `key_delta` clamp to `-key.column`). Offenses
+      # `adjust`. Offenses
       # come from the per-file bundled run (`Shirobai::Dispatch`); the config
       # derivation is purely config-driven, so this cop is always
       # bundle-eligible.
@@ -91,10 +91,10 @@ module Shirobai
                 if has_value
                   correct_key_value(corrector, buffer, off, deltas, key, op, value)
                 else
-                  # `correct_no_value`: adjust the whole node by the key delta,
-                  # clamped so the node is not shifted past the start of its
-                  # line (`clamped_key_delta`, 1.91).
-                  adjust(corrector, clamped_key_delta(deltas[0], range.column), range)
+                  # No-value path: adjust the whole node by the key delta.
+                  # Since 1.92 a key delta that would cross the line start
+                  # never reaches here (`key_out_of_line?` in Rust).
+                  adjust(corrector, deltas[0], range)
                 end
               end
             rescue Parser::ClobberingError
@@ -106,24 +106,18 @@ module Shirobai
         private
 
         # Mirrors stock's `correct_key_value`: adjust key, separator and value
-        # by their deltas, clamping the key delta to `-key.column`.
+        # by their deltas.
         def correct_key_value(corrector, buffer, off, deltas, key, op, value)
           key_delta, separator_delta, value_delta = deltas
-          key_start, _key_end, key_column = key
+          key_start, key_end, _key_column = key
 
-          key_range = Parser::Source::Range.new(buffer, off[key_start], off[key[1]])
+          key_range = Parser::Source::Range.new(buffer, off[key_start], off[key_end])
           op_range = Parser::Source::Range.new(buffer, off[op[0]], off[op[1]])
           value_range = Parser::Source::Range.new(buffer, off[value[0]], off[value[1]])
 
-          adjust(corrector, clamped_key_delta(key_delta, key_column), key_range)
+          adjust(corrector, key_delta, key_range)
           adjust(corrector, separator_delta, op_range)
           adjust(corrector, value_delta, value_range)
-        end
-
-        # Stock's `clamped_key_delta`: never remove more characters than the
-        # key has before it on its line.
-        def clamped_key_delta(key_delta, key_column)
-          [key_delta, -key_column].max
         end
 
         # Mirrors stock's `adjust`: insert spaces for a positive delta, remove

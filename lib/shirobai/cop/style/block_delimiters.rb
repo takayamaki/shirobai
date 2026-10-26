@@ -12,7 +12,7 @@ module Shirobai
       # `require_do_end?` rescue quirk, `BracesRequiredMethods`,
       # `AllowedMethods`, and the parser-parent emulation behind `semantic`).
       # Corrections come back as the exact corrector call sequence
-      # (`replace`/`remove`/`insert_before`/`insert_after`/`wrap`), including
+      # (`replace`/`remove`/`insert_before`/`insert_after`), including
       # the comment relocation and the `begin`..`end` wrapping of rescue
       # bodies.
       #
@@ -37,10 +37,13 @@ module Shirobai
         def self.cop_name = "Style/BlockDelimiters"
         def self.badge = RuboCop::Cop::Badge.parse("Style/BlockDelimiters")
 
-        # `Style/RedundantBegin` rewrites the same `begin` bodies the
-        # do-end-to-braces correction wraps.
+        # Verbatim from stock 1.92.1.
         def self.autocorrect_incompatible_with
-          [RuboCop::Cop::Style::RedundantBegin]
+          [
+            RuboCop::Cop::Layout::SpaceBeforeBlockBraces,
+            RuboCop::Cop::Style::MethodCallWithArgsParentheses,
+            RuboCop::Cop::Style::RedundantBegin
+          ]
         end
 
         STYLES = {
@@ -148,7 +151,6 @@ module Shirobai
             when 1 then corrector.remove(range)
             when 2 then corrector.insert_before(range, text)
             when 3 then corrector.insert_after(range, text)
-            when 4 then corrector.wrap(range, "begin\n", "\nend")
             end
           end
         end

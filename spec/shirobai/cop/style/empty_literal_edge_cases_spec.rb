@@ -81,4 +81,11 @@ RSpec.describe Shirobai::Cop::Style::EmptyLiteral do
       expect_autocorrect_parity(*klasses, src, el_config(fslc_off))
     end
   end
+
+  # 1.92 (#15863): `Hash[]` / `Hash([])` as the first parenless argument
+  # also gets its call wrapped, under `super` too.
+  it "wraps the arguments for Hash[] / Hash([]) in parenless calls and super" do
+    src = "foo Hash[], 1\nfoo Hash([])\ndef m\n  super Hash[], 2\nend\n"
+    expect_autocorrect_parity(*klasses, src, el_config)
+  end
 end

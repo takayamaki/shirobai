@@ -19,18 +19,17 @@
 //! `add_offense` natively reproduces the disable semantics.
 //!
 //! Corrections are emitted as the exact `Corrector` call sequence stock makes
-//! (`replace` / `remove` / `insert_before` / `insert_after` / `wrap`), so the
+//! (`replace` / `remove` / `insert_before` / `insert_after`), so the
 //! merged rewrite is byte-identical, including the comment relocation of
 //! `move_comment_before_block` and the `begin`/`end` wrapping of multiline
 //! rescue/ensure bodies.
 
-use ruby_prism::{CallNode, Node, StatementsNode};
+use ruby_prism::{CallNode, Node, StatementsNode, Visit};
 
 type Range = (usize, usize);
 
 /// One `corrector` call: `kind` 0 = `replace`, 1 = `remove`,
-/// 2 = `insert_before`, 3 = `insert_after`, 4 = `wrap(range, "begin\n",
-/// "\nend")` (text unused).
+/// 2 = `insert_before`, 3 = `insert_after`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CorrectionOp {
     pub kind: u8,
@@ -112,6 +111,7 @@ pub(crate) fn build_rule(source: &[u8], cfg: Config) -> Visitor<'_> {
         semantic,
         comments,
         frames: Vec::new(),
+        aux: Vec::new(),
         events: Vec::new(),
     }
 }
@@ -309,6 +309,9 @@ pub(crate) struct Visitor<'a> {
     semantic: bool,
     comments: Vec<Range>,
     frames: Vec<Frame>,
+    /// Style-independent per-frame facts (pushed/popped with `frames`) for
+    /// the 1.92 `for`-collection and loop-condition checks.
+    aux: Vec<Aux>,
     pub(crate) events: Vec<Event>,
 }
 
@@ -370,6 +373,10 @@ impl<'a> Visitor<'a> {
         body: Option<&Node<'_>>,
     ) -> bool {
         if self.require_do_end(braces, multiline, body) {
+            return true;
+        }
+        // 1.92 `collection_of_for_loop?`.
+        if self.aux.last().is_some_and(|a| a.for_collection == Some(block_range)) {
             return true;
         }
         if self.list_in(method_name, &self.cfg.allowed_methods) {
@@ -618,8 +625,13 @@ impl<'a> Visitor<'a> {
         send_arguments: bool,
         send_parenthesized: bool,
     ) -> Vec<CorrectionOp> {
-        // `correction_would_break_code?`.
-        if !braces && send_arguments && !send_parenthesized {
+        // `correction_would_break_code?` (1.92: braces in a loop condition
+        // would turn `do` into the loop body's start).
+        if braces {
+            if self.loop_condition(block_range) {
+                return Vec::new();
+            }
+        } else if send_arguments && !send_parenthesized {
             return Vec::new();
         }
         let mut ops = Vec::new();
@@ -641,7 +653,10 @@ impl<'a> Visitor<'a> {
                 ops.push(op(3, opening, " "));
             }
             ops.push(op(0, opening, "do"));
-            if let Some(comment) = self.comment_at_line_of(closing.0) {
+            if let Some(comment) = self.comment_at_line_of(closing.0)
+                // 1.92: a directive comment stays where it is.
+                && !is_directive_comment(&self.source[comment.0..comment.1])
+            {
                 self.move_comment_ops(&mut ops, comment, block_range, closing);
             }
             ops.push(op(0, closing, "end"));
@@ -658,10 +673,48 @@ impl<'a> Visitor<'a> {
                 && let Some(begin) = body.as_begin_node()
                 && (begin.rescue_clause().is_some() || begin.ensure_clause().is_some())
             {
-                ops.push(op(4, parser_body_range(&begin), ""));
+                // 1.92 `wrap_body_with_begin`: the `end` goes after the last
+                // heredoc terminator when one ends past the body.
+                let body_range = parser_body_range(&begin);
+                let mut scan = HeredocEnds { found: Vec::new() };
+                scan.visit(body);
+                let body_end = scan
+                    .found
+                    .iter()
+                    .fold(body_range, |best, &r| if r.1 > best.1 { r } else { best });
+                ops.push(op(2, body_range, "begin\n"));
+                ops.push(op(3, body_end, "\nend"));
             }
         }
         ops
+    }
+
+    /// 1.92 `loop_condition?`: the block sits in a `while`/`until`
+    /// condition without crossing an enclosing block.
+    fn loop_condition(&self, block_range: Range) -> bool {
+        for a in self.aux.iter().rev() {
+            if a.block_boundary {
+                return false;
+            }
+            if a.loop_predicate
+                .is_some_and(|p| p.0 <= block_range.0 && block_range.1 <= p.1)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// 1.92 `on_super` / `on_yield` (aliases of `on_send`): blocks in
+    /// unparenthesized `super`/`yield` arguments are ignored.
+    fn on_super_or_yield(&mut self, args: Option<ruby_prism::ArgumentsNode<'_>>, paren: bool) {
+        if paren {
+            return;
+        }
+        let Some(args) = args else { return };
+        for arg in &args.arguments() {
+            self.get_blocks(&arg);
+        }
     }
 
     /// `move_comment_before_block`, as corrector ops.
@@ -879,6 +932,7 @@ impl<'a> Visitor<'a> {
             Frame::Other
         };
         self.frames.push(frame);
+        self.aux.push(aux_of(node));
     }
 
     fn semantic_frame(&self, node: &Node<'_>) -> Frame {
@@ -1084,6 +1138,128 @@ impl<'a> Visitor<'a> {
     }
 }
 
+/// `body.each_node(:any_str).select(&:heredoc?).map { _1.loc.heredoc_end }`.
+struct HeredocEnds {
+    found: Vec<Range>,
+}
+
+impl HeredocEnds {
+    fn check(&mut self, node: &Node<'_>) {
+        let (opening, closing) = if let Some(s) = node.as_string_node() {
+            (s.opening_loc(), s.closing_loc())
+        } else if let Some(s) = node.as_interpolated_string_node() {
+            (s.opening_loc(), s.closing_loc())
+        } else if let Some(x) = node.as_x_string_node() {
+            (Some(x.opening_loc()), Some(x.closing_loc()))
+        } else if let Some(x) = node.as_interpolated_x_string_node() {
+            (Some(x.opening_loc()), Some(x.closing_loc()))
+        } else {
+            return;
+        };
+        let (Some(opening), Some(closing)) = (opening, closing) else {
+            return;
+        };
+        if !opening.as_slice().starts_with(b"<<") {
+            return;
+        }
+        // prism's heredoc closing includes the newline parser leaves out.
+        let (s, mut e) = (closing.start_offset(), closing.end_offset());
+        if e > s && closing.as_slice().ends_with(b"\n") {
+            e -= 1;
+        }
+        self.found.push((s, e));
+    }
+}
+
+impl<'pr> Visit<'pr> for HeredocEnds {
+    fn visit_branch_node_enter(&mut self, node: Node<'pr>) {
+        self.check(&node);
+    }
+
+    fn visit_leaf_node_enter(&mut self, node: Node<'pr>) {
+        self.check(&node);
+    }
+}
+
+/// Facts about one hooked ancestor that every style needs (1.92).
+#[derive(Default)]
+struct Aux {
+    /// A `for` loop: its collection's range (`collection_of_for_loop?`).
+    for_collection: Option<Range>,
+    /// A `while`/`until` (not the `begin..end while` post form): its
+    /// condition's range (`loop_condition?`).
+    loop_predicate: Option<Range>,
+    /// A parser `any_block` node (or the prism `BlockNode` under one):
+    /// `loop_condition?` stops climbing here.
+    block_boundary: bool,
+}
+
+fn aux_of(node: &Node<'_>) -> Aux {
+    if let Some(f) = node.as_for_node() {
+        return Aux {
+            for_collection: Some(node_range(&f.collection())),
+            ..Aux::default()
+        };
+    }
+    if let Some(w) = node.as_while_node() {
+        return Aux {
+            loop_predicate: (!w.is_begin_modifier()).then(|| node_range(&w.predicate())),
+            ..Aux::default()
+        };
+    }
+    if let Some(u) = node.as_until_node() {
+        return Aux {
+            loop_predicate: (!u.is_begin_modifier()).then(|| node_range(&u.predicate())),
+            ..Aux::default()
+        };
+    }
+    let block_boundary = node.as_block_node().is_some()
+        || node.as_lambda_node().is_some()
+        || node.as_forwarding_super_node().is_some_and(|s| s.block().is_some())
+        || node
+            .as_call_node()
+            .is_some_and(|c| c.block().is_some_and(|b| b.as_block_node().is_some()))
+        || node
+            .as_super_node()
+            .is_some_and(|s| s.block().is_some_and(|b| b.as_block_node().is_some()));
+    Aux {
+        block_boundary,
+        ..Aux::default()
+    }
+}
+
+/// `DirectiveComment::DIRECTIVE_COMMENT_REGEXP.match?` (unanchored): the
+/// optional cop list after the mode never changes whether it matches, so
+/// only `# rubocop : <mode>\b` (Ruby `\s*` around the markers) is checked.
+fn is_directive_comment(text: &[u8]) -> bool {
+    const MODES: [&[u8]; 9] = [
+        b"disable", b"enable", b"todo", b"push", b"pop", b"disable-next", b"todo-next",
+        b"enable-next", b"next",
+    ];
+    let ruby_ws = |b: u8| matches!(b, b' ' | b'\t' | b'\n' | b'\x0B' | b'\x0C' | b'\r');
+    let skip_ws = |mut i: usize| {
+        while i < text.len() && ruby_ws(text[i]) {
+            i += 1;
+        }
+        i
+    };
+    let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b >= 0x80;
+    (0..text.len()).filter(|&i| text[i] == b'#').any(|hash| {
+        let i = skip_ws(hash + 1);
+        let Some(rest) = text[i..].strip_prefix(b"rubocop".as_slice()) else {
+            return false;
+        };
+        let i = skip_ws(text.len() - rest.len());
+        if text.get(i) != Some(&b':') {
+            return false;
+        }
+        let i = skip_ws(i + 1);
+        MODES.iter().any(|m| {
+            text[i..].starts_with(m) && text.get(i + m.len()).is_none_or(|&b| !word(b))
+        })
+    })
+}
+
 /// The parser send's last child: the block-pass argument, the last argument,
 /// or the receiver (an attached literal block is the wrapper's child, not the
 /// send's).
@@ -1281,6 +1457,7 @@ impl super::dispatch::Rule for Visitor<'_> {
                     sup.lparen_loc().is_some(),
                 );
             }
+            self.on_super_or_yield(sup.arguments(), sup.lparen_loc().is_some());
             self.push_frame(node);
             return;
         }
@@ -1298,6 +1475,11 @@ impl super::dispatch::Rule for Visitor<'_> {
                     false,
                 );
             }
+            self.push_frame(node);
+            return;
+        }
+        if let Some(y) = node.as_yield_node() {
+            self.on_super_or_yield(y.arguments(), y.lparen_loc().is_some());
             self.push_frame(node);
             return;
         }
@@ -1321,6 +1503,7 @@ impl super::dispatch::Rule for Visitor<'_> {
 
     fn leave(&mut self) {
         self.frames.pop();
+        self.aux.pop();
     }
 
     fn enter_rescue(&mut self, node: &Node<'_>) {
@@ -1332,10 +1515,12 @@ impl super::dispatch::Rule for Visitor<'_> {
             ListInfo::default()
         };
         self.frames.push(Frame::RescueClause { stmts });
+        self.aux.push(Aux::default());
     }
 
     fn leave_rescue(&mut self) {
         self.frames.pop();
+        self.aux.pop();
     }
 }
 
@@ -1381,10 +1566,6 @@ mod tests {
                     1 => edits.push((op.start, op.end, String::new())),
                     2 => edits.push((op.start, op.start, op.text.clone())),
                     3 => edits.push((op.end, op.end, op.text.clone())),
-                    4 => {
-                        edits.push((op.start, op.start, "begin\n".to_string()));
-                        edits.push((op.end, op.end, "\nend".to_string()));
-                    }
                     _ => unreachable!(),
                 }
             }
@@ -1873,5 +2054,74 @@ mod tests {
         assert!(run("each { _1 }\n", &c).offenses.is_empty());
         assert!(run("puts [1, 2, 3].map {\n  _1 * _1\n}, 1\n", &c).offenses.is_empty());
         assert_eq!(corrected("each do it end\n", &c), "each { it }\n");
+    }
+
+    // 1.92 cases; expected values from the stock 1.92.1 CLI.
+
+    #[test]
+    fn directive_comment_detection() {
+        for yes in [
+            "# rubocop:disable Style/Foo",
+            "#rubocop : todo",
+            "# rubocop:disable-nextx",
+            "# x # rubocop:enable",
+        ] {
+            assert!(is_directive_comment(yes.as_bytes()), "{yes}");
+        }
+        for no in ["# rubocop:disables", "# RuboCop:disable all", "# plain"] {
+            assert!(!is_directive_comment(no.as_bytes()), "{no}");
+        }
+        // The directive stays after `end`; a plain comment still moves.
+        let c = cfg(0);
+        assert_eq!(
+            corrected("foo.each { |x|\n  bar(x)\n} # rubocop:disable Style/Foo\n", &c),
+            "foo.each do |x|\n  bar(x)\nend # rubocop:disable Style/Foo\n"
+        );
+    }
+
+    #[test]
+    fn braces_in_a_loop_condition_are_not_corrected() {
+        let c = cfg(0);
+        for src in [
+            "while foo.any? { |x|\n  x\n}\n  y\nend\n",
+            "until (foo.any? { |x|\n  x\n})\n  y\nend\n",
+            "z while foo.any? { |x|\n  x\n}\n",
+        ] {
+            let r = run(src, &c);
+            assert_eq!(r.offenses.len(), 1, "{src}");
+            assert!(r.offenses[0].ops.is_empty(), "{src}");
+        }
+        // The post-loop form and a block boundary make it unambiguous again.
+        assert_eq!(
+            corrected("begin\n  z\nend while foo.any? { |x|\n  x\n}\n", &c),
+            "begin\n  z\nend while foo.any? do |x|\n  x\nend\n"
+        );
+        // Nested: the outer block (loop condition) is not corrected, and its
+        // `ignore_node` then hides the inner one.
+        let r = run("while bar { foo.any? { |x|\n  x\n} }\n  y\nend\n", &c);
+        assert_eq!(r.offenses.len(), 1);
+        assert!(r.offenses[0].ops.is_empty());
+    }
+
+    #[test]
+    fn for_collection_and_super_yield_arguments() {
+        let c = cfg(0);
+        assert!(run("for x in foo.map { |y|\n  y\n}\n  p x\nend\n", &c).offenses.is_empty());
+        assert!(run("for x in foo.map do |y| y end\n  p x\nend\n", &c).offenses.is_empty());
+        let src = "def m\n  super a, foo.map { |y|\n    y\n  }\n  yield a, foo.map { |y|\n    y\n  }\nend\n";
+        assert!(run(src, &c).offenses.is_empty());
+        // Parenthesized: judged as usual.
+        assert_eq!(run("def m\n  yield(foo.map { |y|\n    y\n  })\nend\n", &c).offenses.len(), 1);
+    }
+
+    #[test]
+    fn begin_end_goes_after_a_trailing_heredoc() {
+        assert_eq!(
+            corrected(
+                "foo.each do |x|\n  bar\nrescue StandardError\n  baz(<<~EOS)\n    text\n  EOS\nend\n",
+                &cfg(3)
+            ),
+            "foo.each { |x|\n  begin\nbar\nrescue StandardError\n  baz(<<~EOS)\n    text\n  EOS\nend\n}\n"
+        );
     }
 }

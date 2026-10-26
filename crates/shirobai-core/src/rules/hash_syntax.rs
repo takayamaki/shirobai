@@ -91,6 +91,23 @@ const STYLE_HASH_ROCKETS: u8 = 1;
 const STYLE_NO_MIXED_KEYS: u8 = 2;
 const STYLE_RUBY19_NO_MIXED: u8 = 3;
 
+/// `HashShorthandSyntax::KEYWORDS` (1.92): a keyword parameter such as
+/// `def foo(if:)` can only be referenced by an omitted value (`{ if: }`);
+/// `{ if: if }` is invalid Ruby, so such pairs never get an explicit value.
+const KEYWORDS: &[&str] = &[
+    "__ENCODING__", "__FILE__", "__LINE__", "BEGIN", "END", "alias", "and", "begin", "break",
+    "case", "class", "def", "do", "else", "elsif", "end", "ensure", "false", "for", "if", "in",
+    "module", "next", "nil", "not", "or", "redo", "rescue", "retry", "return", "self", "super",
+    "then", "true", "undef", "unless", "until", "when", "while", "yield",
+];
+
+/// `keyword_value?(pair)` for a value-omitted pair (every stock caller only
+/// reaches it with `value_omission?`, where the key is a plain symbol whose
+/// source is the identifier).
+fn keyword_value(pair: &Pair) -> bool {
+    pair.value_omission && KEYWORDS.contains(&pair.key_source.as_str())
+}
+
 const SHORT_ALWAYS: u8 = 0;
 const SHORT_NEVER: u8 = 1;
 const SHORT_EITHER: u8 = 2;
@@ -356,9 +373,23 @@ impl Visitor<'_> {
         })
     }
 
-    /// `hash_rockets_enforced?(hash_node)` (1.91).
+    /// `hash_rockets_enforced?(hash_node)` (1.91, widened in 1.92 by
+    /// `no_mixed_keys_enforces_hash_rockets?`).
     fn hash_rockets_enforced(&self, pairs: &[Pair]) -> bool {
-        self.cfg.style == STYLE_HASH_ROCKETS || self.force_hash_rockets(pairs)
+        self.cfg.style == STYLE_HASH_ROCKETS
+            || self.force_hash_rockets(pairs)
+            || self.no_mixed_keys_enforces_hash_rockets(pairs)
+    }
+
+    /// `no_mixed_keys_enforces_hash_rockets?(pairs)` (1.92): the no-mixed-keys
+    /// check converts the colon pairs to rockets, so the shorthand checks must
+    /// leave the hash alone (rubocop#15694).
+    fn no_mixed_keys_enforces_hash_rockets(&self, pairs: &[Pair]) -> bool {
+        match self.cfg.style {
+            STYLE_NO_MIXED_KEYS => !self.sym_indices(pairs) || pairs.first().is_some_and(|p| !p.colon),
+            STYLE_RUBY19_NO_MIXED => !self.sym_indices(pairs),
+            _ => false,
+        }
     }
 
     fn call_frame(&self, node: &Node<'_>) -> Option<CallFrame> {
@@ -510,6 +541,9 @@ impl Visitor<'_> {
         for (i, pair) in pairs.iter().enumerate() {
             let pd = if pair.colon { Delim::Colon } else { Delim::Rocket };
             if pd == delim {
+                if keyword_value(pair) {
+                    continue;
+                }
                 let fix = if pair.colon { Fix::HashRockets } else { Fix::Ruby19 };
                 self.emit_style_offense(hash_node, pair, 2, fix, braces, i == 0);
             } else {
@@ -531,6 +565,11 @@ impl Visitor<'_> {
         for (i, pair) in pairs.iter().enumerate() {
             let pd = if pair.colon { Delim::Colon } else { Delim::Rocket };
             if pd == delim {
+                // `next if pair.value_omission? && keyword_value?(pair)` (1.92):
+                // neither an offense nor a `correct_style_detected`.
+                if keyword_value(pair) {
+                    continue;
+                }
                 self.emit_style_offense(hash_node, pair, msg, fix, braces, i == 0);
             } else {
                 self.emit_correct_style();
@@ -605,7 +644,7 @@ impl Visitor<'_> {
 
         if mixed {
             if needed {
-                for p in &omitted {
+                for p in omitted.iter().filter(|p| !keyword_value(p)) {
                     let replacement = format!("{k}: {k}", k = p.key_source);
                     let ops = self.shorthand_ops(p, &replacement);
                     self.push_shorthand(p, 6, Detect::None, ops);
@@ -661,7 +700,7 @@ impl Visitor<'_> {
             let ops = self.shorthand_ops(pair, &replacement);
             self.push_shorthand(pair, 3, Detect::Disabled, ops);
         } else if self.cfg.shorthand == SHORT_NEVER {
-            if !pair.value_omission {
+            if !pair.value_omission || keyword_value(pair) {
                 return;
             }
             let replacement = format!("{k}: {k}", k = pair.key_source);
@@ -996,7 +1035,7 @@ impl Visitor<'_> {
         let range_start = pair.key_range.0;
         // `range_with_surrounding_space(key.join(operator), side: :right)`:
         // extend right over `[ \t]*\n*` (stock defaults), then run the `sub`.
-        let range_end = self.surrounding_space_end(pair.op_range.1, 1);
+        let range_end = self.surrounding_space_end(pair.op_range.1, 1, true);
         let src = String::from_utf8_lossy(&self.source[range_start..range_end]).into_owned();
         let space = if self.argument_without_space(hash_node) {
             " "
@@ -1042,15 +1081,15 @@ impl Visitor<'_> {
             end: pair.key_range.1,
             text,
         }];
-        // `corrector.remove(range_with_surrounding_space(op))` with stock's
-        // defaults (`side: :both, newlines: true, whitespace: false`): on each
-        // side extend over `[ \t]*`, then over `\n*`, then STOP — it does *not*
-        // continue over the indentation that follows a newline. For a
-        // value-omitted pair (`uri:`) the colon abuts `\n<indent>)`, so the `\n`
-        // is pulled but the `)`'s indent is kept (`:uri => uri          )`).
+        // `corrector.remove(operator_range(pair))`:
+        // `range_with_surrounding_space(op, newlines: !value_omission?)`. On
+        // each side it extends over `[ \t]*`, then (only when `newlines`) over
+        // `\n*`, then STOPS. 1.92 (rubocop#15772) keeps the line break after
+        // a value-omitted pair (`uri:\n)`), which 1.91 swallowed.
+        let newlines = !pair.value_omission;
         let (s, e) = (
-            self.surrounding_space_end(pair.op_range.0, -1),
-            self.surrounding_space_end(pair.op_range.1, 1),
+            self.surrounding_space_end(pair.op_range.0, -1, newlines),
+            self.surrounding_space_end(pair.op_range.1, 1, newlines),
         );
         ops.push(Op {
             kind: 1,
@@ -1061,8 +1100,9 @@ impl Visitor<'_> {
         ops
     }
 
-    /// `final_pos`: from `pos`, in `step` direction, skip `[ \t]*` then `\n*`.
-    fn surrounding_space_end(&self, pos: usize, step: isize) -> usize {
+    /// `final_pos`: from `pos`, in `step` direction, skip `[ \t]*` then (when
+    /// `newlines`) `\n*`.
+    fn surrounding_space_end(&self, pos: usize, step: isize, newlines: bool) -> usize {
         let n = self.source.len();
         // The byte under inspection is `pos-1` going left, `pos` going right.
         let peek = |p: usize| -> Option<u8> {
@@ -1078,7 +1118,7 @@ impl Visitor<'_> {
         while matches!(peek(p), Some(b' ') | Some(b'\t')) {
             p = (p as isize + step) as usize;
         }
-        while matches!(peek(p), Some(b'\n')) {
+        while newlines && matches!(peek(p), Some(b'\n')) {
             p = (p as isize + step) as usize;
         }
         p
@@ -1364,5 +1404,69 @@ mod tests {
         // Without rockets the shorthand check still fires.
         assert_eq!(offenses("f(a: a)", &cfg(0, 0)).len(), 1);
         assert_eq!(offenses("f(a: a)", &cfg(0, 0))[0].2, 3);
+    }
+
+    /// Applies every offense's ops to `src` (the ops of one run never
+    /// overlap in these fixtures), like one `-A` pass.
+    fn corrected(src: &str, c: &Config) -> String {
+        let mut ops: Vec<Op> = run(src, c).into_iter().flat_map(|o| o.ops).collect();
+        ops.sort_by_key(|o| std::cmp::Reverse((o.start, o.end)));
+        let mut out = src.to_string();
+        for op in ops {
+            match op.kind {
+                0 => out.replace_range(op.start..op.end, &op.text),
+                1 => out.replace_range(op.start..op.end, ""),
+                2 => out.insert_str(op.start, &op.text),
+                _ => out.insert_str(op.end, &op.text),
+            }
+        }
+        out
+    }
+
+    // 1.92 (rubocop#15772): expanding an omitted value into a rocket pair
+    // removes only the spaces after the colon, not the following line break.
+    // Expected output taken from the stock CLI.
+    #[test]
+    fn rockets_expansion_keeps_line_break_after_omitted_value() {
+        let c = cfg(1, 0);
+        assert_eq!(corrected("cc(\n  bb:   \n)\n", &c), "cc(\n  :bb => bb\n)\n");
+        assert_eq!(
+            corrected("dd(aa: 1, bb:\t\n  )\n", &c),
+            "dd(:aa => 1, :bb => bb\n  )\n"
+        );
+    }
+
+    // 1.92 (rubocop#15879): an omitted value named after a keyword
+    // (`def m(if:)`) has no explicit form, so no check touches it.
+    #[test]
+    fn keyword_named_omitted_value_is_left_alone() {
+        let src = "def m(if:, x:)\n  f(if:,\n    x:\n  )\nend\n";
+        // never: only `x:` is expanded.
+        assert_eq!(offenses(src, &cfg(0, 1)).len(), 1);
+        // hash_rockets: only `x:` is converted, and `if:` gets no
+        // correct-style marker either.
+        let recs = run(src, &cfg(1, 0));
+        assert_eq!(recs.iter().filter(|o| o.is_offense).count(), 1);
+        assert_eq!(recs.iter().filter(|o| !o.is_offense).count(), 0);
+        // consistent with a value that cannot be omitted: no offense on `if:`.
+        let src = "def m(if:, bar:)\n  g(bar:, a: 1, if:)\nend\n";
+        let offs = offenses(src, &cfg(3, 3));
+        assert_eq!(offs.len(), 1);
+        assert_eq!(offs[0].2, 6);
+    }
+
+    // 1.92 (rubocop#15694): when a no-mixed-keys style converts the colon
+    // pairs to rockets, the shorthand checks leave the hash alone.
+    #[test]
+    fn no_mixed_keys_rockets_skip_shorthand_checks() {
+        let src = "f(\"s\" => 1, bar: bar, a:)\n";
+        let offs = offenses(src, &cfg(2, 0));
+        assert_eq!(offs.len(), 2);
+        assert!(offs.iter().all(|o| o.2 == 2));
+        assert_eq!(corrected(src, &cfg(2, 0)), "f(\"s\" => 1, :bar => bar, :a => a)\n");
+        // The first pair is a rocket: same under no_mixed_keys.
+        assert!(offenses("f(:x => 1, a: a)\n", &cfg(2, 0)).iter().all(|o| o.2 == 2));
+        // ruby19_no_mixed_keys only when a key is not a symbol.
+        assert!(offenses(src, &cfg(3, 0)).iter().all(|o| o.2 == 2));
     }
 }

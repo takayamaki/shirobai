@@ -42,10 +42,15 @@ module Shirobai
           buffer = processed_source.buffer
           off = SourceOffsets.for(processed_source.raw_source)
 
-          records_for_source.each do |end_start, end_end, message, align_column|
+          records_for_source.each do |end_start, end_end, message, align_column, anchor, anchor_ok|
             end_range = Parser::Source::Range.new(buffer, off[end_start], off[end_end])
             add_offense(end_range, message: message) do |corrector|
-              autocorrect(corrector, buffer, end_range, align_column)
+              indentation = anchor_indentation(buffer, off[anchor]) if anchor_ok && using_tabs?
+              if indentation
+                replace_end_indentation(corrector, buffer, end_range, indentation)
+              else
+                autocorrect(corrector, buffer, end_range, align_column)
+              end
             end
           end
         end
@@ -61,7 +66,27 @@ module Shirobai
           Dispatch.offenses_for(processed_source, config, :block_alignment)
         end
 
-        # `BlockAlignment#autocorrect`: `delta = start_col - loc_end.column`.
+        # `Alignment#using_tabs?` (1.92).
+        def using_tabs?
+          config.for_cop("Layout/IndentationStyle")["EnforcedStyle"] == "tabs"
+        end
+
+        # `anchor_indentation` (1.92, rubocop#15845): the anchor line's leading
+        # whitespace. Rust already applied `begins_its_line?` for the
+        # non-`start_of_block` styles.
+        def anchor_indentation(buffer, anchor_pos)
+          Parser::Source::Range.new(buffer, anchor_pos, anchor_pos).source_line[/\A\s*/]
+        end
+
+        # `replace_end_indentation` (1.92): verbatim.
+        def replace_end_indentation(corrector, buffer, loc_end, indentation)
+          whitespace = Parser::Source::Range.new(buffer, loc_end.begin_pos - loc_end.column, loc_end.begin_pos)
+          return if whitespace.source == indentation
+
+          corrector.replace(whitespace, indentation)
+        end
+
+        # `shift_end_to_start_col`: `delta = start_col - loc_end.column`.
         # Positive inserts `delta` spaces before the closing token; negative
         # removes `-delta` characters of leading whitespace.
         def autocorrect(corrector, buffer, end_range, start_col)

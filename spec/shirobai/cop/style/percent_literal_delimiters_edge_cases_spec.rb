@@ -250,4 +250,29 @@ RSpec.describe Shirobai::Cop::Style::PercentLiteralDelimiters do
       )
     end
   end
+
+  # 1.92 (rubocop#15843): `%q` / `%s` / `%r` keep their delimiters when the
+  # body holds an escaped delimiter. The scan pairs `\x` without overlap, so
+  # `\\` does not escape what follows; `%Q` interpolates and still fires.
+  describe "escaped delimiters" do
+    it "keeps escaped-delimiter literals and autocorrects the rest like stock" do
+      src = <<~'RUBY'
+        a = %r!a\!b!i
+        b = %r!#{x}\!!
+        c = %q!a\\!
+        d = %q(a\(b)
+        e = %Q!a\!b!
+        f = %q!a\\\!b!
+        g = %q!é\!!
+        h = %s!x\!y!
+        i = %q<a\>b>
+        j = %r{a\}b}
+        k = %q!a\\\\!
+        m = %q!a\
+        b!
+      RUBY
+      out = expect_autocorrect_parity(*klasses, src, config)
+      expect(out).to include("c = %q(a\\\\)\n", "f = %q!a\\\\\\!b!\n", "e = %Q(a\\!b)\n")
+    end
+  end
 end

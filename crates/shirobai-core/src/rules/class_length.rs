@@ -145,7 +145,10 @@ impl Finder<'_> {
         let length = self.calc.body_length(node.body());
         if length > self.max {
             let loc = node.location();
-            self.push(loc.start_offset(), loc.end_offset(), loc.end_offset(), length, true);
+            // 1.92 `header_end`: the LSP header of `class << self` ends at
+            // the `self` expression (rubocop#15897).
+            let head_end = node.expression().location().end_offset();
+            self.push(loc.start_offset(), loc.end_offset(), head_end, length, true);
         }
     }
 
@@ -528,5 +531,15 @@ mod tests {
         let src = "class Test\n  a = 1\n  a = 2\n  a = 3\nend";
         assert!(run(src, 3, false).lengths.is_empty());
         assert_eq!(run(src, 2, false).lengths, vec![3]);
+    }
+
+    // 1.92 `header_end` (rubocop#15897): the LSP header of `class << self`
+    // ends at `self` (vendor spec highlights `class << self`).
+    #[test]
+    fn sclass_lsp_header_ends_at_self() {
+        let src = "module Test\n  class << self\n    a = 1\n    a = 2\n    a = 3\n    a = 4\n    a = 5\n    a = 6\n  end\nend\n";
+        let c = check_class_length(src.as_bytes(), 5, false, &[]);
+        assert_eq!(c.len(), 1);
+        assert_eq!(&src[c[0].start_offset..c[0].head_end], "class << self");
     }
 }

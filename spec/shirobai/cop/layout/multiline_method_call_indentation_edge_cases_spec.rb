@@ -289,4 +289,50 @@ RSpec.describe Shirobai::Cop::Layout::MultilineMethodCallIndentation do
       a_string_including("Align `.set_mutations` with `Notifications::ConsolidateNotifications`")
     )
   end
+
+  # 1.92 (rubocop#15761 / #16033): a chain inside a block, lambda, non-ternary
+  # `if` / `unless`, `case`, `for` or `begin` body is not anchored to the hash
+  # pair it is nested in (a ternary and a block call chain still are), and a
+  # chain link carrying a block shifts each body line and the closing line
+  # once. Covers the corners the vendor spec leaves out, in both styles.
+  source_192 = <<~SRC
+    x = {
+      key: cond ? client
+                    .beta : other,
+      k5: case x
+          when 1 then client
+                        .beta
+          end,
+      k6: for i in client
+                     .beta do
+        end,
+      k7: foo(bar) { |x| x }
+            .baz,
+      k8: lambda { client
+                     .beta },
+      k9: unless foo
+        client
+          .beta
+      end,
+      beginning: beginning
+                   .beta
+    }
+    foo.bar do |x| x end
+      .baz do |x| do_something(x) end
+    foo.bar
+        .baz { |x|
+          do_something(x)
+          more(x) }
+  SRC
+
+  %w[aligned indented].each do |style|
+    it "matches stock on 1.92 body boundaries and block correction (#{style})" do
+      cfg = RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new({ "Layout/MultilineMethodCallIndentation" => { "EnforcedStyle" => style } }, "(test)"),
+        "(test)"
+      )
+      expect_lint_parity(*klasses, source_192, cfg)
+      expect_autocorrect_parity(*klasses, source_192, cfg)
+    end
+  end
 end

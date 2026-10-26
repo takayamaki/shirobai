@@ -264,6 +264,41 @@ RSpec.describe Shirobai::Cop::Layout::LineLength do
     " "
   end
 
+
+  # 1.92 string splitting and breakable-node changes, probed against stock.
+  context "with SplitStrings (1.92)" do
+    let(:split_config) do
+      config_with(default_config, "Layout/LineLength", "Max" => 40, "SplitStrings" => true)
+    end
+
+    {
+      "splits a multibyte string into several pieces in one pass" =>
+        "x = '#{'あ' * 100}'\n",
+      "lets a block inside an interpolation claim the line before a later string part" =>
+        "x = \"#{'a' * 30} \#{foo.map { |y| y }} bbbbbbbbbbbbbbbbbbb\"\n",
+      "splits a string part of an interpolated string inside an array" =>
+        "foo([\"#{'a' * 20} \#{b} #{'c ' * 20}\"])\n",
+      "skips an interpolation preceded only by blanks" =>
+        "x = \"   \#{foo(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)} bbbbbb\"\n",
+      "does not break after an element that holds a nested heredoc" =>
+        "foo({ a: bar(<<~A), b: baz_baz_baz_baz, c: qux_qux_qux_qux })\n  a\nA\n",
+      "keeps the first parameter of an unparenthesized singleton method definition" =>
+        "def self.foo aaaaaaaaaaaaa, bbbbbbbbbbbbbbb, ccccccc\nend\n"
+    }.each do |title, src|
+      it title do
+        expect_lint_parity(*klasses, src, split_config)
+        expect_autocorrect_parity(*klasses, src, split_config)
+      end
+    end
+
+    it "does not break before a nested array when array brackets are compact" do
+      config = config_with(split_config, "Layout/SpaceInsideArrayLiteralBrackets",
+                           "EnforcedStyle" => "compact")
+      src = "x = [[1, 2, 3, 4, 5, 6, 7], [8, 9, 10, 11, 12, 13, 14, 15]]\n"
+      expect_lint_parity(*klasses, src, config)
+      expect_autocorrect_parity(*klasses, src, config)
+    end
+  end
   def config_with(base, cop_name, overrides)
     hash = base.to_h.dup
     hash[cop_name] = (hash[cop_name] || {}).merge(overrides)

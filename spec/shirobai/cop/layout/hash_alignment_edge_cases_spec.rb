@@ -45,4 +45,63 @@ RSpec.describe Shirobai::Cop::Layout::HashAlignment do
     expect(stock.size).to eq(1)
     expect_autocorrect_parity(*klasses, source, config)
   end
+  # 1.92 (rubocop#15717 / #15751 / #15821): a style that meets a key it cannot
+  # right-align (key delta past the line start) drops out of the min_by
+  # unless every style does; separator values go one space after the first
+  # separator; a multiline key is left alone by the separator style and does
+  # not shift its own separator under the table style. Multi-style configs
+  # mix these with the key style, which the vendor spec does not cover.
+  def ha_config(colon, rocket)
+    RuboCop::ConfigLoader.merge_with_default(
+      RuboCop::Config.new(
+        { "Layout/HashAlignment" => { "EnforcedColonStyle" => colon, "EnforcedHashRocketStyle" => rocket } },
+        "(test)"
+      ),
+      "(test)"
+    )
+  end
+
+  source_192 = <<~SRC
+    f(
+      short: a,
+        considerably_longer_key: b,
+      c:   1
+    )
+    h = {
+      a =>  1,
+       bbbbbbbb => 2,
+      c=>3
+    }
+    g = {
+      [
+        :x,
+       :y] => 1,
+         foo => 2,
+      bar  =>   3
+    }
+    k = {
+        a => 1,
+      bb =>  2,
+      cccccccc => 3,
+      **opts,
+    }
+    m = {
+      a: 0,
+      bbbb: 1,
+       c: 2
+    }
+  SRC
+
+  [
+    ["separator", "separator"],
+    [%w[separator key], %w[separator table]],
+    [%w[key separator], %w[table separator]],
+    ["table", "table"]
+  ].each do |colon, rocket|
+    it "matches stock on unalignable keys and multiline keys (colon: #{colon}, rocket: #{rocket})" do
+      cfg = ha_config(colon, rocket)
+      expect_lint_parity(*klasses, source_192, cfg)
+      expect_autocorrect_parity(*klasses, source_192, cfg)
+    end
+  end
 end

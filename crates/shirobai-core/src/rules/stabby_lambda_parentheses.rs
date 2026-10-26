@@ -31,7 +31,7 @@
 //! - `o.lambda` / `lambda(&:nil?)` — bare `CallNode`s with no block, never
 //!   matched.
 
-use ruby_prism::{BlockParametersNode, LambdaNode, Node};
+use ruby_prism::{BlockParametersNode, LambdaNode, Node, Visit};
 
 /// `EnforcedStyle`: 0 = `require_parentheses` (default), 1 = `require_no_parentheses`.
 pub const STYLE_REQUIRE_PARENTHESES: u8 = 0;
@@ -117,6 +117,9 @@ impl Visitor<'_> {
         if has_parens == want_parens {
             return;
         }
+        if !want_parens && !self.parens_removable(&bp) {
+            return;
+        }
         self.emit(&bp, want_parens);
     }
 
@@ -133,14 +136,12 @@ impl Visitor<'_> {
                 (0, 0, 0, 0)
             } else {
                 // Unwanted `(`: report `(` and `)` 1-byte locations.
+                // 1.92: `(` through the leading padding, and the trailing
+                // padding through `)`.
                 let open = bp.opening_loc().expect("has_parens => opening_loc set");
                 let close = bp.closing_loc().expect("has_parens => closing_loc set");
-                (
-                    open.start_offset(),
-                    open.end_offset(),
-                    close.start_offset(),
-                    close.end_offset(),
-                )
+                let (first, last) = arg_bounds(bp);
+                (open.start_offset(), first, last, close.end_offset())
             };
         let message = if want_parens { MSG_REQUIRE } else { MSG_NO_REQUIRE };
         self.offenses.push(StabbyLambdaParenthesesOffense {
@@ -152,6 +153,75 @@ impl Visitor<'_> {
             paren_close_end,
             message,
         });
+    }
+}
+
+impl Visitor<'_> {
+    /// 1.92 `redundant_parentheses?` extras: the parentheses stay when an
+    /// argument needs them (`arguments_require_parentheses?`: a block or a
+    /// braced hash anywhere inside) or when the padding between them and the
+    /// arguments holds anything but whitespace (a comment).
+    fn parens_removable(&self, bp: &BlockParametersNode<'_>) -> bool {
+        let mut scan = NeedsParens { found: false };
+        if let Some(p) = bp.parameters() {
+            scan.visit(&p.as_node());
+        }
+        if scan.found {
+            return false;
+        }
+        let (first, last) = arg_bounds(bp);
+        let open_end = bp.opening_loc().map_or(first, |l| l.end_offset());
+        let close_start = bp.closing_loc().map_or(last, |l| l.start_offset());
+        let blank = |s: &[u8]| s.iter().all(|&b| matches!(b, b' ' | b'\t' | b'\n' | b'\x0B' | b'\x0C' | b'\r' | 0));
+        blank(&self.source[open_end..first]) && blank(&self.source[last..close_start])
+    }
+}
+
+/// Start of the first and end of the last parser `args` child (parameters
+/// and `;` block-local variables).
+fn arg_bounds(bp: &BlockParametersNode<'_>) -> (usize, usize) {
+    let mut first = usize::MAX;
+    let mut last = 0;
+    let mut see = |n: &Node<'_>| {
+        let l = n.location();
+        first = first.min(l.start_offset());
+        last = last.max(l.end_offset());
+    };
+    if let Some(p) = bp.parameters() {
+        p.requireds().iter().for_each(|n| see(&n));
+        p.optionals().iter().for_each(|n| see(&n));
+        if let Some(n) = p.rest() {
+            see(&n);
+        }
+        p.posts().iter().for_each(|n| see(&n));
+        p.keywords().iter().for_each(|n| see(&n));
+        if let Some(n) = p.keyword_rest() {
+            see(&n);
+        }
+        if let Some(n) = p.block() {
+            see(&n.as_node());
+        }
+    }
+    bp.locals().iter().for_each(|n| see(&n));
+    (first, last)
+}
+
+/// `arguments.each_descendant(:any_block, :hash).any? { !hash || braces? }`.
+struct NeedsParens {
+    found: bool,
+}
+
+impl<'pr> Visit<'pr> for NeedsParens {
+    fn visit_branch_node_enter(&mut self, node: Node<'pr>) {
+        let block = |b: Option<Node<'_>>| b.is_some_and(|b| b.as_block_node().is_some());
+        if node.as_hash_node().is_some()
+            || node.as_lambda_node().is_some()
+            || node.as_call_node().is_some_and(|c| block(c.block()))
+            || node.as_super_node().is_some_and(|s| block(s.block()))
+            || node.as_forwarding_super_node().is_some_and(|s| s.block().is_some())
+        {
+            self.found = true;
+        }
     }
 }
 
@@ -323,5 +393,44 @@ mod tests {
         // Inner offense covers `y`.
         let (s, e, _) = r[0];
         assert_eq!(&"->(x) { ->y { x + y } }\n"[s..e], "y");
+    }
+
+    // 1.92 (expected values from the stock 1.92.1 CLI).
+
+    fn corrected_no_parens(source: &str) -> String {
+        let mut out = source.to_string();
+        let offs = check_stabby_lambda_parentheses(
+            source.as_bytes(),
+            Config { style: STYLE_REQUIRE_NO_PARENTHESES },
+        );
+        for o in offs.iter().rev() {
+            out.replace_range(o.paren_close_start..o.paren_close_end, "");
+            out.replace_range(o.paren_open_start..o.paren_open_end, "");
+        }
+        out
+    }
+
+    #[test]
+    fn keeps_parens_needed_by_a_default_value_or_a_comment() {
+        for src in [
+            "a = ->(x = [{}]) { x }\n",
+            "b = ->(x = foo { 1 }) { x }\n",
+            "c = ->(x = -> { 1 }) { x }\n",
+            "d = ->(k: {}) { k }\n",
+            "m = ->(x # c\n) { x }\n",
+        ] {
+            assert!(run(src, STYLE_REQUIRE_NO_PARENTHESES).is_empty(), "{src}");
+        }
+    }
+
+    #[test]
+    fn removes_padding_with_the_parens() {
+        assert_eq!(corrected_no_parens("e = ->( x, y ) { x }\n"), "e = ->x, y { x }\n");
+        assert_eq!(corrected_no_parens("f = ->(\n  x\n) { x }\n"), "f = ->x { x }\n");
+        assert_eq!(corrected_no_parens("g = ->(x; y) { x }\n"), "g = ->x; y { x }\n");
+        assert_eq!(
+            corrected_no_parens("b = ->(x = foo(a: 1)) { x }\n"),
+            "b = ->x = foo(a: 1) { x }\n"
+        );
     }
 }

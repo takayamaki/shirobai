@@ -118,6 +118,8 @@ enum FrameKind {
         expr: Option<(usize, usize)>,
         is_modifier: bool,
         is_ternary: bool,
+        /// `begin ... end while c` (parser `while_post` / `until_post`).
+        begin_modifier: bool,
     },
     Assignment {
         rhs: (usize, usize),
@@ -247,6 +249,7 @@ impl<'a> Visitor<'a> {
                 expr,
                 is_modifier,
                 is_ternary,
+                ..
             } = f.kind
             {
                 if is_ternary {
@@ -855,10 +858,43 @@ impl<'a> Visitor<'a> {
                     paren: Some((pb, pe)),
                     ..
                 } if node_range.0 > *pb && node_range.1 < *pe => return None,
+                // `inside_body?(ancestor, child)` (1.92, rubocop#15761): a
+                // block / lambda, non-ternary `if` / `unless`, `begin`...`end`
+                // or loop body is its own set of statements. A prism block
+                // frame never holds the call it is attached to (that is the
+                // parent `CallNode`), so any block frame on the stack breaks.
+                FrameKind::Block { .. } => return None,
+                FrameKind::Keyword {
+                    kind: KwKind::If | KwKind::Unless,
+                    is_ternary: false,
+                    ..
+                } => return None,
+                // `begin ... end while c` is parser `while_post`, which is not
+                // in the list; every other `while` / `until` / `for` is.
+                FrameKind::Keyword {
+                    kind: KwKind::While | KwKind::Until,
+                    begin_modifier: false,
+                    ..
+                } => return None,
+                FrameKind::Keyword {
+                    kind: KwKind::For, ..
+                } => return None,
+                // `kwbegin` (an `ArrayNode` is the other `Unaligned` frame).
+                FrameKind::Unaligned if self.starts_with_begin_keyword(f.start) => return None,
                 _ => {}
             }
         }
         None
+    }
+
+    /// The source at `off` is the `begin` keyword (not an identifier such as
+    /// `beginning`).
+    fn starts_with_begin_keyword(&self, off: usize) -> bool {
+        let rest = &self.source[off..];
+        rest.starts_with(b"begin")
+            && !rest
+                .get(5)
+                .is_some_and(|&b| b.is_ascii_alphanumeric() || b == b'_' || b >= 0x80)
     }
 
     fn base_receiver_is_hash(&self, call: &CallNode<'_>) -> bool {
@@ -1134,6 +1170,7 @@ impl<'a> Visitor<'a> {
                 expr: Some(loc(&n.predicate().location())),
                 is_modifier,
                 is_ternary,
+                begin_modifier: false,
             };
         }
         if let Some(n) = node.as_unless_node() {
@@ -1142,6 +1179,7 @@ impl<'a> Visitor<'a> {
                 expr: Some(loc(&n.predicate().location())),
                 is_modifier: n.end_keyword_loc().is_none(),
                 is_ternary: false,
+                begin_modifier: false,
             };
         }
         if let Some(n) = node.as_while_node() {
@@ -1150,6 +1188,7 @@ impl<'a> Visitor<'a> {
                 expr: Some(loc(&n.predicate().location())),
                 is_modifier: false,
                 is_ternary: false,
+                begin_modifier: n.is_begin_modifier(),
             };
         }
         if let Some(n) = node.as_until_node() {
@@ -1158,6 +1197,7 @@ impl<'a> Visitor<'a> {
                 expr: Some(loc(&n.predicate().location())),
                 is_modifier: false,
                 is_ternary: false,
+                begin_modifier: n.is_begin_modifier(),
             };
         }
         if let Some(n) = node.as_for_node() {
@@ -1166,6 +1206,7 @@ impl<'a> Visitor<'a> {
                 expr: Some(loc(&n.collection().location())),
                 is_modifier: false,
                 is_ternary: false,
+                begin_modifier: false,
             };
         }
         if let Some(n) = node.as_return_node() {
@@ -1177,6 +1218,7 @@ impl<'a> Visitor<'a> {
                 expr,
                 is_modifier: false,
                 is_ternary: false,
+                begin_modifier: false,
             };
         }
         if node.as_parentheses_node().is_some() {
@@ -1462,6 +1504,21 @@ mod tests {
             .into_iter()
             .map(|o| (o.start_offset, o.end_offset, o.column_delta, o.message))
             .collect()
+    }
+
+    // Stock 1.92.1 (rubocop#15761): a chain in a block / `unless` body inside
+    // a hash pair value is not anchored to the pair, so these are accepted;
+    // a ternary branch still is (`Align .beta with client`).
+    #[test]
+    fn chain_in_body_within_pair_value() {
+        let block = "{\n  key: proc { |request|\n    request\n      .params\n  }\n}\n";
+        assert!(run(block, Style::Aligned).is_empty());
+        let unless = "x = {\n  k9: unless foo\n    client\n      .beta\n  end,\n}\n";
+        assert!(run(unless, Style::Aligned).is_empty());
+        let ternary = "x = {\n  key: cond ? client\n                .beta : other,\n}\n";
+        let got = run(ternary, Style::Aligned);
+        assert_eq!(got.len(), 1);
+        assert!(got[0].3.starts_with("Align `.beta` with `client`"), "{}", got[0].3);
     }
 
     #[test]

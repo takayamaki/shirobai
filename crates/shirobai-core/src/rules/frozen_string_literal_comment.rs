@@ -51,20 +51,19 @@
 //! - `tokens[0]` counts as a shebang only when its text starts with `#!`.
 //! - The token right after the shebang (or `tokens[0]` when there is no
 //!   shebang) counts as an encoding comment when
-//!   `Encoding::ENCODING_PATTERN.match?(text)` AND `text.valid_encoding?`.
-//!   NOTE: inside the cop's lexical scope `Encoding` resolves to the
-//!   `Style/Encoding` cop, so the pattern is
-//!   `/#.*coding\s?[:=]\s?(?:UTF|utf)-8/` — UTF-8 ONLY, not the general
-//!   magic-comment encoding form. `# encoding: ascii-8bit` does NOT count.
+//!   `MagicComment.parse(text).encoding_specified?` AND
+//!   `text.valid_encoding?` (1.92, rubocop#15799; any encoding, not only
+//!   UTF-8).
 //! - Found → insert `"\n# frozen_string_literal: true"` after that line.
 //!   None → prepend `"# frozen_string_literal: true\n"` at the file start.
 //!
-//! Only `tokens[0]` and `tokens[1]` are ever inspected, and a token can match
-//! the encoding pattern only if it is a comment (a code token never contains
-//! a `#`), so the comment list is enough to reconstruct both.
+//! Only `tokens[0]` and `tokens[1]` are ever inspected. Besides comments,
+//! only a plain `'...'` / `"..."` string (one `tSTRING` token whose text is
+//! the content) can pass the encoding check, through the Emacs form.
 
 use super::duplicate_magic_comment::{
-    FslValue, ScanEnd, emacs_token, is_rb_space, leading_line_count, line_fsl, line_slice,
+    FslValue, ScanEnd, emacs_token, encoding_specified, leading_line_count, line_fsl,
+    line_slice,
     scan_front,
 };
 use super::line_index;
@@ -200,7 +199,9 @@ fn insert_line(
         .first()
         .filter(|c| code.is_none_or(|cp| c.0 < cp));
     let Some(&(s0, e0)) = tok0 else {
-        return 0; // tokens[0] is code (or there are no tokens) → prepend.
+        // tokens[0] is code (or there are no tokens). A plain string token's
+        // text can still read as an encoding comment.
+        return code.map_or(0, |cp| code_token_encoding_line(source, cp, li));
     };
     let text0 = &source[s0..e0];
     if text0.starts_with(b"#!") {
@@ -209,14 +210,50 @@ fn insert_line(
         let tok1 = comments.get(1).filter(|c| code.is_none_or(|cp| c.0 < cp));
         if let Some(&(s1, e1)) = tok1 {
             let text1 = &source[s1..e1];
-            if valid_encoding(text1) && encoding_pattern(text1) {
+            if valid_encoding(text1) && encoding_specified(text1) {
                 return li.line_of(s1);
+            }
+        } else if let Some(cp) = code {
+            let line = code_token_encoding_line(source, cp, li);
+            if line != 0 {
+                return line;
             }
         }
         return shebang_line;
     }
-    if valid_encoding(text0) && encoding_pattern(text0) {
+    if valid_encoding(text0) && encoding_specified(text0) {
         return li.line_of(s0);
+    }
+    0
+}
+
+/// The line of a code token at `pos` whose parser token text passes the
+/// encoding check, or 0. Only a plain `'...'` / `"..."` string lexes as one
+/// `tSTRING` token whose text is the string content; anything else (an
+/// identifier, a keyword, a `tSTRING_BEG`) can never parse as a magic
+/// comment. Since 1.92 stock asks `MagicComment.parse(text).encoding_specified?`,
+/// which the Emacs form `-*- coding: x -*-` passes without a `#`.
+fn code_token_encoding_line(source: &[u8], pos: usize, li: &line_index::LineIndex) -> usize {
+    let Some(&quote) = source.get(pos).filter(|&&q| q == b'\'' || q == b'"') else {
+        return 0;
+    };
+    let mut i = pos + 1;
+    while let Some(&b) = source.get(i) {
+        match b {
+            b'\n' => return 0,
+            b'\\' => i += 2,
+            b'#' if quote == b'"' && matches!(source.get(i + 1), Some(b'{' | b'@' | b'$')) => {
+                return 0;
+            }
+            _ if b == quote => {
+                let text = &source[pos + 1..i];
+                if valid_encoding(text) && encoding_specified(text) {
+                    return li.line_of(pos);
+                }
+                return 0;
+            }
+            _ => i += 1,
+        }
     }
     0
 }
@@ -224,42 +261,6 @@ fn insert_line(
 /// `text.valid_encoding?` for a UTF-8 source buffer.
 fn valid_encoding(text: &[u8]) -> bool {
     std::str::from_utf8(text).is_ok()
-}
-
-/// `Style/Encoding::ENCODING_PATTERN` = `/#.*coding\s?[:=]\s?(?:UTF|utf)-8/`
-/// (no anchors, `.` excludes `\n`). Existence check: some `#` followed later
-/// by `coding`, one optional space, `[:=]`, one optional space, `utf-8` or
-/// `UTF-8`.
-fn encoding_pattern(text: &[u8]) -> bool {
-    let Some(hash) = text.iter().position(|&b| b == b'#') else {
-        return false;
-    };
-    let mut i = hash;
-    while i + 6 <= text.len() {
-        if &text[i..i + 6] == b"coding" && coding_tail(&text[i + 6..]) {
-            return true;
-        }
-        i += 1;
-    }
-    false
-}
-
-/// The `\s?[:=]\s?(?:UTF|utf)-8` tail after a literal `coding`.
-fn coding_tail(s: &[u8]) -> bool {
-    let mut p = 0;
-    // `\s?` : at most one whitespace.
-    if s.first().is_some_and(|&b| is_rb_space(b)) {
-        p += 1;
-    }
-    if !matches!(s.get(p), Some(b':') | Some(b'=')) {
-        return false;
-    }
-    p += 1;
-    if s.get(p).is_some_and(|&b| is_rb_space(b)) {
-        p += 1;
-    }
-    s.get(p..p + 5)
-        .is_some_and(|w| w == b"utf-8" || w == b"UTF-8")
 }
 
 #[cfg(test)]
@@ -310,9 +311,16 @@ mod tests {
     }
 
     #[test]
-    fn always_encoding_non_utf8_prepends() {
-        // ascii-8bit does not match the UTF-8-only Style/Encoding pattern.
-        assert_eq!(run("# encoding: ascii-8bit\nputs 1\n", 0), vec![(0, 0, 0, 0, 0, 0)]);
+    fn always_insert_after_non_utf8_encoding() {
+        // 1.92 (rubocop#15799): any encoding comment counts, not only UTF-8.
+        // Expected from the stock CLI (`-A`).
+        assert_eq!(run("# encoding: ascii-8bit\nputs 1\n", 0), vec![(0, 0, 0, 0, 1, 0)]);
+        assert_eq!(run("# -*- coding: binary -*-\nputs 1\n", 0), vec![(0, 0, 0, 0, 1, 0)]);
+        // A plain string token reads as an Emacs encoding comment too (stock
+        // CLI inserts after it on the first pass).
+        assert_eq!(run("'-*- coding: binary -*-'\nputs 1\n", 0), vec![(0, 0, 0, 0, 1, 0)]);
+        assert_eq!(run("'-*- coding: binary; x: #{x} -*-'\nputs 1\n", 0), vec![(0, 0, 0, 0, 1, 0)]);
+        assert_eq!(run("\"-*- coding: binary; x: #{x} -*-\"\nputs 1\n", 0), vec![(0, 0, 0, 0, 0, 0)]);
     }
 
     #[test]

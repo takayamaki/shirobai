@@ -101,4 +101,29 @@ RSpec.describe Shirobai::Cop::Layout::SpaceInsideBlockBraces do
       expect_autocorrect_parity(*klasses, "super(a) {x}\n", config)
     end
   end
+
+  # 1.92 no_space changes for multi-line blocks (rubocop#15719, #15722,
+  # #15735, #15983), probed against stock.
+  context "with EnforcedStyle: no_space (1.92)" do
+    let(:no_space_config) do
+      base = RuboCop::ConfigLoader.default_configuration
+      hash = base.to_h.dup
+      hash["Layout/SpaceInsideBlockBraces"] =
+        hash["Layout/SpaceInsideBlockBraces"].merge("EnforcedStyle" => "no_space")
+      RuboCop::Config.new(hash, base.loaded_path)
+    end
+
+    {
+      "a tab between the left brace and a comment" => "foo {\t# hi\n  x\n}\n",
+      "a closing brace at the tab indentation of the opening line" => "\tbar = foo {\n\t\tx\n\t}\n",
+      "a closing brace one column off the opening line" => "  bar = foo {\n    x\n   }\n",
+      "a spaced lone closing bracket before the brace" => "foo { [\n  1\n  ] }\n",
+      "a closing bracket followed by more code" => "foo { |a| [\n  1\n] + b }\n"
+    }.each do |label, source|
+      it "matches stock for #{label}" do
+        expect_lint_parity(*klasses, source, no_space_config, expect_offenses: false)
+        expect_autocorrect_parity(*klasses, source, no_space_config)
+      end
+    end
+  end
 end

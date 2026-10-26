@@ -10,7 +10,7 @@ module Shirobai
       # `specified?` / `enabled?`), the comment-token search that fixes the
       # offense location for `never` / `always_true`, and the
       # `last_special_comment` insertion point (shebang at token 0, then the
-      # `Style/Encoding` UTF-8 pattern on the next token). It returns at most
+      # `MagicComment` encoding check on the next token). It returns at most
       # one packed offense; the wrapper rebuilds the range and corrector with
       # stock's own helpers (`source_range`, `range_with_surrounding_space`,
       # `line_range`), so detection and autocorrect are byte-identical.

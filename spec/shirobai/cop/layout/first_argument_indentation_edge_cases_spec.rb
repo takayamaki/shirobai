@@ -145,3 +145,50 @@ RSpec.describe Shirobai::Cop::Layout::FirstArgumentIndentation do
     expect_autocorrect_parity(*klasses, src, config)
   end
 end
+
+# 1.92 (rubocop#16034 / #15997): with ArgumentAlignment
+# `with_fixed_indentation` only the first element of an unbraced hash
+# argument moves (unless HashAlignment uses `separator`), and the special
+# inner-call style corrects the whole chain only when it moves left.
+RSpec.describe Shirobai::Cop::Layout::FirstArgumentIndentation do
+  include EdgeCaseParity
+
+  klasses = [
+    RuboCop::Cop::Layout::FirstArgumentIndentation,
+    Shirobai::Cop::Layout::FirstArgumentIndentation
+  ]
+
+  source_192 = <<~RUBY
+    foo(
+    a: 1,
+        b: 2,
+      c: 3
+    )
+    foo(
+          **opts,
+      b: 2
+    )
+    foo(bar, baz.qux(
+               quux,
+    corge
+    ))
+    x = foo(bar(
+      1, 2))
+  RUBY
+
+  {
+    "fixed" => { "Layout/ArgumentAlignment" => { "EnforcedStyle" => "with_fixed_indentation" },
+                 "Layout/FirstMethodArgumentLineBreak" => { "Enabled" => true } },
+    "fixed+separator" => { "Layout/ArgumentAlignment" => { "EnforcedStyle" => "with_fixed_indentation" },
+                           "Layout/FirstMethodArgumentLineBreak" => { "Enabled" => true },
+                           "Layout/HashAlignment" => { "EnforcedColonStyle" => "separator" } },
+    "special" => { "Layout/FirstArgumentIndentation" =>
+                     { "EnforcedStyle" => "special_for_inner_method_call_in_parentheses" } }
+  }.each do |name, hash|
+    it "matches stock (#{name})" do
+      cfg = RuboCop::ConfigLoader.merge_with_default(RuboCop::Config.new(hash, "(test)"), "(test)")
+      expect_lint_parity(*klasses, source_192, cfg)
+      expect_autocorrect_parity(*klasses, source_192, cfg)
+    end
+  end
+end

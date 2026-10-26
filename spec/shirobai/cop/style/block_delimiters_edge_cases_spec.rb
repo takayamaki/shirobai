@@ -42,4 +42,80 @@ RSpec.describe Shirobai::Cop::Style::BlockDelimiters do
       lint_offenses(klasses.first, corrected, config)
     )
   end
+
+  # 1.92 behaviors probed against the stock CLI.
+  describe "1.92 quirks" do
+    def braces_config
+      RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new(
+          { "Style/BlockDelimiters" => { "EnforcedStyle" => "always_braces" } }, "(test)"
+        ),
+        "(test)"
+      )
+    end
+
+    it "keeps only directive comments in place (header match, any spacing)" do
+      source = %w[
+        #\ rubocop:disable\ Style/Foo #rubocop\ :\ todo #\ rubocop:disables
+        #\ rubocop:disable-nextx #\ x\ #\ rubocop:enable #\ RuboCop:disable\ all
+      ].map { |c| "foo.each { |x|\n  bar(x)\n} #{c}\n" }.join
+      expect_autocorrect_parity(*klasses, source, config)
+    end
+
+    it "skips the correction only in a real loop condition" do
+      source = <<~RUBY
+        z while foo.any? { |x|
+          x
+        }
+        begin
+          z
+        end while foo.any? { |x|
+          x
+        }
+        while bar { foo.any? { |x|
+          x
+        } }
+          y
+        end
+      RUBY
+      expect_autocorrect_parity(*klasses, source, config)
+    end
+
+    it "accepts a single-line `for` collection and ignores super/yield arguments" do
+      source = <<~RUBY
+        for x in foo.map { |y| y }
+          p x
+        end
+        def m
+          super a, foo.map { |y|
+            y
+          }
+          yield(foo.map { |y|
+            y
+          })
+        end
+      RUBY
+      expect_autocorrect_parity(*klasses, source, config)
+    end
+
+    it "puts `end` after a heredoc that ends a rescue/ensure body" do
+      source = <<~RUBY
+        foo.each do |x|
+          bar
+        rescue StandardError
+          baz(<<~EOS)
+            text
+          EOS
+        end
+        foo.each do |x|
+          bar(<<~A)
+            a
+          A
+        ensure
+          q
+        end
+      RUBY
+      expect_autocorrect_parity(*klasses, source, braces_config)
+    end
+  end
 end

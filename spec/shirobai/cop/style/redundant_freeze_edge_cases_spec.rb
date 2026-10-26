@@ -21,11 +21,14 @@ require "spec_helper"
 #   NOT. Empty parens `().freeze` and double parens `((1+1)).freeze` are not
 #   flagged. In prism these are `ParenthesesNode` wrapping a `StatementsNode`.
 # - **operation arms asymmetry**: arm 1 (`(send {float int} OP _)`) allows
-#   `<<` and any argument; arm 2 (`(send !{(str _) array} OP {float int})`)
-#   excludes `<<` and a string/array receiver but requires a numeric argument.
-#   So `(1 << 2)` and `(1 + b)` flag (arm 1) but `(a << 2)` and `(a + b)` do
-#   not; `(a + 1)` and `("x#{y}" + 1)` flag (arm 2) but `("x" + 1)` and
-#   `([1] + 1)` do not.
+#   `<<` and any argument; arm 2 (`(send #numeric_operation? OP {float int})`,
+#   1.92) excludes `<<` and requires a numeric argument and a receiver that is
+#   itself numeric (a literal, a parenthesized numeric operation, or a nested
+#   arithmetic send of numerics). So `(1 << 2)` and `(1 + b)` flag (arm 1),
+#   `((1 + 2) * 3)` flags (arm 2), but `(a + 1)`, `("x#{y}" + 1)` and
+#   `((1 + a) * 3)` do not.
+# - **single autocorrect edit** (1.92): the dot through the selector go in one
+#   `remove`, so `(1 + 2).\n  freeze` loses the line break too.
 # - **count/length/size arms**: the `(send _ {count length size} ...)` and
 #   `(any_block (send ...) ...)` arms match a bare send OR a send-with-block
 #   (block / numbered-parameter / `it` block), with or without a receiver, but
@@ -103,8 +106,16 @@ RSpec.describe Shirobai::Cop::Style::RedundantFreeze do
       "(1 << 2).freeze\n" => true,       # arm 1 includes `<<`
       "(1 + b).freeze\n" => true,        # arm 1: numeric receiver, any arg
       "(a << 2).freeze\n" => false,      # arm 2 excludes `<<`
-      "(a + 1).freeze\n" => true,        # arm 2: non-str/array recv, numeric arg
-      "(\"x\#{y}\" + 1).freeze\n" => true, # arm 2: dstr recv is not `(str _)`
+      "(a + 1).freeze\n" => false,       # arm 2 (1.92): receiver not numeric
+      "(\"x\#{y}\" + 1).freeze\n" => false, # arm 2 (1.92): dstr is not numeric
+      "((1 + 2) * 3).freeze\n" => true,  # arm 2: parenthesized numeric receiver
+      "((1) * 2).freeze\n" => true,
+      "((2 ** 3) / 2.0).freeze\n" => true,
+      "((1 + a) * 3).freeze\n" => false, # nested operand not numeric
+      "((1; 2) * 3).freeze\n" => false,  # multi-statement begin is not numeric
+      "(x.size * 2).freeze\n" => false,
+      "(1 + 2).\n  freeze\n" => true,    # one remove spans the line break
+      "1\n  .freeze\n" => true,
       "(\"x\" + 1).freeze\n" => false,   # arm 2 excludes str-literal receiver
       "([1] + 1).freeze\n" => false,     # arm 2 excludes array receiver
       "(a + b).freeze\n" => false,       # neither arm (non-numeric arg)
@@ -117,6 +128,7 @@ RSpec.describe Shirobai::Cop::Style::RedundantFreeze do
     }.each do |src, flagged|
       it "#{flagged ? "flags" : "does not flag"} `#{src.strip}`" do
         if flagged
+          expect(lint_offenses(klasses.first, src, config)).not_to be_empty
           expect_autocorrect_parity(*klasses, src, config)
         else
           expect_lint_parity(*klasses, src, config, expect_offenses: false)

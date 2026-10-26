@@ -76,6 +76,17 @@ module Shirobai
           []
         end
 
+        # With `Recursive: true`, `.freeze` is appended to a nested literal. When the literal
+        # is the last element and spans multiple lines, the trailing comma lands between the literal
+        # and the `.freeze` appended in the same pass.
+        def self.autocorrect_incompatible_with
+          [
+            RuboCop::Cop::Style::HashAsLastArrayItem,
+            RuboCop::Cop::Style::TrailingCommaInArrayLiteral,
+            RuboCop::Cop::Style::TrailingCommaInHashLiteral
+          ]
+        end
+
         def on_casgn(node)
           if node.expression.nil? # This is only the case for `CONST += ...` or similar
             parent = node.parent
@@ -118,10 +129,12 @@ module Shirobai
         end
 
         def strict_check(value)
+          return if value.assignment?
           return if immutable_literal?(value)
           return if operation_produces_immutable_object?(value)
           return if frozen_string_literal?(value)
           return if shareable_constant_value?(value)
+          return if parenthesized_immutable_value?(value)
 
           true
         end
@@ -149,15 +162,32 @@ module Shirobai
             return
           end
 
-          if node.array_type? && !node.bracketed?
-            corrector.wrap(expr, "[", "]")
-          elsif requires_parentheses?(node)
-            corrector.wrap(expr, "(", ")")
-          end
+          return expand_omitted_hash_value(corrector, node.parent) if omitted_hash_value?(node)
 
+          wrap_for_freeze(corrector, node, expr)
           corrector.insert_after(expr, ".freeze")
 
           freeze_nested_literals(corrector, node) if recursive?
+        end
+
+        def omitted_hash_value?(node)
+          node.parent&.pair_type? && node.parent.value_omission?
+        end
+
+        def expand_omitted_hash_value(corrector, pair)
+          key = pair.key.value
+
+          corrector.replace(pair, "#{key}: #{key}.freeze")
+        end
+
+        def wrap_for_freeze(corrector, node, expr)
+          if node.array_type? && !node.bracketed?
+            corrector.wrap(expr, "[", "]")
+          elsif node.hash_type? && !node.braces?
+            corrector.wrap(expr, "{ ", " }")
+          elsif requires_parentheses?(node)
+            corrector.wrap(expr, "(", ")")
+          end
         end
 
         def freeze_nested_literals(corrector, node)
@@ -182,7 +212,7 @@ module Shirobai
           when :array
             return [] if node.percent_literal?
 
-            node.children
+            node.children.reject(&:splat_type?)
           when :hash
             node.children.flat_map { |child| child.pair_type? ? child.children : [] }
           else
@@ -216,12 +246,30 @@ module Shirobai
           recent_shareable_value? node
         end
 
+        def parenthesized_immutable_value?(value)
+          return false if !value.begin_type? || !value.children.one?
+
+          inner = value.children.first
+
+          !inner.assignment? && !strict_check(inner)
+        end
+
         def frozen_regexp_or_range_literals?(node)
           target_ruby_version >= 3.0 && node.type?(:regexp, :range)
         end
 
         def requires_parentheses?(node)
-          node.range_type? || (node.send_type? && node.loc.dot.nil?)
+          if node.range_type? || node.operator_keyword? || unparenthesized_method_call?(node)
+            return true
+          end
+
+          node.if_type? && node.ternary?
+        end
+
+        def unparenthesized_method_call?(node)
+          return false unless node.call_type?
+
+          node.loc.dot.nil? || (node.arguments.any? && !node.parenthesized?)
         end
 
         def correct_splat_expansion(corrector, expr, splat_value)

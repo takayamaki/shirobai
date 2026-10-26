@@ -45,6 +45,12 @@ pub struct EmptyLineOffense {
     pub end_offset: usize,
     pub insert: bool,
     pub message: String,
+    /// EHK only (1.92, rubocop#15814): an "after the keyword" offense whose
+    /// keyword sits in a block body and is followed only by blank lines up to
+    /// the block's closing line. Stock leaves it to
+    /// `Layout/EmptyLinesAroundBlockBody` when that cop is enabled with
+    /// `empty_lines`; the wrapper checks that config and drops the offense.
+    pub block_body_deferred: bool,
 }
 
 /// The per-cop `EnforcedStyle`s (the other three cops have a fixed style).
@@ -94,6 +100,7 @@ pub(crate) fn build_rule(source: &[u8], cfg: Config) -> Visitor<'_> {
             begin_body: Vec::new(),
             exception_keywords: Vec::new(),
         },
+        ehk_block_end: None,
     }
 }
 
@@ -148,6 +155,9 @@ pub(crate) struct Visitor<'a> {
     line_starts: Vec<usize>,
     cfg: Config,
     out: FamilyOffenses,
+    /// Closing line of the block whose body EHK is checking (`body.parent`
+    /// is a block); `None` for def / kwbegin bodies.
+    ehk_block_end: Option<usize>,
 }
 
 impl super::dispatch::Rule for Visitor<'_> {
@@ -250,6 +260,7 @@ impl<'a> Visitor<'a> {
             end_offset: end,
             insert,
             message,
+            block_body_deferred: false,
         });
     }
 
@@ -311,48 +322,28 @@ impl<'a> Visitor<'a> {
             let Some(bn) = block.as_block_node() else {
                 return;
             };
-            // parser `send_node.last_line`: the call part ends at the argument
-            // list's closing paren, the last argument, or the message.
-            let send_last = if let Some(close) = c.closing_loc() {
-                self.line_of(close.start_offset())
-            } else if let Some(args) = c.arguments() {
-                self.line_of(args.location().end_offset())
-            } else if let Some(msg) = c.message_loc() {
-                self.line_of(msg.end_offset())
-            } else {
-                self.line_of(c.location().start_offset())
-            };
-            self.on_block(node, &bn, send_last);
+            self.on_block(node, &bn);
         } else if let Some(s) = node.as_super_node() {
             let Some(block) = s.block() else { return };
             let Some(bn) = block.as_block_node() else {
                 return;
             };
-            let send_last = if let Some(rp) = s.rparen_loc() {
-                self.line_of(rp.start_offset())
-            } else if let Some(args) = s.arguments() {
-                self.line_of(args.location().end_offset())
-            } else {
-                self.line_of(s.keyword_loc().end_offset())
-            };
-            self.on_block(node, &bn, send_last);
+            self.on_block(node, &bn);
         } else if let Some(s) = node.as_forwarding_super_node() {
             let Some(bn) = s.block() else { return };
-            // Bare `super` is a single keyword: the call part ends where the
-            // node starts.
-            let send_last = self.line_of(s.location().start_offset());
-            self.on_block(node, &bn, send_last);
+            self.on_block(node, &bn);
         } else if let Some(l) = node.as_lambda_node() {
-            // parser: `-> { }` is `(block (lambda) ...)`; `send_node` is the
-            // bare `->` operator.
-            let send_last = self.line_of(l.operator_loc().start_offset());
+            // parser: `-> { }` is `(block (lambda) ...)`.
             let first = self.line_of(l.location().start_offset());
             let open_line = self.line_of(l.opening_loc().start_offset());
             let close_line = self.line_of(l.closing_loc().start_offset());
             let body_nil = l.body().is_none();
-            self.check_block_body(open_line, close_line, send_last, body_nil);
+            let start = self.body_start_line(open_line, &l.parameters());
+            self.check_block_body(open_line, close_line, start, body_nil);
             if !is_it_parameters(&l.parameters()) {
+                self.ehk_block_end = Some(close_line);
                 self.check_ehk_body(l.body(), first, Some(close_line));
+                self.ehk_block_end = None;
             }
         }
     }
@@ -409,14 +400,32 @@ impl<'a> Visitor<'a> {
     /// Shared `on_block` for call/super blocks: `EmptyLinesAroundBlockBody`
     /// plus EHK (which skips `it`-parameter blocks; stock has no
     /// `on_itblock` alias).
-    fn on_block(&mut self, node: &Node<'_>, bn: &ruby_prism::BlockNode<'_>, send_last: usize) {
+    fn on_block(&mut self, node: &Node<'_>, bn: &ruby_prism::BlockNode<'_>) {
         let first = self.line_of(node.location().start_offset());
         let open_line = self.line_of(bn.opening_loc().start_offset());
         let close_line = self.line_of(bn.closing_loc().start_offset());
-        self.check_block_body(open_line, close_line, send_last, bn.body().is_none());
+        let start = self.body_start_line(open_line, &bn.parameters());
+        self.check_block_body(open_line, close_line, start, bn.body().is_none());
         if !is_it_parameters(&bn.parameters()) {
+            self.ehk_block_end = Some(close_line);
             self.check_ehk_body(bn.body(), first, Some(close_line));
+            self.ehk_block_end = None;
         }
+    }
+
+    /// `body_start_line` (1.92, rubocop#15953 / #16059): the line of `{` /
+    /// `do`, or the last line of the block arguments when they end later.
+    /// `arguments?` is false for numbered / `it` parameters and for empty
+    /// pipes (`||`), which parser models as an empty `args` node.
+    fn body_start_line(&self, open_line: usize, params: &Option<Node<'_>>) -> usize {
+        let Some(bp) = params.as_ref().and_then(|p| p.as_block_parameters_node()) else {
+            return open_line;
+        };
+        if bp.parameters().is_none() && bp.locals().iter().next().is_none() {
+            return open_line;
+        }
+        let end = bp.location().end_offset();
+        open_line.max(self.line_of(end.saturating_sub(1)))
     }
 
     /// `rubocop-ast` overrides `BlockNode#single_line?` to compare the
@@ -428,7 +437,7 @@ impl<'a> Visitor<'a> {
         &mut self,
         open_line: usize,
         close_line: usize,
-        send_last: usize,
+        body_start: usize,
         body_nil: bool,
     ) {
         self.check_simple(
@@ -436,7 +445,7 @@ impl<'a> Visitor<'a> {
             self.cfg.block_style,
             open_line,
             close_line,
-            Some(send_last),
+            Some(body_start),
             body_nil,
         );
     }
@@ -460,6 +469,9 @@ impl<'a> Visitor<'a> {
             return; // single_line?
         }
         let first = adjusted.unwrap_or(node_first);
+        if first >= node_last {
+            return; // 1.92: `first_line >= last_line`
+        }
         self.check_both(kind, style, first, node_last);
     }
 
@@ -482,6 +494,9 @@ impl<'a> Visitor<'a> {
         }
         let first = adjusted.unwrap_or(node_first);
         let last = node_last;
+        if first >= last {
+            return; // 1.92: `first_line >= last_line`
+        }
         match style {
             EMPTY_LINES_EXCEPT_NAMESPACE => {
                 // body is Some here (nil bodies returned above).
@@ -724,15 +739,33 @@ impl<'a> Visitor<'a> {
     fn check_keyword_lines(&mut self, kw: &str, line: usize) {
         // `lines[line]`: the line below the 1-based keyword line.
         if self.line_empty0(line) {
-            self.push_ehk(line + 1, ehk_msg("after", kw));
+            let deferred = self.only_empty_lines_until_block_end(line);
+            self.push_ehk(line + 1, ehk_msg("after", kw), deferred);
         }
         // `lines[line - 2]`: the line above the keyword.
         if line >= 2 && self.line_empty0(line - 2) {
-            self.push_ehk(line - 1, ehk_msg("before", kw));
+            self.push_ehk(line - 1, ehk_msg("before", kw), false);
         }
     }
 
-    fn push_ehk(&mut self, line1: usize, message: String) {
+    /// `left_to_block_body_cop?` minus the config check (done per offense in
+    /// the wrapper): the body's parent is a block and
+    /// `only_empty_lines_until_end?` — the first line after the keyword whose
+    /// `strip` is non-empty is the block's closing line.
+    fn only_empty_lines_until_block_end(&self, keyword_line: usize) -> bool {
+        let Some(end_line) = self.ehk_block_end else {
+            return false;
+        };
+        let next = (keyword_line + 1..=end_line).find(|&l| {
+            self.line_content0(l - 1).is_none_or(|c| {
+                c.iter()
+                    .any(|&b| !matches!(b, b' ' | b'\t' | b'\n' | b'\x0b' | b'\x0c' | b'\r' | 0))
+            })
+        });
+        next == Some(end_line)
+    }
+
+    fn push_ehk(&mut self, line1: usize, message: String, block_body_deferred: bool) {
         let Some((start, end)) = self.line_head_range(line1) else {
             return;
         };
@@ -741,6 +774,7 @@ impl<'a> Visitor<'a> {
             end_offset: end,
             insert: false,
             message,
+            block_body_deferred,
         });
     }
 
@@ -864,6 +898,31 @@ mod tests {
 
     fn run(source: &str, c: Config) -> FamilyOffenses {
         check_empty_lines_around_body(source.as_bytes(), c)
+    }
+
+    // Stock 1.92.1 (rubocop#16059): with multiline block arguments the body
+    // starts after the closing `|`, so the blank line after it is the
+    // "beginning" line (offense on line 4).
+    #[test]
+    fn block_body_starts_after_multiline_arguments() {
+        let src = "foo(a,\n    b) { |x,\n          y|\n\n  x\n}\n";
+        let got = run(src, default_cfg());
+        assert_eq!(got.block_body.len(), 1);
+        assert_eq!(got.block_body[0].start_offset, src.find("\n\n").unwrap() + 1);
+        assert!(got.block_body[0].message.contains("beginning"));
+    }
+
+    // Stock 1.92.1 (rubocop#15814): the blank line after a block body's last
+    // keyword, followed only by blank lines up to the block end, is flagged as a
+    // candidate for the block body cop; a def body never is.
+    #[test]
+    fn ehk_after_keyword_deferred_only_in_block() {
+        let block = run("foo do\n  bar\nrescue\n\nend\n", default_cfg());
+        assert_eq!(block.exception_keywords.len(), 1);
+        assert!(block.exception_keywords[0].block_body_deferred);
+        let def = run("def m\n  bar\nrescue\n\nend\n", default_cfg());
+        assert_eq!(def.exception_keywords.len(), 1);
+        assert!(!def.exception_keywords[0].block_body_deferred);
     }
 
     fn shape(v: &[EmptyLineOffense]) -> Vec<(usize, usize, bool, String)> {

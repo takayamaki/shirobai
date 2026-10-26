@@ -110,11 +110,11 @@ pub fn check_multiline_bundle(
 /// | 11  | dot_position_style |
 /// | 12  | line_length_max |
 /// | 13  | line_length_tab_width |
-/// | 14  | line_length_split_strings |
+/// | 14  | line_length flags: bit 0 = SplitStrings, bit 1 = compact array brackets (1.92) |
 /// | 15-17 | multiline_operation style / indent / base |
 /// | 18-20 | multiline_method_call style / indent / base |
 /// | 21-23 | argument_alignment style / indent / incompatible |
-/// | 24-26 | first_argument_indentation style / indent / fixed_mode (0 off / 1 `with_fixed_indentation` with FirstMethodArgumentLineBreak off: defer all / 2 with it on: defer conflicts) |
+/// | 24-26 | first_argument_indentation style / indent / fixed_mode (low bits: 0 off / 1 `with_fixed_indentation` with FirstMethodArgumentLineBreak off: defer all / 2 with it on: defer conflicts; bit 4: HashAlignment separator style) |
 /// | 27-33 | indentation_width width / relative_to_receiver / access_modifier_outdent / indented_internal_methods / end_align / def_end_align_def / use_tabs |
 /// | 34  | closing_paren_indent |
 /// | 35-37 | first_array_element style / indent / enforce_fixed_indentation |
@@ -331,6 +331,8 @@ pub struct BundleConfig {
     pub line_length_max: usize,
     pub line_length_tab_width: usize,
     pub line_length_split_strings: bool,
+    /// `Layout/SpaceInsideArrayLiteralBrackets` enforces `compact` (bit 1 of nums[14]).
+    pub line_length_compact_array_brackets: bool,
     pub multiline_operation: (u8, usize, usize),
     pub multiline_method_call: (u8, usize, usize),
     pub argument_alignment_style: u8,
@@ -755,7 +757,8 @@ impl BundleConfig {
             dot_position_style: nums[11] as u8,
             line_length_max: nums[12] as usize,
             line_length_tab_width: nums[13] as usize,
-            line_length_split_strings: nums[14] != 0,
+            line_length_split_strings: nums[14] & 1 != 0,
+            line_length_compact_array_brackets: nums[14] & 2 != 0,
             multiline_operation: (nums[15] as u8, nums[16] as usize, nums[17] as usize),
             multiline_method_call: (nums[18] as u8, nums[19] as usize, nums[20] as usize),
             argument_alignment_style: nums[21] as u8,
@@ -1141,6 +1144,7 @@ pub struct BundleResult {
     pub block_delimiters: block_delimiters::BlockDelimitersResult,
     pub abc_size: Vec<abc_size::AbcMethod>,
     pub indentation_consistency: Vec<indentation_consistency::ConsistencyOffense>,
+    pub indentation_consistency_groups: Vec<indentation_consistency::ConsistencyGroup>,
     pub empty_line_between_defs: Vec<empty_line_between_defs::EmptyLineBetweenDefsOffense>,
     pub end_alignment: Vec<end_alignment::EndAlignmentRecord>,
     pub block_alignment: Vec<block_alignment::BlockAlignmentOffense>,
@@ -1863,7 +1867,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         .map(|r| block_delimiters::resolve(r.events, &[]))
         .unwrap_or_default();
     let abc_size = abc_rule.map(|r| r.out).unwrap_or_default();
-    let indentation_consistency = ic_rule.map(|r| r.offenses).unwrap_or_default();
+    let (indentation_consistency, indentation_consistency_groups) =
+        ic_rule.map(|r| (r.offenses, r.groups)).unwrap_or_default();
     let empty_line_between_defs = elbd_rule.map(|r| r.offenses).unwrap_or_default();
     let end_alignment = ea_rule.map(|r| r.records).unwrap_or_default();
     let block_alignment = ba_rule.map(|r| r.offenses).unwrap_or_default();
@@ -2032,10 +2037,11 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
             );
             let candidate_lines: HashSet<usize> =
                 line_length.iter().map(|c| c.line_index).collect();
-            let line_length_breakables = line_length_breakable::compute_breakables_filtered(
+            let line_length_breakables = line_length_breakable::compute_breakables_with(
                 source,
                 cfg.line_length_max,
                 cfg.line_length_split_strings,
+                cfg.line_length_compact_array_brackets,
                 Some(&candidate_lines),
             );
             (line_length, line_length_breakables)
@@ -2085,6 +2091,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         block_delimiters,
         abc_size,
         indentation_consistency,
+        indentation_consistency_groups,
         empty_line_between_defs,
         end_alignment,
         block_alignment,

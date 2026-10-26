@@ -31,7 +31,7 @@
 //! The shared walk keeps a stack of `CallNode` ancestors so we can answer
 //! `node.chained?` / `node.argument?` at offense time without re-walking.
 
-use ruby_prism::Node;
+use ruby_prism::{Node, Visit};
 use std::rc::Rc;
 
 use super::line_index::LineIndex;
@@ -225,6 +225,11 @@ impl Visitor {
         if self.last_line_heredoc(c, last_arg_start, last_arg_end) {
             return;
         }
+        // 1.92 `heredoc_opened_on_closing_brace_line?` (rubocop#15832): a
+        // heredoc opened on the `)` line cannot be moved around.
+        if self.heredoc_opened_on_line(c, close_line) {
+            return;
+        }
 
         // `opening_brace_on_same_line?` = same_line?(loc.begin, children.first)
         // `closing_brace_on_same_line?` = loc.end.line == children.last.last_line
@@ -380,6 +385,67 @@ impl Visitor {
             }
         }
         false
+    }
+}
+
+impl Visitor {
+    /// Whether any heredoc under the call (receiver, arguments, block-pass)
+    /// opens on `line`.
+    fn heredoc_opened_on_line(&self, c: &ruby_prism::CallNode<'_>, line: usize) -> bool {
+        let mut finder = HeredocOpenerLines {
+            line_index: &self.line_index,
+            line,
+            found: false,
+        };
+        if let Some(r) = c.receiver() {
+            finder.visit(&r);
+        }
+        if let Some(a) = c.arguments() {
+            finder.visit(&a.as_node());
+        }
+        if let Some(b) = c.block()
+            && b.as_block_argument_node().is_some()
+        {
+            finder.visit(&b);
+        }
+        finder.found
+    }
+}
+
+struct HeredocOpenerLines<'a> {
+    line_index: &'a LineIndex,
+    line: usize,
+    found: bool,
+}
+
+impl HeredocOpenerLines<'_> {
+    fn note(&mut self, opening: Option<ruby_prism::Location<'_>>) {
+        if let Some(o) = opening
+            && o.as_slice().starts_with(b"<<")
+            && self.line_index.line_of(o.start_offset()) == self.line
+        {
+            self.found = true;
+        }
+    }
+}
+
+impl<'pr> Visit<'pr> for HeredocOpenerLines<'_> {
+    fn visit_string_node(&mut self, node: &ruby_prism::StringNode<'pr>) {
+        self.note(node.opening_loc());
+    }
+    fn visit_x_string_node(&mut self, node: &ruby_prism::XStringNode<'pr>) {
+        self.note(Some(node.opening_loc()));
+    }
+    fn visit_interpolated_string_node(&mut self, node: &ruby_prism::InterpolatedStringNode<'pr>) {
+        self.note(node.opening_loc());
+        ruby_prism::visit_interpolated_string_node(self, node);
+    }
+    fn visit_interpolated_x_string_node(
+        &mut self,
+        node: &ruby_prism::InterpolatedXStringNode<'pr>,
+    ) {
+        self.note(Some(node.opening_loc()));
+        ruby_prism::visit_interpolated_x_string_node(self, node);
     }
 }
 
@@ -596,5 +662,13 @@ mod tests {
         // send/csend target. Stock reports 1 offense on the inner brace.
         let got = run("super(bar(baz,\n  ham\n))\n", STYLE_SYMMETRICAL);
         assert_eq!(got.len(), 1);
+    }
+
+    // 1.92 `heredoc_opened_on_closing_brace_line?`. Expected from the stock
+    // CLI: no offense with the heredoc, one without it.
+    #[test]
+    fn heredoc_opened_on_closing_brace_line_is_ignored() {
+        assert!(run("foo(\na, <<~EOM, b)\n  baz\nEOM\n", 0).is_empty());
+        assert_eq!(run("foo(\na, b)\n", 0).len(), 1);
     }
 }

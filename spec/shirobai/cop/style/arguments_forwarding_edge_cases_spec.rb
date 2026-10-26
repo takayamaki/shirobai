@@ -10,10 +10,10 @@ require "spec_helper"
 #   (which scans `buffer.source`) so every offset lines up with the parser-gem
 #   character index.
 # - The paren-less def / call whose kwrest AND block both anonymize with no
-#   rest present: stock calls `add_parentheses` TWICE (two different-range
-#   offenses), and its corrector stacks the `insert_after(')')` while merging
-#   the identical `replace('(')`, producing a DOUBLE `)` (and, on the call, a
-#   double `(`). shirobai must reproduce that byte for byte.
+#   rest present: two different-range offenses both call
+#   `add_parens_if_missing` on the same node. Before 1.92 the corrector
+#   stacked a DOUBLE `)` (and `((` on the call); since 1.92 (rubocop#15962)
+#   stock parenthesizes each node once. shirobai must match byte for byte.
 # - The 3.3 anonymous-forwarding-in-block guard: forwarding inside a block is
 #   NOT correctable below 3.4, but IS at 3.4.
 # - `Naming/BlockForwarding EnforcedStyle: explicit` suppresses the block
@@ -88,16 +88,16 @@ RSpec.describe "Style/ArgumentsForwarding edge cases" do
     expect_parity(src, 2.7)
   end
 
-  it "reproduces stock's double `)` when a paren-less def anonymizes kwrest+block" do
-    # No rest, so BOTH the kwargs and block offenses call add_parentheses on
-    # the paren-less def args: identical `(` merges, `)` inserts stack -> `))`.
+  it "parenthesizes a paren-less def once when it anonymizes kwrest+block" do
+    # No rest, so BOTH the kwargs and block offenses call
+    # add_parens_if_missing on the paren-less def args; only the first adds.
     out = expect_parity("def foo **kwargs, &block\n  bar(**kwargs, &block)\nend\n", 3.2)
-    expect(out).to eq("def foo(**, &))\n  bar(**, &)\nend\n")
+    expect(out).to eq("def foo(**, &)\n  bar(**, &)\nend\n")
   end
 
-  it "reproduces stock's double `((` / `))` when a paren-less call anonymizes kwrest+block" do
+  it "parenthesizes a paren-less def and call once when they anonymize kwrest+block" do
     out = expect_parity("def foo **kwargs, &block\n  bar **kwargs, &block\nend\n", 3.2)
-    expect(out).to eq("def foo(**, &))\n  bar((**, &))\nend\n")
+    expect(out).to eq("def foo(**, &)\n  bar(**, &)\nend\n")
   end
 
   it "does not anonymize forwarding inside a block below 3.4" do
@@ -227,5 +227,33 @@ RSpec.describe "Style/ArgumentsForwarding edge cases" do
       "def foo(*args)\n  case [1]\n  in [args]\n    y\n  end\n  bar(*args)\nend\n",
       3.2
     )
+  end
+
+  # 1.92 (rubocop#15962) fills its "already parenthesized" set only when a
+  # corrector block runs. A disabled line skips the block, so the next
+  # offense on the same node still adds the parentheses.
+  it "parenthesizes a def from the first offense whose corrector runs" do
+    src = "def foo **kwargs, # rubocop:disable Style/ArgumentsForwarding\n  &block\n  " \
+          "bar(**kwargs, &block)\nend\n"
+    out = expect_parity(src, 3.4)
+    expect(out).to eq(
+      "def foo(**kwargs, # rubocop:disable Style/ArgumentsForwarding\n  &)\n  bar(**, &)\nend\n"
+    )
+  end
+
+  # Parser keeps a literal block outside the send, so the `)` added to a
+  # paren-less call goes before `do`, not after the block.
+  it "closes the parentheses of a paren-less call before its block" do
+    src = "def foo *args, **kwargs\n  bar *args, **kwargs do end\n  super *args, **kwargs do\n  end\nend\n"
+    out = expect_parity(src, 3.4)
+    expect(out).to eq("def foo(*, **)\n  bar(*, **) do end\n  super(*, **) do\n  end\nend\n")
+  end
+
+  # 1.92 (rubocop#16038) exempts only dotless operator calls and setters.
+  it "parenthesizes a dotted operator call but not a dotless one" do
+    src = "def foo(*args, **opts)\n  obj.<< *args\n  !baz(*args)\n  a = obj[*args]\n  " \
+          "obj << {x: 1, **opts}\nend\n"
+    out = expect_parity(src, 3.4)
+    expect(out).to eq("def foo(*, **)\n  obj.<<(*)\n  !baz(*)\n  a = obj[*]\n  obj << {x: 1, **}\nend\n")
   end
 end

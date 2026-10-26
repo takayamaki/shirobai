@@ -79,3 +79,65 @@ RSpec.describe Shirobai::Cop::Layout::IndentationConsistency do
     expect_autocorrect_parity(*klasses, src, config)
   end
 end
+
+# 1.92 (rubocop#16082): when Layout/IndentationWidth is disabled on the first
+# member line, the base is the first member it is enabled on. Covers
+# `all` / department / `todo` directives, the indented_internal_methods
+# sections and a disabled IndentationWidth, which the vendor spec does not.
+RSpec.describe Shirobai::Cop::Layout::IndentationConsistency do
+  include EdgeCaseParity
+
+  klasses = [
+    RuboCop::Cop::Layout::IndentationConsistency,
+    Shirobai::Cop::Layout::IndentationConsistency
+  ]
+
+  source_192 = <<~RUBY
+    module Foo
+    extend self # rubocop:disable Layout/IndentationWidth
+    
+      def bar
+      end
+    
+        def baz
+          1
+         2
+        end
+    end
+    class A
+      # rubocop:disable all
+        def x
+        end
+      # rubocop:enable all
+      def y
+      end
+          def z
+          end
+      private
+        def q
+        end
+      def r
+      end
+    end
+    module B
+      # rubocop:todo Layout
+      def a
+      end
+      # rubocop:enable Layout
+        def b
+        end
+    end
+  RUBY
+
+  {
+    "normal" => {},
+    "indented_internal_methods" => { "Layout/IndentationConsistency" => { "EnforcedStyle" => "indented_internal_methods" } },
+    "IndentationWidth disabled" => { "Layout/IndentationWidth" => { "Enabled" => false } }
+  }.each do |name, hash|
+    it "matches stock with directives (#{name})" do
+      cfg = RuboCop::ConfigLoader.merge_with_default(RuboCop::Config.new(hash, "(test)"), "(test)")
+      expect_lint_parity(*klasses, source_192, cfg)
+      expect_autocorrect_parity(*klasses, source_192, cfg)
+    end
+  end
+end

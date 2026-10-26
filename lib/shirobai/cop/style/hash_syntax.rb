@@ -91,9 +91,10 @@ module Shirobai
           end
         end
 
-        # `Style/SpaceAroundOperators`-style autocorrect interferes within the
-        # same range; the autocorrect loop resolves clobbering. Declared like
-        # stock (no special incompatibility).
+        # `autocorrect_incompatible_with` is not declared here:
+        # `Shirobai::Inject.align_autocorrect_incompatibilities!` gives this
+        # class stock's list (1.92: MethodCallWithArgsParentheses /
+        # SuperWithArgsParentheses), mapped to the shirobai classes.
 
         def alternative_style
           case style

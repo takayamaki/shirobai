@@ -311,6 +311,13 @@ impl<'a> Visitor<'a> {
         if self.handled.contains(&def_start) {
             return;
         }
+        // 1.92: `return if method_def.single_line?` — before `ignore_node`, so
+        // the def is left to its own `on_def` (which accepts an `end` that
+        // does not begin its line).
+        let def_end = d.location().end_offset();
+        if self.line_of(def_start) == self.line_of(def_end.saturating_sub(1).max(def_start)) {
+            return;
+        }
         let Some((kw_start, kw_end, end_start, end_end)) = Self::def_construct(d) else {
             // An endless def has no `end`; nothing to check, but still mark it
             // handled so its own callback stays consistent.
@@ -371,6 +378,14 @@ mod tests {
 
     fn run(source: &str, style: u8) -> Vec<DefEndAlignmentRecord> {
         check_def_end_alignment(source.as_bytes(), Config { style })
+    }
+
+    // Stock 1.92.1: a single-line def under a modifier after a line
+    // continuation is not an offense.
+    #[test]
+    fn single_line_def_after_continuation() {
+        let got = run("foo \\\n  def test; end\n", 0);
+        assert!(got.iter().all(|r| r.offense.is_none()), "{:?}", got.iter().map(|r| (r.end_start, &r.matching)).collect::<Vec<_>>());
     }
 
     #[test]

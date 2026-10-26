@@ -16,9 +16,11 @@ module Shirobai
       # For each emitted offense the wrapper reproduces stock's `add_offense`
       # on the `arguments` source range (`args.loc.expression`) and, depending
       # on the style, wraps with `(` `)` (require_parentheses, missing) or
-      # replaces `(` with `''` + removes `)` (require_no_parentheses,
-      # redundant). The behaviour is purely config-driven, so this cop is
-      # always bundle-eligible.
+      # removes `(` with the padding up to the first argument and the
+      # padding after the last argument with `)` (require_no_parentheses,
+      # redundant; 1.92 keeps the parentheses when an argument needs them or
+      # a comment sits in the padding). The behaviour is purely
+      # config-driven, so this cop is always bundle-eligible.
       class StabbyLambdaParentheses < RuboCop::Cop::Base
         include RuboCop::Cop::ConfigurableEnforcedStyle
         extend RuboCop::Cop::AutoCorrector
@@ -57,7 +59,9 @@ module Shirobai
                 close_range = Parser::Source::Range.new(
                   buffer, off[paren_close_start], off[paren_close_end]
                 )
-                corrector.replace(open_range, "")
+                # 1.92: `(` plus the leading padding, then the trailing
+                # padding plus `)`.
+                corrector.remove(open_range)
                 corrector.remove(close_range)
               end
             end

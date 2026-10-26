@@ -69,9 +69,10 @@ pub enum FixedIndentationMode {
 }
 
 impl FixedIndentationMode {
-    /// Wire form: 0 = off, 1 = defer all, 2 = defer conflicts.
+    /// Wire form: 0 = off, 1 = defer all, 2 = defer conflicts (low two
+    /// bits; bit 4 is the HashAlignment separator flag, see `build_rule`).
     pub fn from_u8(v: u8) -> Self {
-        match v {
+        match v & 3 {
             1 => FixedIndentationMode::DeferAll,
             2 => FixedIndentationMode::DeferConflicts,
             _ => FixedIndentationMode::Off,
@@ -101,6 +102,9 @@ pub(crate) fn build_rule(
     indent_width: usize,
     fixed_mode: u8,
 ) -> Option<Visitor<'_>> {
+    // Bit 4: an enabled `Layout/HashAlignment` uses the `separator` style
+    // for colons or rockets (`enforce_hash_argument_with_separator?`).
+    let hash_separator = fixed_mode & 4 != 0;
     let fixed_mode = FixedIndentationMode::from_u8(fixed_mode);
     if fixed_mode == FixedIndentationMode::DeferAll {
         return None;
@@ -112,6 +116,7 @@ pub(crate) fn build_rule(
         style: Style::from_u8(style),
         indent: indent_width,
         defer_conflicts: fixed_mode == FixedIndentationMode::DeferConflicts,
+        hash_separator,
         stack: Vec::new(),
         comment_lines: comment_lines(source, &line_index),
         offenses: Vec::new(),
@@ -126,6 +131,9 @@ struct AlignmentFacts {
     arg_count: usize,
     /// `node.first_argument.pairs.count` when the first argument is a hash.
     first_arg_pairs: Option<usize>,
+    /// `node.children.first` of an unbraced hash first argument (a pair or
+    /// a kwsplat), for `hash_elements_aligned_by_argument_alignment?`.
+    unbraced_hash_first_child: Option<(usize, usize)>,
     /// Start of `node.loc.selector`, or of `node.loc.begin` when there is no
     /// selector: the line `indentation_of_method_line` reads.
     method_line_anchor: usize,
@@ -162,6 +170,8 @@ pub(crate) struct Visitor<'a> {
     indent: usize,
     /// [`FixedIndentationMode::DeferConflicts`].
     defer_conflicts: bool,
+    /// `enforce_hash_argument_with_separator?`.
+    hash_separator: bool,
     stack: Vec<Frame>,
     /// 1-based line numbers of lines that are a comment beginning the line.
     comment_lines: Vec<usize>,
@@ -349,7 +359,8 @@ impl<'a> Visitor<'a> {
             )
         } else {
             let msg = self.message(node_range, first_arg, special);
-            let correct = self.correct_range(node_range, first_arg, column_delta, end_loc_start);
+            let correct =
+                self.correct_range(node_range, first_arg, column_delta, end_loc_start, &facts);
             (msg, correct, true)
         };
 
@@ -466,11 +477,19 @@ impl<'a> Visitor<'a> {
         first_arg: (usize, usize),
         column_delta: isize,
         node_end_loc_start: Option<usize>,
+        facts: &AlignmentFacts,
     ) -> (usize, usize) {
         // send_node = first_argument.parent = the call (node_range).
         let (top, top_end_loc) = self.find_top_level_send(node_range, node_end_loc_start);
         if self.should_correct_entire_chain(node_range, top, top_end_loc, column_delta) {
             top
+        } else if let Some(child) = facts.unbraced_hash_first_child.filter(|_| {
+            // `hash_elements_aligned_by_argument_alignment?` (1.92,
+            // rubocop#16034): ArgumentAlignment `with_fixed_indentation` (the
+            // cop only runs in defer-conflicts mode then) owns the other pairs.
+            self.defer_conflicts && self.argument_alignment_applies(facts) && !self.hash_separator
+        }) {
+            child
         } else {
             // node_to_correct = node = first_argument. AlignmentCorrector over the
             // argument's range realigns its line(s).
@@ -538,6 +557,10 @@ impl<'a> Visitor<'a> {
         if (self.display_column(send_range.0) as isize) >= column_delta.abs() {
             return false;
         }
+        // 1.92 (rubocop#15997): `return false if column_delta.positive?`.
+        if column_delta > 0 {
+            return false;
+        }
         // top_level_send != send_node || begins_its_line?(top_level_send.loc.end)
         top != send_range || self.begins_its_line(top_end_loc.unwrap_or(top.1))
     }
@@ -596,6 +619,10 @@ impl<'a> Visitor<'a> {
                 is_plain_call: c.name().as_slice() != b"[]=",
                 arg_count,
                 first_arg_pairs: hash_pair_count(&first),
+                unbraced_hash_first_child: first
+                    .as_keyword_hash_node()
+                    .and_then(|h| h.elements().iter().next())
+                    .map(|e| loc(&e.location())),
                 method_line_anchor: c
                     .message_loc()
                     .or_else(|| c.opening_loc())
@@ -622,6 +649,7 @@ impl<'a> Visitor<'a> {
                 is_plain_call: false,
                 arg_count: 0,
                 first_arg_pairs: None,
+                unbraced_hash_first_child: None,
                 method_line_anchor: s.as_node().location().start_offset(),
             };
             self.process_call(
@@ -726,6 +754,20 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    // Stock 1.92.1 (rubocop#16034): under ArgumentAlignment
+    // `with_fixed_indentation` only `a: 1` moves (the corrected file keeps
+    // `b: 2` where it was); with a HashAlignment separator style the whole
+    // hash moves.
+    #[test]
+    fn fixed_indentation_moves_only_first_hash_element() {
+        let src = "foo(\na: 1,\n    b: 2,\n  c: 3\n)\n";
+        let got = check_first_argument_indentation(src.as_bytes(), 0, 2, 2);
+        assert_eq!(got.len(), 1);
+        assert_eq!((got[0].correct_start, got[0].correct_end), (5, 9));
+        let got = check_first_argument_indentation(src.as_bytes(), 0, 2, 2 | 4);
+        assert_eq!((got[0].correct_start, got[0].correct_end), (5, src.find("\n)").unwrap()));
     }
 
     #[test]

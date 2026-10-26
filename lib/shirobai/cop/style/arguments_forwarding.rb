@@ -11,9 +11,8 @@ module Shirobai
       # classifies each call against the def's rest / kwrest / block params.
       # It returns, in stock's exact `add_offense` order, one record per
       # offense: the highlight range, the message code, and the precise
-      # corrector op stream (`add_parentheses` reproduced byte for byte,
-      # including stock's double `)` / `((` when two different-range offenses
-      # each add parentheses to a paren-less def / call). RuboCop dedups
+      # corrector op stream (`add_parentheses` reproduced byte for byte;
+      # since 1.92 each node gets its parentheses at most once, see `apply_ops`). RuboCop dedups
       # offenses by range through a Set, so a repeated range's corrector is
       # dropped here exactly like in stock.
       #
@@ -42,7 +41,11 @@ module Shirobai
         def self.badge = RuboCop::Cop::Badge.parse(cop_name)
 
         def self.autocorrect_incompatible_with
-          [RuboCop::Cop::Naming::BlockForwarding, RuboCop::Cop::Style::MethodDefParentheses]
+          [
+            RuboCop::Cop::Naming::BlockForwarding,
+            RuboCop::Cop::Style::EndlessMethod,
+            RuboCop::Cop::Style::MethodDefParentheses
+          ]
         end
 
         # `[[target_ruby, allow_only_rest, use_anon, explicit_block],
@@ -67,6 +70,9 @@ module Shirobai
         def on_new_investigation
           buffer = processed_source.buffer
           off = SourceOffsets.for(bundle_eligible? ? processed_source.raw_source : buffer.source)
+          # Stock's `@parenthesized_nodes`: node ranges whose parentheses an
+          # earlier corrector block of this investigation already added.
+          @parenthesized = Set.new
 
           resolved_offenses.each do |start, fin, message_idx, ops|
             range = Parser::Source::Range.new(buffer, off[start], off[fin])
@@ -91,8 +97,23 @@ module Shirobai
           end
         end
 
+        # Kinds 4 / 5 bracket the `add_parens_if_missing` ops of one node
+        # (kind 4 carries the node range as its key). The group is applied
+        # only the first time its key comes up, like stock's
+        # `@parenthesized_nodes` set, which is filled when a corrector block
+        # actually runs (not for a duplicate range or a disabled line).
         def apply_ops(corrector, buffer, off, ops)
+          skipping = false
           ops.each do |kind, s, e, text|
+            if kind == 4
+              skipping = !@parenthesized.add?([s, e])
+              next
+            elsif kind == 5
+              skipping = false
+              next
+            end
+            next if skipping
+
             range = Parser::Source::Range.new(buffer, off[s], off[e])
             case kind
             when 0 then corrector.replace(range, text)

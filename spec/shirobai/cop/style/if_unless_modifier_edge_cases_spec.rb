@@ -22,9 +22,12 @@ require "spec_helper"
 # - `another_statement_on_same_line?` stops at the first parser `begin`;
 #   a plain `begin; ...; end` keeps statements as direct kwbegin children,
 #   so a same-line sibling inside it does NOT suppress the offense.
-# - The heredoc rewrite moves only the LAST argument's heredoc; csend and
-#   assignment bodies take the plain rewrite (its output is stock's,
-#   byte for byte, even when it looks broken).
+# - The heredoc rewrite (1.92) moves EVERY heredoc of the node (condition
+#   first, then body) byte for byte, minus heredocs nested in another
+#   heredoc. xstr heredocs count too.
+# - `sibling != node` in `another_modifier_if_on_same_line?` is parser's
+#   STRUCTURAL equality: two equal modifier ifs on one line inside `||` do
+#   not see each other, so both are still flagged and corrected.
 # - Multi-pass autocorrect: stock stores ignored NODES and compares their
 #   stale ranges numerically on later passes; `(a if b) if c` converges to
 #   both forms corrected because the stale outer range fails to contain the
@@ -157,7 +160,7 @@ RSpec.describe Shirobai::Cop::Style::IfUnlessModifier do
   end
 
   describe "heredoc rewrites (too-long direction)" do
-    it "moves the last argument's heredoc into the block form" do
+    it "moves the argument heredoc into the block form" do
       expect_autocorrect_parity(
         *klasses,
         "do_something_with(<<~TEXT) if #{long}_condition\n  body line\nTEXT\n",
@@ -165,7 +168,7 @@ RSpec.describe Shirobai::Cop::Style::IfUnlessModifier do
       )
     end
 
-    it "moves only the LAST of two heredocs" do
+    it "moves both of two heredocs" do
       expect_autocorrect_parity(
         *klasses,
         "do_something_with(<<~A, <<~B) if #{long}_condition\n  a body\nA\n  b body\nB\n",
@@ -173,7 +176,7 @@ RSpec.describe Shirobai::Cop::Style::IfUnlessModifier do
       )
     end
 
-    it "takes the plain rewrite for an assignment body (stock's own output)" do
+    it "moves the heredoc of an assignment body" do
       expect_autocorrect_parity(
         *klasses,
         "x = <<~TEXT if #{long}_condition\n  body line\nTEXT\n",
@@ -181,11 +184,69 @@ RSpec.describe Shirobai::Cop::Style::IfUnlessModifier do
       )
     end
 
-    it "takes the plain rewrite for a csend body" do
+    it "moves the heredoc of a csend body" do
       expect_autocorrect_parity(
         *klasses,
         "foo&.do_something_with(<<~TEXT) if #{long}_condition\n  body line\nTEXT\n",
         config
+      )
+    end
+
+    it "moves an xstr heredoc and the heredocs of a binary operator, nested one kept inside" do
+      expect_autocorrect_parity(
+        *klasses,
+        "run(<<~`CMD`) if #{long}_condition\n  ls \#{dir}\nCMD\n" \
+        "x = <<~A + <<~B if #{long}_condition\n  a \#{<<~C}\n    c\n  C\nA\n  b\nB\n",
+        config
+      )
+    end
+
+    it "moves a dash heredoc and one in an interpolated string argument" do
+      expect_autocorrect_parity(
+        *klasses,
+        "z = foo(<<-X, \"\#{<<~Y}\") unless #{long}_condition\n  x\n  X\ny\nY\n",
+        config
+      )
+    end
+
+    it "moves a heredoc whose terminator ends the file without a newline" do
+      expect_autocorrect_parity(
+        *klasses, "foo(<<~EOS) if #{long}_condition\n  x\nEOS", config
+      )
+    end
+  end
+
+  describe "1.92 parenthesize / wrapped values / logical operators" do
+    it "parenthesizes a ternary ELSE branch and a non-first call argument" do
+      expect_autocorrect_parity(
+        *klasses, "p(b ? 1 : if a\n  1\nend)\nfoo(if a\n  1\nend, 2)\n", config
+      )
+    end
+
+    it "recurses through a parenthesized return value and chained assignments" do
+      expect_autocorrect_parity(
+        *klasses,
+        "def foo\n  if cond\n    return (obj.do_something bar, foo: 1)\n  end\n" \
+        "  if cond\n    @x = $g = y = obj.call a, b: 2\n  end\nend\n",
+        config
+      )
+    end
+
+    it "still flags two STRUCTURALLY EQUAL modifier ifs on one line inside `||`" do
+      half = "(#{"f" * 40} if condition_one)"
+      expect_autocorrect_parity(
+        *klasses, "x = #{half} || #{half}\ny = #{half} || #{half.sub(" if", "  if")}\n", config
+      )
+    end
+
+    it "suppresses different modifier ifs sharing a line inside `&&`" do
+      src = "y = (#{"f" * 50} if condition_one) && (#{"b" * 50} unless condition_two)\n"
+      expect_lint_parity(*klasses, src, config, expect_offenses: false)
+    end
+
+    it "flags a lone too-long modifier inside `||`" do
+      expect_autocorrect_parity(
+        *klasses, "w = (#{"f" * 80} if condition_onnnnnnnnnnnnnnne) || baaaar\n", config
       )
     end
   end

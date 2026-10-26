@@ -92,3 +92,53 @@ RSpec.describe Shirobai::Cop::Layout::ArgumentAlignment do
     RuboCop::Config.new(hash, base.loaded_path)
   end
 end
+
+# 1.92 (rubocop#16048): a binary operator call (`a << {...}`) is skipped, while
+# `[]` and dotted operator calls (`a.<<(...)`, `a.+(...)`) are still checked.
+# A braced hash first argument with two or more pairs counts as multiple
+# arguments (stock `multiple_arguments?`).
+RSpec.describe Shirobai::Cop::Layout::ArgumentAlignment do
+  include EdgeCaseParity
+
+  klasses = [
+    RuboCop::Cop::Layout::ArgumentAlignment,
+    Shirobai::Cop::Layout::ArgumentAlignment
+  ]
+
+  source_192 = <<~RUBY
+    foo(
+          {a: 1, b: 2})
+    bar(
+          {a: 1})
+    foo << {
+             a: 1
+           } <<
+      {
+        b: 2,
+        c: 3
+      }
+    foo.<<(
+            {
+              b: 2,
+              c: 3
+            }
+    )
+    x[
+          {a: 1, b: 2}]
+    a.+(
+         {a: 1, b: 2})
+    a +
+          {a: 1, b: 2}
+  RUBY
+
+  %w[with_fixed_indentation with_first_argument].each do |style|
+    it "matches stock on operator calls and braced hashes (#{style})" do
+      cfg = RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new({ "Layout/ArgumentAlignment" => { "EnforcedStyle" => style } }, "(test)"),
+        "(test)"
+      )
+      expect_lint_parity(*klasses, source_192, cfg, expect_offenses: style == "with_fixed_indentation")
+      expect_autocorrect_parity(*klasses, source_192, cfg)
+    end
+  end
+end

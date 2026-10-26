@@ -331,11 +331,16 @@ impl Visitor<'_> {
             if self.line_of(pair.range.0) == self.line_of(open_start) {
                 return;
             }
-            if self.separator_style(pair) {
-                let offset = self.longest_key_offset(h, pair);
-                self.check_first(pair, open_start, paren, offset);
-            } else {
-                self.check_first(pair, open_start, paren, 0);
+            // `check_first_pair` (1.92, rubocop#16050): only a first pair that
+            // begins its line is checked (not one after `**splat,` on the
+            // same line).
+            if self.begins_its_line(pair.range.0) {
+                if self.separator_style(pair) {
+                    let offset = self.longest_key_offset(h, pair);
+                    self.check_first(pair, open_start, paren, offset);
+                } else {
+                    self.check_first(pair, open_start, paren, 0);
+                }
             }
         }
         let close = h.closing_loc();
@@ -358,21 +363,36 @@ impl Visitor<'_> {
         }
     }
 
-    /// `check_based_on_longest_key`'s offset: `max(key lengths) - first key
-    /// length`, over the hash's pairs (`key.source_range.length`).
+    /// `check_based_on_longest_key`'s offset: the longest single-line key
+    /// length minus the first key length (`key.source_range.length`), or 0
+    /// when the first key spans several lines (1.92, rubocop#15857).
     fn longest_key_offset(&self, h: &ruby_prism::HashNode<'_>, first: &PairInfo) -> usize {
+        if !self.single_line(first.key_range) {
+            return 0;
+        }
         let first_len = first.key_range.1 - first.key_range.0;
         let max_len = h
             .elements()
             .iter()
             .filter_map(|e| e.as_assoc_node())
-            .map(|a| {
-                let k = a.key().location();
-                k.end_offset() - k.start_offset()
-            })
+            .map(|a| loc(&a.key().location()))
+            .filter(|&k| self.single_line(k))
+            .map(|k| k.1 - k.0)
             .max()
             .unwrap_or(first_len);
         max_len - first_len
+    }
+
+    fn single_line(&self, range: (usize, usize)) -> bool {
+        self.line_of(range.0) == self.line_of(range.1.saturating_sub(1).max(range.0))
+    }
+
+    /// `begins_its_line?`: only whitespace precedes `off` on its line.
+    fn begins_its_line(&self, off: usize) -> bool {
+        let ls = self.line_index.line_start(off);
+        self.source[ls..off]
+            .iter()
+            .all(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\x0b' | b'\x0c'))
     }
 
     /// `check_first(first_pair, left_brace, left_parenthesis, offset)`.
@@ -632,6 +652,33 @@ mod tests {
             0,
         );
         assert!(got.iter().any(|o| o.3.contains("the parent hash key")));
+    }
+
+    // Stock 1.92.1: a multiline first key gets no longest-key offset
+    // (rubocop#15857), and a first pair after `**opts,` on its line is not
+    // checked (rubocop#16050).
+    #[test]
+    fn separator_multiline_first_key_and_splat_line() {
+        let sep = SeparatorConfig {
+            colon_separator: true,
+            rocket_separator: true,
+        };
+        let got = check_first_hash_element_indentation(
+            "a << {\n  [\n    :x\n  ] => 1,\n     'longer_key' => 2\n}\n".as_bytes(),
+            0,
+            2,
+            false,
+            sep,
+        );
+        assert!(got.is_empty());
+        let got = check_first_hash_element_indentation(
+            "a << {\n      **opts, 'b' => 1,\n  'ccc' => 2\n}\n".as_bytes(),
+            0,
+            2,
+            false,
+            sep,
+        );
+        assert!(got.is_empty());
     }
 
     #[test]

@@ -121,17 +121,42 @@ module Shirobai
           shebang? ? 2 : 1
         end
 
-        # Stock's `check_encoding_comment`, verbatim.
+        # Stock's `check_encoding_comment` and its 1.92 helpers, verbatim
+        # (rubocop#15786). The extra comment walks run only per offense.
         def check_encoding_comment(comment)
-          line = comment.source_range.line
-          return if line == effective_encoding_line && comment_starts_line?(comment)
-          # Leave `# frozen_string_literal: true` + `# encoding: x` runs at the
-          # very top to Lint/OrderedMagicComments, which already reorders them.
-          return if preceded_only_by_magic_comments?(comment)
+          return unless misplaced_encoding_position?(comment)
 
           add_offense(comment, message: MSG_ENCODING) do |corrector|
-            move_comment(corrector, comment, effective_encoding_line)
+            correct_encoding_comment(corrector, comment)
           end
+        end
+
+        def misplaced_encoding_position?(comment)
+          line = comment.source_range.line
+          return false if line == effective_encoding_line && comment_starts_line?(comment)
+
+          # Leave `# frozen_string_literal: true` + `# encoding: x` runs at the
+          # very top to Lint/OrderedMagicComments, which already reorders them.
+          !preceded_only_by_magic_comments?(comment)
+        end
+
+        # With an effective encoding comment already in place, moving another
+        # one in would override it. Drop an identical duplicate and leave a
+        # conflicting one for a human to resolve.
+        def correct_encoding_comment(corrector, comment)
+          effective_comment = effective_encoding_comment
+
+          if effective_comment.nil?
+            move_comment(corrector, comment, effective_encoding_line)
+          elsif comment_encoding(effective_comment) == comment_encoding(comment)
+            corrector.remove(comment_removal_range(comment))
+          end
+        end
+
+        def comment_encoding(comment)
+          Encoding.find(RuboCop::MagicComment.parse(comment.text).encoding)
+        rescue ArgumentError
+          nil
         end
 
         # Stock's `check_top_block_comment`, with
@@ -143,8 +168,42 @@ module Shirobai
 
           message = format(MSG_AFTER_CODE, directive: directive)
           add_offense(comment, message: message) do |corrector|
-            move_comment(corrector, comment, effective_encoding_line)
+            # Both would be inserted at the top, in no reliable order. Leave
+            # this one to the next pass, once the encoding comment is in place.
+            next if encoding_comment_moving_in?
+
+            move_comment(corrector, comment, top_block_insertion_line)
           end
+        end
+
+        # Stock 1.92, verbatim.
+        def encoding_comment_moving_in?
+          return false if effective_encoding_comment
+
+          processed_source.comments.any? do |comment|
+            known_encoding_comment?(comment) && misplaced_encoding_position?(comment)
+          end
+        end
+
+        def effective_encoding_comment
+          processed_source.comments.find do |comment|
+            comment.source_range.line == effective_encoding_line &&
+              comment_starts_line?(comment) &&
+              RuboCop::MagicComment.parse(comment.text).encoding_specified?
+          end
+        end
+
+        def known_encoding_comment?(comment)
+          return false unless magic_comment_shaped?(comment.text)
+
+          magic_comment = RuboCop::MagicComment.parse(comment.text)
+          magic_comment.encoding_specified? && known_encoding?(magic_comment.encoding)
+        end
+
+        # Insert below an effective encoding comment rather than above it,
+        # which would push it off the only lines where Ruby honors it.
+        def top_block_insertion_line
+          effective_encoding_comment ? effective_encoding_line + 1 : effective_encoding_line
         end
 
         # Stock's `check_magic_comment_above_shebang`, with the `find` over
@@ -174,17 +233,21 @@ module Shirobai
 
         # Stock's `move_comment`, verbatim.
         def move_comment(corrector, comment, target_line)
-          removal_range = if comment_starts_line?(comment)
-                            range_by_whole_lines(comment.source_range, include_final_newline: true)
-                          else
-                            range_with_surrounding_space(comment.source_range, side: :left)
-                          end
-          corrector.remove(removal_range)
+          corrector.remove(comment_removal_range(comment))
           target_range = processed_source.buffer.line_range(target_line)
           if comment.source_range.line < target_line
             corrector.insert_after(target_range, "\n#{comment.text}")
           else
             corrector.insert_before(target_range, "#{comment.text}\n")
+          end
+        end
+
+        # Stock 1.92, verbatim.
+        def comment_removal_range(comment)
+          if comment_starts_line?(comment)
+            range_by_whole_lines(comment.source_range, include_final_newline: true)
+          else
+            range_with_surrounding_space(comment.source_range, side: :left)
           end
         end
       end

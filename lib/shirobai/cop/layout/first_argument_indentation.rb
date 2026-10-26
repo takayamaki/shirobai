@@ -36,7 +36,9 @@ module Shirobai
         # `Layout/ArgumentAlignment` does not enforce `with_fixed_indentation`;
         # otherwise `1` while `Layout/FirstMethodArgumentLineBreak` is disabled
         # (the cop defers entirely) and `2` while it is enabled (the cop defers
-        # only on the inner calls where the two would loop, 1.90).
+        # only on the inner calls where the two would loop, 1.90). Bit `4` is
+        # stock's `enforce_hash_argument_with_separator?` (1.92): an enabled
+        # `Layout/HashAlignment` with a `separator` colon or rocket style.
         def self.bundle_args(config)
           cop_config = config.for_badge(badge)
           argument_alignment_config = config.for_enabled_cop("Layout/ArgumentAlignment")
@@ -45,11 +47,19 @@ module Shirobai
                        else
                          0
                        end
+          fixed_mode |= 4 if hash_argument_with_separator?(config)
           [
             STYLES.fetch(cop_config["EnforcedStyle"], 0),
             cop_config["IndentationWidth"] || config.for_cop("Layout/IndentationWidth")["Width"] || 2,
             fixed_mode
           ]
+        end
+
+        # Verbatim body of stock's `enforce_hash_argument_with_separator?`.
+        def self.hash_argument_with_separator?(config)
+          RuboCop::Cop::Layout::HashAlignment::SEPARATOR_ALIGNMENT_STYLES.any? do |style|
+            config.for_enabled_cop("Layout/HashAlignment")[style]&.include?("separator")
+          end
         end
 
         def on_new_investigation

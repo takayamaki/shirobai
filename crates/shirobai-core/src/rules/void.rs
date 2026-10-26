@@ -466,7 +466,25 @@ impl<'a> Visitor<'a> {
         if branch || self.nearest_def_is_asgn() {
             return None;
         }
-        let (start, end) = node_range(expr);
+        let (start, mut end) = node_range(expr);
+        // 1.92 `void_expression_range` (rubocop#15796): a heredoc goes with
+        // its body, up to the end of `loc.heredoc_end` (prism's closing loc
+        // includes the trailing newline; parser's does not).
+        let heredoc_closing = if let Some(s) = expr.as_string_node() {
+            s.opening_loc().zip(s.closing_loc())
+        } else if let Some(s) = expr.as_interpolated_string_node() {
+            s.opening_loc().zip(s.closing_loc())
+        } else {
+            None
+        };
+        if let Some((open, close)) = heredoc_closing
+            && self.source[open.start_offset()..open.end_offset()].starts_with(b"<<")
+        {
+            end = close.end_offset();
+            if end > close.start_offset() && self.source[end - 1] == b'\n' {
+                end -= 1;
+            }
+        }
         Some((self.extend_left_over_space_and_newlines(start), end))
     }
 
@@ -1354,5 +1372,13 @@ mod tests {
         assert_eq!(run("def f = (42; foo)\ntop\n").len(), 1);
         // nested paren op: one offense, deduplicated by range.
         assert_eq!(run("((a + b); c)\ntop\n").len(), 1);
+    }
+
+    // 1.92 `void_expression_range`: a void heredoc is removed with its body.
+    // Expected text from the stock CLI (`-A`).
+    #[test]
+    fn void_heredoc_removed_with_body() {
+        let src = "<<~CSS\n  /* comment */\nCSS\ntop\n";
+        assert_eq!(apply(src, &run(src)), "\ntop\n");
     }
 }
