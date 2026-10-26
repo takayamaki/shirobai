@@ -683,14 +683,23 @@ fn map_useless_access_modifier(
 }
 
 /// Shared by all six `EmptyLinesAroundBody`-family slots: `[[start, end,
-/// insert, message], ...]` — `[start, end)` is the first character of the
-/// offense line; `insert` selects the `EmptyLineCorrector` arm (`false` =
-/// remove the range, `true` = insert `"\n"` before it).
+/// insert, message, block_body_deferred], ...]` — `[start, end)` is the first
+/// character of the offense line; `insert` selects the `EmptyLineCorrector`
+/// arm (`false` = remove the range, `true` = insert `"\n"` before it);
+/// `block_body_deferred` is EHK's `left_to_block_body_cop?` candidate flag.
 fn map_empty_lines(
     v: Vec<shirobai_core::rules::empty_lines_around_body::EmptyLineOffense>,
-) -> Vec<(usize, usize, bool, String)> {
+) -> Vec<(usize, usize, bool, String, bool)> {
     v.into_iter()
-        .map(|o| (o.start_offset, o.end_offset, o.insert, o.message))
+        .map(|o| {
+            (
+                o.start_offset,
+                o.end_offset,
+                o.insert,
+                o.message,
+                o.block_body_deferred,
+            )
+        })
         .collect()
 }
 
@@ -3167,12 +3176,12 @@ fn check_empty_lines_around_body(
     module_style: u8,
     block_style: u8,
 ) -> (
-    Vec<(usize, usize, bool, String)>,
-    Vec<(usize, usize, bool, String)>,
-    Vec<(usize, usize, bool, String)>,
-    Vec<(usize, usize, bool, String)>,
-    Vec<(usize, usize, bool, String)>,
-    Vec<(usize, usize, bool, String)>,
+    Vec<(usize, usize, bool, String, bool)>,
+    Vec<(usize, usize, bool, String, bool)>,
+    Vec<(usize, usize, bool, String, bool)>,
+    Vec<(usize, usize, bool, String, bool)>,
+    Vec<(usize, usize, bool, String, bool)>,
+    Vec<(usize, usize, bool, String, bool)>,
 ) {
     let r = shirobai_core::rules::empty_lines_around_body::check_empty_lines_around_body(
         bytes(&source),
