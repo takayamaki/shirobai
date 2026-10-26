@@ -131,6 +131,17 @@ impl Visitor<'_> {
         if has_receiver && call.name().as_slice() == b"[]=" {
             return;
         }
+        // `binary_operator_call?` (1.92, rubocop#16048): `a << {...}` is an
+        // operation, not a method call to align; `[]` and `a.<<(...)` still
+        // are.
+        if has_receiver
+            && call.call_operator_loc().is_none()
+            && call.message_loc().is_some()
+            && call.name().as_slice() != b"[]"
+            && is_operator_method(call.name().as_slice())
+        {
+            return;
+        }
 
         let Some(items) = self.flattened_arguments(call) else {
             return; // `!multiple_arguments?`
@@ -159,11 +170,12 @@ impl Visitor<'_> {
             args.push(block);
         }
 
-        // multiple_arguments?
+        // multiple_arguments?: two or more arguments, or a first argument
+        // that is a hash (braced or not) with two or more pairs.
         let qualifies = args.len() >= 2
             || args
                 .first()
-                .map(|f| braceless_hash_pairs(f).is_some_and(|p| p.len() >= 2))
+                .map(|f| hash_pair_count(f) >= 2)
                 .unwrap_or(false);
         if !qualifies {
             return None;
@@ -244,6 +256,31 @@ impl Visitor<'_> {
     }
 }
 
+/// `hash.pairs.count` for a braced (`HashNode`) or braceless
+/// (`KeywordHashNode`) hash; 0 for anything else.
+fn hash_pair_count(node: &Node<'_>) -> usize {
+    let count = |elements: ruby_prism::NodeList<'_>| {
+        elements.iter().filter(|e| e.as_assoc_node().is_some()).count()
+    };
+    if let Some(h) = node.as_hash_node() {
+        count(h.elements())
+    } else if let Some(h) = node.as_keyword_hash_node() {
+        count(h.elements())
+    } else {
+        0
+    }
+}
+
+/// rubocop-ast `OPERATOR_METHODS`.
+fn is_operator_method(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"|" | b"^" | b"&" | b"<=>" | b"==" | b"===" | b"=~" | b">" | b">=" | b"<" | b"<="
+            | b"<<" | b">>" | b"+" | b"-" | b"*" | b"/" | b"%" | b"**" | b"~" | b"+@"
+            | b"-@" | b"!@" | b"~@" | b"[]" | b"[]=" | b"!" | b"!=" | b"!~" | b"`"
+    )
+}
+
 /// If `node` is a braceless hash (Prism `KeywordHashNode`), its `pairs`
 /// (`AssocNode` ranges; kwsplats excluded). `None` for anything else.
 fn braceless_hash_pairs(node: &Node<'_>) -> Option<Vec<(usize, usize)>> {
@@ -282,6 +319,19 @@ mod tests {
             .into_iter()
             .map(|o| (o.start_offset, o.end_offset, o.column_delta, o.autocorrect))
             .collect()
+    }
+
+    // Stock 1.92.1 (with_fixed_indentation): `foo.<<(` with a braced hash of
+    // two pairs is flagged (and corrected to column 2); `foo << {...} << {...}`
+    // is a binary operation and is not.
+    #[test]
+    fn operator_calls_and_braced_hash() {
+        let dotted = "foo.<<(\n        {\n          b: 2,\n          c: 3\n        }\n)\n";
+        let got = run(dotted, 1);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].2, -6);
+        let binary = "foo << {\n         a: 1\n       } <<\n  {\n    b: 2,\n    c: 3\n  }\n";
+        assert!(run(binary, 1).is_empty());
     }
 
     #[test]
