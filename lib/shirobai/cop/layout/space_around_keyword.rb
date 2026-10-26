@@ -51,6 +51,8 @@ module Shirobai
                 corrector.insert_before(range, " ")
               end
             else
+              next if block_brace_with_no_space_style?(range)
+
               add_offense(range, message: format(MSG_AFTER, range: range.source)) do |corrector|
                 corrector.insert_after(range, " ")
               end
@@ -59,6 +61,18 @@ module Shirobai
         end
 
         private
+
+        # Stock 1.92 `block_brace_with_no_space_style?` (rubocop#15713), run
+        # per offense. Its node test (the keyword's parent is a block whose
+        # `{` starts right at the keyword's end) can only hold for a bare
+        # `super{`: no other keyword node is the send of a brace block.
+        def block_brace_with_no_space_style?(range)
+          return false unless range.source == "super" && range.source_buffer.source[range.end_pos] == "{"
+
+          space_before_block_braces_config = config.for_cop("Layout/SpaceBeforeBlockBraces")
+          space_before_block_braces_config.fetch("Enabled", true) &&
+            space_before_block_braces_config["EnforcedStyle"] == "no_space"
+        end
 
         def offenses_for_source
           Dispatch.offenses_for(processed_source, config, :space_around_keyword)

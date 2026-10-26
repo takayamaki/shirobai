@@ -56,4 +56,20 @@ RSpec.describe Shirobai::Cop::Layout::SpaceAroundKeyword do
     expect_lint_parity(*klasses, source, config, expect_offenses: false)
     expect(lint_offenses(klasses.first, source, config)).to be_empty
   end
+
+  # 1.92 `block_brace_with_no_space_style?` (rubocop#15713): `super{` is
+  # accepted only while Layout/SpaceBeforeBlockBraces is enabled with
+  # `no_space`; a disabled SpaceBeforeBlockBraces flags it again.
+  [{ "EnforcedStyle" => "no_space" },
+   { "EnforcedStyle" => "no_space", "Enabled" => false }].each do |overrides|
+    it "matches stock for `super{` with SpaceBeforeBlockBraces #{overrides}" do
+      base = RuboCop::ConfigLoader.default_configuration
+      hash = base.to_h.dup
+      hash["Layout/SpaceBeforeBlockBraces"] = hash["Layout/SpaceBeforeBlockBraces"].merge(overrides)
+      cfg = RuboCop::Config.new(hash, base.loaded_path)
+      source = "def f\n  super{|x| x }\nend\n"
+      expect_lint_parity(*klasses, source, cfg, expect_offenses: false)
+      expect_autocorrect_parity(*klasses, source, cfg)
+    end
+  end
 end
