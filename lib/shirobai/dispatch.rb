@@ -641,7 +641,7 @@ module Shirobai
           vn[0], vn[1],                  # VariableNumber style / flags
           mn[0],                         # MethodName style (bundle always computes the filtered flavor)
           dot[0],                        # DotPosition style
-          ll[0], ll[1], num(ll[2]),      # LineLength Max / tab width / SplitStrings
+          ll[0], ll[1], ll[2],           # LineLength Max / tab width / flags (SplitStrings, compact arrays)
           op[0], op[1], op[2],           # MultilineOperationIndentation style / indent / base
           mc[0], mc[1], mc[2],           # MultilineMethodCallIndentation style / indent / base
           aa[0], aa[1], num(aa[2]),      # ArgumentAlignment style / indent / incompatible

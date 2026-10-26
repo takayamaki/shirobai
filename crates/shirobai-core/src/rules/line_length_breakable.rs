@@ -37,6 +37,9 @@ pub struct Breakable {
     pub end_offset: usize,
     /// Empty = newline break; `'`/`"` = string-split continuation delimiter.
     pub delimiter: String,
+    /// Further 1-byte break points on the same line (since 1.92 a string
+    /// that needs several pieces is split in one pass).
+    pub extra_breaks: Vec<usize>,
 }
 
 /// Compute every per-line breakable insertion point for `source`.
@@ -61,6 +64,19 @@ pub fn compute_breakables_filtered(
     split_strings: bool,
     candidate_lines: Option<&HashSet<usize>>,
 ) -> Vec<Breakable> {
+    compute_breakables_with(source, max, split_strings, false, candidate_lines)
+}
+
+/// Like [`compute_breakables_filtered`], with `compact_array_brackets` set
+/// when `Layout/SpaceInsideArrayLiteralBrackets` is enabled with the
+/// `compact` style (1.92's `compact_array_brackets_enforced?`).
+pub fn compute_breakables_with(
+    source: &[u8],
+    max: usize,
+    split_strings: bool,
+    compact_array_brackets: bool,
+    candidate_lines: Option<&HashSet<usize>>,
+) -> Vec<Breakable> {
     // No candidate line can become an offense, so no breakable is ever
     // consumed. Skip the parse + AST walk + byte scans entirely.
     if candidate_lines.is_some_and(|c| c.is_empty()) {
@@ -82,6 +98,7 @@ pub fn compute_breakables_filtered(
             line_index: &line_index,
             max,
             split_strings,
+            compact_array_brackets,
             candidate_lines,
             stack: Vec::new(),
             ranges: std::collections::BTreeMap::new(),
@@ -89,7 +106,7 @@ pub fn compute_breakables_filtered(
             literals,
             comments,
             comment_lines,
-            string_parent_start: None,
+            extra_breaks: std::collections::BTreeMap::new(),
         };
         // Semicolons are claimed first (upstream does this in
         // `on_new_investigation`, before the node walk), so a NODE claim never
@@ -146,8 +163,6 @@ struct ParentInfo {
     /// Parent is a `dstr` (interpolated string); `(begin_offset, end_offset)` of
     /// its opening quote, used to derive a string part's delimiter.
     dstr_open: Option<(usize, usize)>,
-    /// Byte offset of the parent node's start (for `column_offset_between`).
-    start_offset: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -161,6 +176,7 @@ struct BreakableVisitor<'a> {
     line_index: &'a LineIndex,
     max: usize,
     split_strings: bool,
+    compact_array_brackets: bool,
     /// When `Some`, only lines whose 0-based index is in the set may produce a
     /// breakable; other lines are skipped before the expensive extraction.
     candidate_lines: Option<&'a HashSet<usize>>,
@@ -170,12 +186,13 @@ struct BreakableVisitor<'a> {
     literals: Vec<(usize, usize)>,
     comments: Vec<(usize, usize)>,
     comment_lines: std::collections::BTreeSet<usize>,
-    /// Explicit parent start offset used while processing dstr string parts.
-    string_parent_start: Option<usize>,
+    /// Extra break offsets after the first one, for a string split into
+    /// several pieces in one pass.
+    extra_breaks: std::collections::BTreeMap<usize, Vec<usize>>,
 }
 
 impl BreakableVisitor<'_> {
-    fn into_breakables(self) -> Vec<Breakable> {
+    fn into_breakables(mut self) -> Vec<Breakable> {
         self.ranges
             .into_iter()
             .map(|(line_index, (insert_offset, end_offset))| Breakable {
@@ -187,6 +204,7 @@ impl BreakableVisitor<'_> {
                     .get(&line_index)
                     .cloned()
                     .unwrap_or_default(),
+                extra_breaks: self.extra_breaks.remove(&line_index).unwrap_or_default(),
             })
             .collect()
     }
@@ -214,17 +232,26 @@ impl BreakableVisitor<'_> {
     /// so a line whose string claim was overwritten by a block still inserts
     /// the string-continuation form at the block position.
     fn claim_block(&mut self, line_index: usize, insert_offset: usize) {
-        self.ranges
-            .insert(line_index, (insert_offset, insert_offset + 1));
-    }
-
-    fn claim_string(&mut self, line_index: usize, insert_offset: usize, delimiter: String) {
-        if self.ranges.contains_key(&line_index) {
+        // 1.92: `return if breakable_string_delimiters[line_index]`.
+        if self.delimiters.contains_key(&line_index) {
             return;
         }
         self.ranges
             .insert(line_index, (insert_offset, insert_offset + 1));
+    }
+
+    /// A string claim: the first offset is the stored breakable range; the
+    /// rest are the extra breaks stock's `string_break_ranges` adds.
+    fn claim_string_multi(&mut self, line_index: usize, offsets: Vec<usize>, delimiter: String) {
+        if self.ranges.contains_key(&line_index) {
+            return;
+        }
+        let first = offsets[0];
+        self.ranges.insert(line_index, (first, first + 1));
         self.delimiters.insert(line_index, delimiter);
+        if offsets.len() > 1 {
+            self.extra_breaks.insert(line_index, offsets[1..].to_vec());
+        }
     }
 
     /// `check_for_breakable_semicolons` — claim a break after each statement
@@ -372,45 +399,178 @@ fn offset_after_chars(source: &[u8], begin: usize, n_chars: usize) -> usize {
     }
 }
 
-/// `rindex(/\\(u[\da-f]{0,4}|x[\da-f]{0,2})?\z/)` — the char index of a trailing
-/// escape sequence (the backslash), if the substring ends in one.
-/// `rindex(/\s/)` — the char index of the last whitespace in `substr`.
-fn rindex_whitespace(substr: &str) -> Option<usize> {
-    substr.char_indices().rev().find_map(|(i, c)| {
-        if c.is_whitespace() {
-            Some(substr[..i].chars().count())
-        } else {
-            None
-        }
-    })
+/// The chars of `bytes` (bytes as chars on invalid UTF-8, like the other
+/// char-count helpers).
+fn chars_of(bytes: &[u8]) -> Vec<char> {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => s.chars().collect(),
+        Err(_) => bytes.iter().map(|&b| b as char).collect(),
+    }
 }
 
-fn trailing_escape_char_index(substr: &str) -> Option<usize> {
-    let chars: Vec<char> = substr.chars().collect();
-    // Find the rightmost backslash whose suffix (to end) matches the pattern.
-    for i in (0..chars.len()).rev() {
-        if chars[i] != '\\' {
+/// Ruby `\s`.
+fn is_ruby_space(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r')
+}
+
+/// `text.strip.empty?` (Ruby's `strip` also drops NUL).
+fn is_blank(text: &[char]) -> bool {
+    text.iter().all(|&c| is_ruby_space(c) || c == '\0')
+}
+
+/// `text.match(ESCAPE_SEQUENCE_TAIL)&.begin(1)` — the char index where a
+/// trailing, possibly incomplete escape sequence starts (stock 1.92's
+/// `/(?<!\\)(?:\\\\)*(\\(?:(?:[MC]-|c)\\)*(?:u\{[\da-f\x20]*|u[\da-f]{0,4}|
+/// x[\da-f]{0,2}|[0-7]{0,3}|[MC]-?|c)?)\z/i`). The leftmost start wins, and
+/// the greedy `(?:\\\\)*` takes as many backslash pairs as it can.
+fn escape_sequence_start(text: &[char]) -> Option<usize> {
+    for s in 0..text.len() {
+        if text[s] != '\\' || (s > 0 && text[s - 1] == '\\') {
             continue;
         }
-        let suffix = &chars[i + 1..];
-        if escape_suffix_matches(suffix) {
-            return Some(i);
+        let run = text[s..].iter().take_while(|&&c| c == '\\').count();
+        for k in (0..=run / 2).rev() {
+            let g = s + 2 * k;
+            if g < text.len() && text[g] == '\\' && escape_chain_then_tail(&text[g + 1..]) {
+                return Some(g);
+            }
         }
     }
     None
 }
 
-/// Whether the chars after a backslash match `(u[\da-f]{0,4}|x[\da-f]{0,2})?` to
-/// the end.
-fn escape_suffix_matches(suffix: &[char]) -> bool {
-    if suffix.is_empty() {
-        return true; // bare backslash at end
+/// `(?:(?:[MC]-|c)\\)*(?:tail)?\z` after the escape's backslash.
+fn escape_chain_then_tail(u: &[char]) -> bool {
+    if escape_tail(u) {
+        return true;
     }
-    let is_hex = |c: char| c.is_ascii_digit() || ('a'..='f').contains(&c);
-    match suffix[0] {
-        'u' => suffix[1..].len() <= 4 && suffix[1..].iter().all(|&c| is_hex(c)),
-        'x' => suffix[1..].len() <= 2 && suffix[1..].iter().all(|&c| is_hex(c)),
-        _ => false,
+    let prefix = match u.first().map(|c| c.to_ascii_lowercase()) {
+        Some('m' | 'c') if u.get(1) == Some(&'-') => 2,
+        Some('c') => 1,
+        _ => return false,
+    };
+    // `c-\` also parses as the `c` prefix only when the next char is `\`.
+    let try_prefix = |n: usize| u.get(n) == Some(&'\\') && escape_chain_then_tail(&u[n + 1..]);
+    try_prefix(prefix) || (prefix == 2 && u[0].eq_ignore_ascii_case(&'c') && try_prefix(1))
+}
+
+/// `(?:u\{[\da-f\x20]*|u[\da-f]{0,4}|x[\da-f]{0,2}|[0-7]{0,3}|[MC]-?|c)?\z`.
+fn escape_tail(u: &[char]) -> bool {
+    let hex = |c: &char| c.is_ascii_hexdigit();
+    let Some(first) = u.first() else {
+        return true;
+    };
+    match first.to_ascii_lowercase() {
+        'u' => {
+            (u.get(1) == Some(&'{') && u[2..].iter().all(|c| hex(c) || *c == ' '))
+                || (u.len() <= 5 && u[1..].iter().all(hex))
+        }
+        'x' => u.len() <= 3 && u[1..].iter().all(hex),
+        'm' | 'c' => u.len() == 1 || (u.len() == 2 && u[1] == '-'),
+        _ => u.len() <= 3 && u.iter().all(|c| ('0'..='7').contains(c)),
+    }
+}
+
+/// A single-line string node as stock's string-splitting helpers see it.
+/// Every index is a char index into `chars` (the node's source).
+struct StrView<'a> {
+    chars: &'a [char],
+    /// `node.loc.column`.
+    column: usize,
+    /// Chars before the content (the opening quote's length; 0 without one).
+    content_begin: usize,
+    /// `string_content_length(node)`.
+    content_len: usize,
+    /// `starts_after_quote?(node)`.
+    starts_after_quote: bool,
+}
+
+impl StrView<'_> {
+    fn last_column(&self) -> usize {
+        self.column + self.chars.len()
+    }
+
+    /// `breakable_string_position(node)` — the char index before which the
+    /// break is inserted.
+    fn breakable_position(&self, max: usize) -> Option<usize> {
+        if self.last_column() < max {
+            return None;
+        }
+        let mut pos = self.breakable_range(max)?;
+        if self.blank_left_part(pos) {
+            pos = self.range_at_limit(max)?;
+        }
+        self.leaves_two_parts(pos).then_some(pos)
+    }
+
+    fn leaves_two_parts(&self, pos: usize) -> bool {
+        // `!blank_rest?`: `node.source[offset...string_content_length]`.
+        let rest_end = self.content_len.max(pos).min(self.chars.len());
+        pos > self.content_begin && !is_blank(&self.chars[pos.min(rest_end)..rest_end])
+    }
+
+    fn blank_left_part(&self, pos: usize) -> bool {
+        pos > self.content_begin
+            && self.starts_after_quote
+            && is_blank(&self.chars[self.content_begin..pos.min(self.chars.len())])
+    }
+
+    /// `breakable_string_range(node)` — the end of the kept part.
+    fn breakable_range(&self, max: usize) -> Option<usize> {
+        // `largest_possible_string`: `Max` - quote - ` \`, minus the column.
+        let max_length = (max as isize - 3 - self.column as isize).max(0) as usize;
+        let substr = &self.chars[..max_length.min(self.chars.len())];
+        if let Some(space_pos) = self.breakable_space_position(substr.len()) {
+            // A space can separate codepoints inside a braced unicode escape.
+            let head = &substr[..(space_pos + 1).min(substr.len())];
+            return Some(escape_sequence_start(head).unwrap_or(space_pos + 1));
+        }
+        if let Some(escape_pos) = escape_sequence_start(substr) {
+            return Some(escape_pos);
+        }
+        self.range_at_limit(max)
+    }
+
+    fn breakable_space_position(&self, substr_len: usize) -> Option<usize> {
+        let limit = self.content_len as isize - 1;
+        let space_pos = self.space_before_word(substr_len as isize - 1)?;
+        if space_pos as isize + 1 > limit {
+            return self.space_before_word(limit - 1);
+        }
+        Some(space_pos)
+    }
+
+    /// `node.source.rindex(/\s(?=\S)/, max_pos)`.
+    fn space_before_word(&self, max_pos: isize) -> Option<usize> {
+        if max_pos < 0 {
+            return None;
+        }
+        let chars = self.chars;
+        let top = (max_pos as usize).min(chars.len().saturating_sub(1));
+        (0..=top).rev().find(|&i| {
+            i < chars.len()
+                && is_ruby_space(chars[i])
+                && chars.get(i + 1).is_some_and(|&c| !is_ruby_space(c))
+        })
+    }
+
+    /// `breakable_string_range_at_limit(source_range)`.
+    fn range_at_limit(&self, max: usize) -> Option<usize> {
+        let size = self.chars.len() as isize;
+        let adjustment = max as isize - self.last_column() as isize - 3;
+        if adjustment.abs() > size {
+            return None;
+        }
+        let mut cut = (size + adjustment) as usize;
+        // `size_before_whitespace_run`
+        if cut != 0
+            && self.chars.get(cut).is_some_and(|&c| is_ruby_space(c))
+            && let Some(i) = (0..cut).rev().find(|&i| !is_ruby_space(self.chars[i]))
+        {
+            cut = i;
+        }
+        let cut_text = &self.chars[..cut.min(self.chars.len())];
+        Some(escape_sequence_start(cut_text).unwrap_or(cut))
     }
 }
 
@@ -427,7 +587,6 @@ fn parent_info_for(_source: &[u8], node: &Node<'_>) -> ParentInfo {
     ParentInfo {
         forbids_string_split,
         dstr_open,
-        start_offset: node.location().start_offset(),
     }
 }
 
@@ -526,7 +685,6 @@ impl<'pr> Visit<'pr> for BreakableVisitor<'_> {
             parent_info: ParentInfo {
                 forbids_string_split: false,
                 dstr_open: None,
-                start_offset: node.location().start_offset(),
             },
         });
         self.visit(&block);
@@ -556,11 +714,17 @@ impl<'pr> Visit<'pr> for BreakableVisitor<'_> {
         if self.split_strings {
             self.check_for_breakable_dstr(&node.as_node(), node);
         }
-        // Recurse into the interpolation contents so nested breakable nodes are
-        // still detected (the static string parts are handled above).
+        // Then the children in source order, as parser's pre-order walk
+        // does: a string part's claim and a claim from inside an
+        // interpolation (e.g. a block) race for the same line.
+        let parent_open = node
+            .opening_loc()
+            .map(|o| (o.start_offset(), o.end_offset()));
         for part in node.parts().iter() {
-            if part.as_string_node().is_none() {
-                self.visit(&part);
+            match part.as_string_node() {
+                Some(s) if self.split_strings => self.check_for_breakable_str(&part, &s, parent_open),
+                Some(_) => {}
+                None => self.visit(&part),
             }
         }
     }
@@ -587,7 +751,6 @@ impl<'pr> Visit<'pr> for BreakableVisitor<'_> {
                 })
                 .collect();
             let first_line = elems[0].first_line;
-            let start_offset = exceptions[0].location().start_offset();
             self.stack.push(Frame {
                 kind: FrameKind::Collection {
                     elements: elems,
@@ -599,7 +762,6 @@ impl<'pr> Visit<'pr> for BreakableVisitor<'_> {
                 parent_info: ParentInfo {
                     forbids_string_split: true,
                     dstr_open: None,
-                    start_offset,
                 },
             });
             for e in &exceptions {
@@ -783,13 +945,14 @@ impl<'pr> BreakableVisitor<'_> {
 
     // --- breakable string / dstr ----------------------------------------
 
-    /// `check_for_breakable_str`. `parent_quote` is `Some` when `node` is a part
-    /// of a dstr (then the delimiter comes from the dstr's opening quote).
+    /// `check_for_breakable_str`. `parent_open` is the opening-quote range of
+    /// the enclosing dstr when `node` is one of its parts (then the delimiter
+    /// may come from the dstr's opening quote).
     fn check_for_breakable_str(
         &mut self,
         node: &Node<'pr>,
         s: &ruby_prism::StringNode<'pr>,
-        parent_quote: Option<u8>,
+        parent_open: Option<(usize, usize)>,
     ) {
         let line_index = self.line_index.line_of(node.location().start_offset()) - 1;
         if self.ranges.contains_key(&line_index) {
@@ -798,21 +961,69 @@ impl<'pr> BreakableVisitor<'_> {
         if !self.is_candidate(line_index) {
             return;
         }
-        if !self.breakable_string(node, s) {
+        if !self.breakable_string(node, parent_open.is_some()) {
             return;
         }
+        let parent_quote = parent_open.and_then(|(b, _)| self.source.get(b).copied());
         let Some(delimiter) = self.string_delimiter(node, s, parent_quote) else {
             return;
         };
-        let Some(pos) = self.breakable_string_position(node, parent_quote) else {
+        let loc = node.location();
+        let (begin, end) = (loc.start_offset(), loc.end_offset());
+        let chars = chars_of(&self.source[begin..end]);
+        let content_begin = s
+            .opening_loc()
+            .map(|o| char_count(&self.source[begin..o.end_offset()]))
+            .unwrap_or(0);
+        let content_len = s
+            .closing_loc()
+            .map(|c| char_count(&self.source[begin..c.start_offset()]))
+            .unwrap_or(chars.len());
+        // `starts_after_quote?`
+        let starts_after_quote = s.opening_loc().is_some()
+            || parent_open.is_some_and(|(_, quote_end)| quote_end == begin);
+        let view = StrView {
+            chars: &chars,
+            column: self.line_index.column(self.source, begin),
+            content_begin,
+            content_len,
+            starts_after_quote,
+        };
+        let Some(pos) = view.breakable_position(self.max) else {
             return;
         };
-        self.claim_string(line_index, pos, (delimiter as char).to_string());
+        let mut offsets = vec![offset_after_chars(self.source, begin, pos)];
+        // `break_ranges` / `string_break_ranges` (1.92): a string with a
+        // closing delimiter is broken into as many pieces as needed in one
+        // pass. Each further break point comes from re-running the position
+        // logic on `<delimiter><rest of the string>` as a fresh string at
+        // column 0 (stock re-parses that text).
+        if s.closing_loc().is_some() {
+            let mut cur = pos;
+            loop {
+                let mut rest: Vec<char> = Vec::with_capacity(chars.len() - cur + 1);
+                rest.push(delimiter as char);
+                rest.extend_from_slice(&chars[cur..]);
+                let rest_view = StrView {
+                    chars: &rest,
+                    column: 0,
+                    content_begin: 1,
+                    content_len: rest.len() - 1,
+                    starts_after_quote: true,
+                };
+                let Some(rest_pos) = rest_view.breakable_position(self.max) else {
+                    break;
+                };
+                cur = cur + rest_pos - 1;
+                offsets.push(offset_after_chars(self.source, begin, cur));
+            }
+        }
+        self.claim_string_multi(line_index, offsets, (delimiter as char).to_string());
     }
 
     /// `breakable_string?` — minus `allow_string_split?` (the caller already
     /// gates on `self.split_strings`).
-    fn breakable_string(&self, node: &Node<'pr>, _s: &ruby_prism::StringNode<'pr>) -> bool {
+    fn breakable_string(&self, node: &Node<'pr>, is_dstr_part: bool) -> bool {
         // single_line?
         if multiline(self.line_index, node) {
             return false;
@@ -821,11 +1032,13 @@ impl<'pr> BreakableVisitor<'_> {
         if is_heredoc(self.source, node) {
             return false;
         }
-        // !node.parent&.type?(:pair, :kwoptarg, :array)
-        if self
-            .stack
-            .last()
-            .is_some_and(|f| f.parent_info.forbids_string_split)
+        // !node.parent&.type?(:pair, :kwoptarg, :array) — a dstr part's
+        // parent is the dstr itself.
+        if !is_dstr_part
+            && self
+                .stack
+                .last()
+                .is_some_and(|f| f.parent_info.forbids_string_split)
         {
             return false;
         }
@@ -835,7 +1048,7 @@ impl<'pr> BreakableVisitor<'_> {
     /// `string_delimiter` — the opening quote (`'`/`"`), or `None`.
     fn string_delimiter(
         &self,
-        node: &Node<'pr>,
+        _node: &Node<'pr>,
         s: &ruby_prism::StringNode<'pr>,
         parent_quote: Option<u8>,
     ) -> Option<u8> {
@@ -846,161 +1059,8 @@ impl<'pr> BreakableVisitor<'_> {
         };
         match quote {
             Some(q @ (b'\'' | b'"')) => Some(q),
-            _ => {
-                let _ = node;
-                None
-            }
+            _ => None,
         }
-    }
-
-    /// `breakable_string_position` — returns the byte offset before which the
-    /// break is inserted, or `None`.
-    fn breakable_string_position(
-        &self,
-        node: &Node<'pr>,
-        parent_quote: Option<u8>,
-    ) -> Option<usize> {
-        let (range_begin, range_end) = self.string_source_range(node, parent_quote);
-        // return if source_range.last_column < max
-        if last_column(self.line_index, self.source, range_end) < self.max {
-            return None;
-        }
-        let break_end = self.breakable_string_range(node, parent_quote, range_begin, range_end)?;
-        if break_end == range_begin {
-            None
-        } else {
-            Some(break_end)
-        }
-    }
-
-    /// `source_range` of the string node (without quotes for a dstr part).
-    fn string_source_range(&self, node: &Node<'pr>, parent_quote: Option<u8>) -> (usize, usize) {
-        let loc = node.location();
-        if parent_quote.is_some() {
-            // A dstr part: its source range is the part content (no quotes).
-            (loc.start_offset(), loc.end_offset())
-        } else {
-            (loc.start_offset(), loc.end_offset())
-        }
-    }
-
-    /// `breakable_string_range` — returns the *end offset* of the kept portion.
-    fn breakable_string_range(
-        &self,
-        node: &Node<'pr>,
-        parent_quote: Option<u8>,
-        range_begin: usize,
-        range_end: usize,
-    ) -> Option<usize> {
-        let substr = self.largest_possible_string(node, parent_quote, range_begin, range_end);
-        // `breakable_space_position` (1.91): `rindex(/\s/)`, but a space that
-        // is the last character of the string content is no break point (the
-        // split would leave the content unchanged and loop); retry on the
-        // substring before it.
-        if let Some(space_char_idx) = self.breakable_space_position(node, range_begin, &substr) {
-            // resize(space_pos + 1)
-            return Some(offset_after_chars(
-                self.source,
-                range_begin,
-                space_char_idx + 1,
-            ));
-        }
-        // rindex(/\\(u[\da-f]{0,4}|x[\da-f]{0,2})?\z/)
-        if let Some(escape_char_idx) = trailing_escape_char_index(&substr) {
-            // resize(escape_pos)
-            return Some(offset_after_chars(
-                self.source,
-                range_begin,
-                escape_char_idx,
-            ));
-        }
-        // adjustment = max - source_range.last_column - 3
-        let last_col = last_column(self.line_index, self.source, range_end) as isize;
-        let adjustment = self.max as isize - last_col - 3;
-        let size = char_count(&self.source[range_begin..range_end]) as isize;
-        if adjustment.abs() > size {
-            return None;
-        }
-        // adjust(end_pos: adjustment) — end_pos += adjustment (in characters).
-        let end_chars = char_count(&self.source[range_begin..range_end]);
-        let new_chars = (end_chars as isize + adjustment) as usize;
-        Some(offset_after_chars(self.source, range_begin, new_chars))
-    }
-
-    /// `breakable_space_position(node, substr)` — the char index of the last
-    /// whitespace in `substr`, unless that space sits at the end of the string
-    /// content (`space_pos + 1 > string_content_length - 1`); then the last
-    /// whitespace of `substr[0, limit]`.
-    fn breakable_space_position(
-        &self,
-        node: &Node<'pr>,
-        range_begin: usize,
-        substr: &str,
-    ) -> Option<usize> {
-        let limit = self.string_content_length(node, range_begin) as isize - 1;
-        let space_pos = rindex_whitespace(substr)?;
-        if space_pos as isize + 1 > limit {
-            if limit <= 0 {
-                return None;
-            }
-            let head: String = substr.chars().take(limit as usize).collect();
-            return rindex_whitespace(&head);
-        }
-        Some(space_pos)
-    }
-
-    /// `string_content_length(node)`: chars from the node's start to its
-    /// closing delimiter (`loc.end`), or to the node's end when it has none
-    /// (a dstr part).
-    fn string_content_length(&self, node: &Node<'pr>, range_begin: usize) -> usize {
-        let content_end = node
-            .as_string_node()
-            .and_then(|s| s.closing_loc())
-            .map(|c| c.start_offset())
-            .unwrap_or_else(|| node.location().end_offset());
-        char_count(&self.source[range_begin..content_end])
-    }
-
-    /// `largest_possible_string` — the leading substring (as a `&str`) considered
-    /// when choosing a break point.
-    fn largest_possible_string(
-        &self,
-        node: &Node<'pr>,
-        parent_quote: Option<u8>,
-        range_begin: usize,
-        range_end: usize,
-    ) -> String {
-        let mut max_length = self.max as isize - 3;
-        // Offset by the string's starting column so the broken line actually
-        // fits within `Max` (rubocop#15402). On the same line as its parent use
-        // the column difference; otherwise the string is indented on its own
-        // line, so subtract that indentation — without this an indented string
-        // under a multi-line parent never shortens below `Max` and the
-        // autocorrect loops, inserting empty `"" \` fragments.
-        let parent_start = self.parent_start_offset();
-        let node_col = self
-            .line_index
-            .column(self.source, node.location().start_offset()) as isize;
-        max_length -= match parent_start {
-            Some(p) if self.line_index.line_of(range_begin) == self.line_index.line_of(p) => {
-                let parent_col = self.line_index.column(self.source, p) as isize;
-                node_col - parent_col
-            }
-            _ => node_col,
-        };
-        let _ = parent_quote;
-        let full = String::from_utf8_lossy(&self.source[range_begin..range_end]);
-        if max_length <= 0 {
-            return String::new();
-        }
-        full.chars().take(max_length as usize).collect()
-    }
-
-    fn parent_start_offset(&self) -> Option<usize> {
-        // For a dstr part the parent (the dstr) is not yet on the stack, so the
-        // explicit override is used; otherwise the immediate ancestor frame.
-        self.string_parent_start
-            .or_else(|| self.stack.last().map(|f| f.parent_info.start_offset))
     }
 
     fn check_for_breakable_dstr(
@@ -1011,21 +1071,12 @@ impl<'pr> BreakableVisitor<'_> {
         // breakable_dstr? = breakable_string? && !child_nodes.one?
         let parts: Vec<Node<'pr>> = istr.parts().iter().collect();
 
-        // First, run the str check on every string part (parser fires `on_str`
-        // for them). The parent quote is the dstr's opening quote.
-        let parent_quote = istr
+        // parser fires `on_dstr` before the parts' `on_str`; the caller visits
+        // the parts afterwards.
+        let parent_open = istr
             .opening_loc()
-            .and_then(|o| self.source.get(o.start_offset()).copied());
-        if self.split_strings {
-            let saved = self.string_parent_start;
-            self.string_parent_start = Some(node.location().start_offset());
-            for part in &parts {
-                if let Some(s) = part.as_string_node() {
-                    self.check_for_breakable_str(part, &s, parent_quote);
-                }
-            }
-            self.string_parent_start = saved;
-        }
+            .map(|o| (o.start_offset(), o.end_offset()));
+        let parent_quote = parent_open.and_then(|(b, _)| self.source.get(b).copied());
 
         // Then the dstr-level break (before an interpolation crossing the max).
         if !self.dstr_breakable(node, &parts) {
@@ -1047,10 +1098,19 @@ impl<'pr> BreakableVisitor<'_> {
                 let begin = loc.start_offset();
                 let col = self.line_index.column(self.source, begin);
                 let last_col = last_column(self.line_index, self.source, loc.end_offset());
-                if col < self.max && last_col >= self.max {
-                    self.claim_string(line_index, begin, (delimiter as char).to_string());
-                    break;
+                if !(col < self.max && last_col >= self.max) {
+                    continue;
                 }
+                // `opens_string?` (1.92): an interpolation preceded only by
+                // blanks after the opening quote is no break point (the split
+                // would leave a blank string).
+                if let Some((_, quote_end)) = parent_open
+                    && is_blank(&chars_of(&self.source[quote_end..begin]))
+                {
+                    continue;
+                }
+                self.claim_string_multi(line_index, vec![begin], (delimiter as char).to_string());
+                break;
             }
         }
     }
@@ -1121,7 +1181,8 @@ impl<'pr> BreakableVisitor<'_> {
         while self.within_column_limit(exceptions.get(i), first_line) {
             i += 1;
         }
-        let Some(i) = self.shift_index_for_heredoc(&exceptions, i) else {
+        let heredoc_pos = heredoc_begin_position(self.source, &exceptions);
+        let Some(i) = heredoc_pos.map_or(Some(i), |pos| shift_index_for_heredoc(&exceptions, i, pos)) else {
             return;
         };
         let bn = if i == 0 {
@@ -1154,6 +1215,9 @@ impl<'pr> BreakableVisitor<'_> {
             }
         }
         if let Some(bn) = self.extract_breakable_node(node) {
+            if self.compact_nested_array_break(node, &bn) {
+                return;
+            }
             let loc = bn.location();
             let start = loc.start_offset();
             let line_index = self.line_index.line_of(start) - 1;
@@ -1162,6 +1226,32 @@ impl<'pr> BreakableVisitor<'_> {
             }
             self.claim(line_index, start, loc.end_offset());
         }
+    }
+
+    /// `compact_nested_array_break?` (1.92): with
+    /// `Layout/SpaceInsideArrayLiteralBrackets` enforcing `compact`, do not
+    /// break before a nested array that opens a `[` array (the two cops
+    /// would undo each other forever).
+    fn compact_nested_array_break(&self, node: &Node<'pr>, breakable: &Node<'pr>) -> bool {
+        if !self.compact_array_brackets {
+            return false;
+        }
+        let Some(array) = node.as_array_node() else {
+            return false;
+        };
+        let square = array
+            .opening_loc()
+            .is_some_and(|o| &self.source[o.start_offset()..o.end_offset()] == b"[");
+        if !square {
+            return false;
+        }
+        let first_is_breakable = array
+            .elements()
+            .iter()
+            .next()
+            .is_some_and(|f| f.location().start_offset() == breakable.location().start_offset()
+                && f.location().end_offset() == breakable.location().end_offset());
+        first_is_breakable && self.source.get(breakable.location().start_offset()) == Some(&b'[')
     }
 
     fn extract_breakable_node(&self, node: &Node<'pr>) -> Option<Node<'pr>> {
@@ -1228,16 +1318,29 @@ impl<'pr> BreakableVisitor<'_> {
         is_call: bool,
     ) -> Option<Node<'pr>> {
         let (line, _) = node_lines(self.line_index, node);
+        // `heredoc_begin_position` looks at every child, the first one too.
+        let applies = is_call || node.as_array_node().is_some() || node.as_hash_node().is_some();
+        let heredoc_pos = if applies {
+            heredoc_begin_position(self.source, &elements)
+        } else {
+            None
+        };
 
-        if is_call {
+        // `first_element_movable?` (1.92): an unparenthesized call or method
+        // definition keeps its first element on the line.
+        let drop_first = if is_call {
             let call = node.as_call_node().unwrap();
-            let parenthesized = call.opening_loc().is_some();
-            if !parenthesized && !first_argument_is_heredoc(self.source, &call) {
-                if elements.is_empty() {
-                    return None;
-                }
-                elements.remove(0);
+            call.opening_loc().is_none() && !first_argument_is_heredoc(self.source, &call)
+        } else if let Some(def) = node.as_def_node() {
+            def.lparen_loc().is_none()
+        } else {
+            false
+        };
+        if drop_first {
+            if elements.is_empty() {
+                return None;
             }
+            elements.remove(0);
         }
 
         let mut i = 0usize;
@@ -1245,7 +1348,10 @@ impl<'pr> BreakableVisitor<'_> {
             i += 1;
         }
 
-        let i = self.shift_elements_for_heredoc_arg(node, &elements, i)?;
+        let i = match heredoc_pos {
+            Some(pos) => shift_index_for_heredoc(&elements, i, pos)?,
+            None => i,
+        };
         if i == 0 {
             return elements.into_iter().next();
         }
@@ -1262,38 +1368,6 @@ impl<'pr> BreakableVisitor<'_> {
                 col <= self.max && f == line
             }
             None => false,
-        }
-    }
-
-    /// `shift_elements_for_heredoc_arg` — `None` mirrors the Ruby `nil` return
-    /// (no breakable node). The `Some(usize)` is the (possibly shifted) index.
-    fn shift_elements_for_heredoc_arg(
-        &self,
-        node: &Node<'pr>,
-        elements: &[Node<'pr>],
-        index: usize,
-    ) -> Option<usize> {
-        let applies = node.as_call_node().is_some() || node.as_array_node().is_some();
-        if !applies {
-            return Some(index);
-        }
-        self.shift_index_for_heredoc(elements, index)
-    }
-
-    /// The array/call branch of `shift_elements_for_heredoc_arg`, shared with
-    /// the synthesized rescue collection (parser type `array`).
-    fn shift_index_for_heredoc(&self, elements: &[Node<'pr>], index: usize) -> Option<usize> {
-        let heredoc_index = elements.iter().position(|e| is_heredoc(self.source, e));
-        let Some(hi) = heredoc_index else {
-            return Some(index);
-        };
-        if hi == 0 {
-            return None;
-        }
-        if hi >= index {
-            Some(index)
-        } else {
-            Some(hi + 1)
         }
     }
 
@@ -1379,6 +1453,65 @@ impl<'pr> BreakableVisitor<'_> {
 }
 
 /// `children_could_be_broken_up?`
+/// `heredoc_begin_position` — the start of the first heredoc among `children`
+/// and their descendants (1.92 also finds a heredoc nested in an element).
+fn heredoc_begin_position(source: &[u8], children: &[Node<'_>]) -> Option<usize> {
+    let mut finder = HeredocPositionFinder { source, first: None };
+    for child in children {
+        finder.visit(child);
+        if finder.first.is_some() {
+            break;
+        }
+    }
+    finder.first
+}
+
+struct HeredocPositionFinder<'a> {
+    source: &'a [u8],
+    first: Option<usize>,
+}
+
+impl HeredocPositionFinder<'_> {
+    fn note(&mut self, node: &Node<'_>) {
+        if is_heredoc(self.source, node) {
+            let start = node.location().start_offset();
+            self.first = Some(self.first.map_or(start, |f| f.min(start)));
+        }
+    }
+}
+
+impl<'pr> Visit<'pr> for HeredocPositionFinder<'_> {
+    fn visit_string_node(&mut self, node: &ruby_prism::StringNode<'pr>) {
+        self.note(&node.as_node());
+    }
+    fn visit_x_string_node(&mut self, node: &ruby_prism::XStringNode<'pr>) {
+        self.note(&node.as_node());
+    }
+    fn visit_interpolated_string_node(&mut self, node: &ruby_prism::InterpolatedStringNode<'pr>) {
+        self.note(&node.as_node());
+        ruby_prism::visit_interpolated_string_node(self, node);
+    }
+    fn visit_interpolated_x_string_node(
+        &mut self,
+        node: &ruby_prism::InterpolatedXStringNode<'pr>,
+    ) {
+        self.note(&node.as_node());
+        ruby_prism::visit_interpolated_x_string_node(self, node);
+    }
+}
+
+/// The heredoc branch of `shift_elements_for_heredoc_arg`: never break after
+/// the element holding the heredoc. `None` mirrors the Ruby `nil` return.
+fn shift_index_for_heredoc(elements: &[Node<'_>], index: usize, heredoc_pos: usize) -> Option<usize> {
+    let last_safe = elements
+        .iter()
+        .rposition(|e| e.location().start_offset() <= heredoc_pos)?;
+    if last_safe == 0 && elements[0].location().end_offset() > heredoc_pos {
+        return None;
+    }
+    Some(index.min(last_safe + 1))
+}
+
 fn children_could_be_broken_up(children: &[ElemLoc]) -> bool {
     if children.is_empty() {
         return false;
@@ -1795,7 +1928,45 @@ mod tests {
         let got = run(src, 40, true);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].0, 0);
-        assert_eq!(got[0].1, src.find("dd \"").unwrap());
+        // 1.92 moved the break before `cc` (vendor spec).
+        assert_eq!(got[0].1, src.find("cc dd").unwrap());
         assert_eq!(got[0].2, "\"");
+    }
+
+    // 1.92 `string_break_ranges`: a long string is split into every piece it
+    // needs in one pass. Expected offsets from the stock CLI (`-A`, Max 40):
+    // `x = 'a*32' \` / `'a*36' \` / `'a*32'`.
+    #[test]
+    fn split_string_into_several_pieces() {
+        let src = format!("x = '{}'\n", "a".repeat(100));
+        let got = compute_breakables(src.as_bytes(), 40, true);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].insert_offset, 37);
+        assert_eq!(got[0].extra_breaks, vec![73]);
+    }
+
+    // 1.92 `ESCAPE_SEQUENCE_TAIL`: an escaped backslash is complete, so the
+    // cut may land right after it. Stock CLI (`-A`, Max 40) gives
+    // `"\\x41 * 6\\" \` / `"x41...\\x" \` / `"41..."`.
+    #[test]
+    fn split_string_after_escaped_backslash() {
+        let src = format!("x = \"{}\"\n", "\\\\x41".repeat(20));
+        let got = compute_breakables(src.as_bytes(), 40, true);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].insert_offset, 37);
+        assert_eq!(got[0].extra_breaks, vec![73]);
+    }
+
+    #[test]
+    fn escape_sequence_tail() {
+        let start = |s: &str| escape_sequence_start(&s.chars().collect::<Vec<_>>());
+        assert_eq!(start("ab\\"), Some(2));
+        assert_eq!(start("ab\\\\"), None);
+        assert_eq!(start("ab\\\\\\0"), Some(4));
+        assert_eq!(start("ab\\M-\\C-"), Some(2));
+        assert_eq!(start("ab\\u{1F600 1F6"), Some(2));
+        assert_eq!(start("ab\\x4"), Some(2));
+        assert_eq!(start("ab\\x41"), Some(2));
+        assert_eq!(start("ab\\0001"), None);
     }
 }

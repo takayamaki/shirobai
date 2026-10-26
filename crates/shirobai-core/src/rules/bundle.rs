@@ -110,7 +110,7 @@ pub fn check_multiline_bundle(
 /// | 11  | dot_position_style |
 /// | 12  | line_length_max |
 /// | 13  | line_length_tab_width |
-/// | 14  | line_length_split_strings |
+/// | 14  | line_length flags: bit 0 = SplitStrings, bit 1 = compact array brackets (1.92) |
 /// | 15-17 | multiline_operation style / indent / base |
 /// | 18-20 | multiline_method_call style / indent / base |
 /// | 21-23 | argument_alignment style / indent / incompatible |
@@ -331,6 +331,8 @@ pub struct BundleConfig {
     pub line_length_max: usize,
     pub line_length_tab_width: usize,
     pub line_length_split_strings: bool,
+    /// `Layout/SpaceInsideArrayLiteralBrackets` enforces `compact` (bit 1 of nums[14]).
+    pub line_length_compact_array_brackets: bool,
     pub multiline_operation: (u8, usize, usize),
     pub multiline_method_call: (u8, usize, usize),
     pub argument_alignment_style: u8,
@@ -755,7 +757,8 @@ impl BundleConfig {
             dot_position_style: nums[11] as u8,
             line_length_max: nums[12] as usize,
             line_length_tab_width: nums[13] as usize,
-            line_length_split_strings: nums[14] != 0,
+            line_length_split_strings: nums[14] & 1 != 0,
+            line_length_compact_array_brackets: nums[14] & 2 != 0,
             multiline_operation: (nums[15] as u8, nums[16] as usize, nums[17] as usize),
             multiline_method_call: (nums[18] as u8, nums[19] as usize, nums[20] as usize),
             argument_alignment_style: nums[21] as u8,
@@ -2032,10 +2035,11 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
             );
             let candidate_lines: HashSet<usize> =
                 line_length.iter().map(|c| c.line_index).collect();
-            let line_length_breakables = line_length_breakable::compute_breakables_filtered(
+            let line_length_breakables = line_length_breakable::compute_breakables_with(
                 source,
                 cfg.line_length_max,
                 cfg.line_length_split_strings,
+                cfg.line_length_compact_array_brackets,
                 Some(&candidate_lines),
             );
             (line_length, line_length_breakables)

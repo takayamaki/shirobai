@@ -40,7 +40,15 @@ module Shirobai
           tab_width = config.for_cop("Layout/IndentationStyle")["IndentationWidth"] ||
                       cop_config["IndentationWidth"] ||
                       config.for_cop("Layout/IndentationWidth")["Width"] || 2
-          [cop_config["Max"] || 120, tab_width, !!cop_config["SplitStrings"]]
+          flags = (cop_config["SplitStrings"] ? 1 : 0) | (compact_array_brackets_enforced?(config) ? 2 : 0)
+          [cop_config["Max"] || 120, tab_width, flags]
+        end
+
+        # Stock 1.92 `compact_array_brackets_enforced?`.
+        def self.compact_array_brackets_enforced?(config)
+          return false unless config.cop_enabled?("Layout/SpaceInsideArrayLiteralBrackets")
+
+          config.for_cop("Layout/SpaceInsideArrayLiteralBrackets")["EnforcedStyle"] == "compact"
         end
 
         # `LineLengthHelp#uri_regexp` memoizes per cop instance, and the real
@@ -106,11 +114,13 @@ module Shirobai
           off = SourceOffsets.for(processed_source.raw_source)
           @breakable_range_by_line_index = {}
           @breakable_string_delimiters = {}
+          @extra_string_breaks = {}
           breakables.each do |entry|
-            line_index, insert_offset, end_offset, delimiter = entry
+            line_index, insert_offset, end_offset, delimiter, extra_breaks = entry
             @breakable_range_by_line_index[line_index] =
               Parser::Source::Range.new(buffer, off[insert_offset], off[end_offset])
             @breakable_string_delimiters[line_index] = delimiter unless delimiter.empty?
+            @extra_string_breaks[line_index] = extra_breaks unless extra_breaks.empty?
           end
         end
 
@@ -170,8 +180,24 @@ module Shirobai
                           "\n"
                         end
 
-            corrector.insert_before(breakable_range, insertion) unless breakable_range.nil?
+            break_ranges(breakable_range, line_index).each do |range|
+              corrector.insert_before(range, insertion)
+            end
           end
+        end
+
+        # Stock 1.92 `break_ranges`: a string with a closing quote is broken
+        # into every piece it needs in one pass. Rust computes the extra
+        # break points (stock re-parses the rest of the string per piece).
+        def break_ranges(breakable_range, line_index)
+          return [] if breakable_range.nil?
+
+          extra = @extra_string_breaks[line_index]
+          return [breakable_range] unless extra
+
+          buffer = processed_source.buffer
+          off = SourceOffsets.for(processed_source.raw_source)
+          [breakable_range, *extra.map { |pos| Parser::Source::Range.new(buffer, off[pos], off[pos] + 1) }]
         end
 
         def excess_range(uri_range, line, line_index)

@@ -272,9 +272,9 @@ fn map_line_length(
 
 fn map_line_length_breakables(
     v: Vec<shirobai_core::rules::line_length_breakable::Breakable>,
-) -> Vec<(usize, usize, usize, String)> {
+) -> Vec<(usize, usize, usize, String, Vec<usize>)> {
     v.into_iter()
-        .map(|b| (b.line_index, b.insert_offset, b.end_offset, b.delimiter))
+        .map(|b| (b.line_index, b.insert_offset, b.end_offset, b.delimiter, b.extra_breaks))
         .collect()
 }
 
@@ -2641,7 +2641,7 @@ fn check_line_length_breakables(
     max: usize,
     split_strings: bool,
     candidate_lines: Vec<usize>,
-) -> Vec<(usize, usize, usize, String)> {
+) -> Vec<(usize, usize, usize, String, Vec<usize>)> {
     let candidates: std::collections::HashSet<usize> = candidate_lines.into_iter().collect();
     map_line_length_breakables(
         shirobai_core::rules::line_length_breakable::compute_breakables_filtered(
