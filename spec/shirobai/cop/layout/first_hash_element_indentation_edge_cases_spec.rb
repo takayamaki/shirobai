@@ -70,3 +70,52 @@ RSpec.describe Shirobai::Cop::Layout::FirstHashElementIndentation do
     expect(stock.size).to be >= 1
   end
 end
+
+# Edge cases for 1.92 (rubocop#16050 / #15857): a first pair that does not
+# begin its line (after `**opts,`) is not checked, and with the
+# Layout/HashAlignment separator style a multiline key is left out of the
+# longest-key offset (and a multiline first key gets no offset). These
+# mix rockets, multiline array keys and an interpolated multiline colon
+# key, which the vendor spec does not.
+RSpec.describe Shirobai::Cop::Layout::FirstHashElementIndentation do
+  include EdgeCaseParity
+
+  klasses = [
+    RuboCop::Cop::Layout::FirstHashElementIndentation,
+    Shirobai::Cop::Layout::FirstHashElementIndentation
+  ]
+
+  source_192 = <<~'RUBY'
+    a << {
+          **opts, 'b' => 1,
+      'ccc' => 2
+    }
+    a << {
+      [
+        :x
+      ] => 1,
+         'longer_key' => 2
+    }
+    a << {
+         'k' => 1,
+      [:a,
+       :b] => 2,
+      'kkkk' => 3
+    }
+    b = {
+          foo: 1,
+      barbaz: 2,
+      "q#{x(
+      )}": 3
+    }
+  RUBY
+
+  [nil, "separator"].each do |style|
+    it "matches stock with HashAlignment style #{style.inspect}" do
+      hash = style ? { "Layout/HashAlignment" => { "EnforcedColonStyle" => style, "EnforcedHashRocketStyle" => style } } : {}
+      cfg = RuboCop::ConfigLoader.merge_with_default(RuboCop::Config.new(hash, "(test)"), "(test)")
+      expect_lint_parity(*klasses, source_192, cfg)
+      expect_autocorrect_parity(*klasses, source_192, cfg)
+    end
+  end
+end
