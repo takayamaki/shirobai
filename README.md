@@ -149,6 +149,30 @@ gem "shirobai"
 
 Then run `bundle install`.
 
+### Adding shirobai to a lockfile that lists only `ruby`
+
+Some teams keep `PLATFORMS` in `Gemfile.lock` at just `ruby`,
+so every machine picks its own prebuilt gems at install time.
+Adding shirobai to such a lockfile removes `ruby` and leaves only the platform you ran `bundle lock` on.
+This is standard Bundler behavior for any gem whose source gem has a dependency that the prebuilt gem does not
+(shirobai's source gem depends on `rb_sys`; nokogiri has the same shape with `mini_portile2`).
+Once `ruby` is gone, the other gems in the lockfile are installed from source on that platform,
+and `bundle install --frozen` fails on every other platform.
+
+Put `ruby` back right after adding shirobai:
+
+```sh
+bundle lock --add-platform ruby
+bundle lock --remove-platform x86_64-linux   # the platform bundle lock added
+```
+
+The lockfile then lists the source entry for shirobai plus `rb_sys`,
+but each machine still installs the prebuilt gem for its platform and never installs `rb_sys` there.
+
+If you prefer to list every platform explicitly, run
+`bundle lock --add-platform x86_64-linux aarch64-linux arm64-darwin` **before** adding shirobai.
+Running it afterwards does not add the prebuilt variants of the other gems for the platform that is already listed.
+
 ## Usage
 
 Add one line to your `.rubocop.yml`:

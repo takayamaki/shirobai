@@ -87,7 +87,7 @@ shirobaiは日本語話者なら当然わかるでしょう、白バイです。
 
 > [!IMPORTANT]
 > shirobai のネイティブ拡張は Rust で書かれています。
-> **x86_64 Linux (glibc) と Apple Silicon macOS (arm64-darwin)** では
+> **x86_64 / arm64 Linux (glibc) と Apple Silicon macOS (arm64-darwin)** では
 > `gem install` がビルド済みの platform gem を取得するため、**Rust toolchain は不要です**。
 > それ以外のプラットフォームでは `bundle install` 時に `cargo build --release` が走るため、
 > **Rust toolchain（stable, 1.75 以上）** がインストール先ホストに必要です。
@@ -98,7 +98,7 @@ shirobaiは日本語話者なら当然わかるでしょう、白バイです。
 | RuboCop | **`= 1.92.1` で hard pin** |
 | Ruby | `>= 3.1` |
 | Rust | `>= 1.75`（stable）——下記ビルド済み対象では不要 |
-| ビルド済み提供 | `x86_64-linux`（glibc）/ `arm64-darwin`（Apple Silicon）、Ruby 3.1〜4.0 |
+| ビルド済み提供 | `x86_64-linux` / `aarch64-linux`（glibc）/ `arm64-darwin`（Apple Silicon）、Ruby 3.1〜4.0 |
 | その他プラットフォーム | Linux / macOS（`cargo build --release` が通れば動く。musl や Intel macOS 等） |
 | Ruby パーサ | `ruby-prism`（Latest 文法 ≈ Ruby 4.1） |
 
@@ -135,6 +135,29 @@ gem "shirobai"
 ```
 
 その後 `bundle install` を実行する。
+
+### `PLATFORMS` が `ruby` だけの Gemfile.lock に追加するとき
+
+`Gemfile.lock` の `PLATFORMS` を `ruby` だけにして、各マシンが install 時に自分のビルド済み gem を取る運用がある。
+そこに shirobai を足すと `ruby` が消え、`bundle lock` を実行したプラットフォームだけが残る。
+これは「source 版 gem にだけ依存があり、ビルド済み版には無い」gem を足したときの Bundler の標準挙動で
+（shirobai の source 版は `rb_sys` に依存する。nokogiri の `mini_portile2` も同じ形）、shirobai 固有ではない。
+`ruby` が消えると、そのプラットフォームでは lock 内の他の gem が source からビルドされ、
+他のプラットフォームでは `bundle install --frozen` が失敗する。
+
+shirobai を足した直後に `ruby` を戻す:
+
+```sh
+bundle lock --add-platform ruby
+bundle lock --remove-platform x86_64-linux   # bundle lock が足したプラットフォーム
+```
+
+lock には shirobai の source 版エントリと `rb_sys` が載るが、
+各マシンは引き続き自分のプラットフォームのビルド済み gem を取り、`rb_sys` はインストールされない。
+
+全プラットフォームを明示したい場合は、shirobai を足す**前**に
+`bundle lock --add-platform x86_64-linux aarch64-linux arm64-darwin` を実行する。
+足した後に実行しても、既に載っているプラットフォームには他の gem のビルド済み版が追加されない。
 
 ## 使い方
 
