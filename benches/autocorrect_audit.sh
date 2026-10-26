@@ -59,6 +59,15 @@ run_arm() { # <gemfile> <tree> [extra rubocop args...]
     bundle exec rubocop "$@" ${AC_FLAG:--a} ${EXTRA_ARGS:-} --force-default-config --cache false --no-server \
     "$tree" > "$work/$(basename "$tree").log" 2>&1 || true # non-zero on offenses
   tail -1 "$work/$(basename "$tree").log"
+  # A copy that the resolved config excludes (e.g. a work dir under the
+  # repo's own `tmp/`) inspects 0 files, and two untouched trees are always
+  # byte-identical: that "parity" is empty. Refuse it here.
+  local inspected
+  inspected="$(grep -oE '^[0-9]+ files? inspected' "$work/$(basename "$tree").log" | awk '{print $1}' | tail -1)"
+  if [[ -z "$inspected" || "$inspected" = "0" ]]; then
+    echo "error: ${inspected:-no} files inspected in $tree; pick a work dir outside the repo" >&2
+    exit 2
+  fi
 }
 
 echo
