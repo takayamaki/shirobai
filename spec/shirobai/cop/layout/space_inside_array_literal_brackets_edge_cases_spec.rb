@@ -142,4 +142,18 @@ RSpec.describe Shirobai::Cop::Layout::SpaceInsideArrayLiteralBrackets do
       expect(lint_offenses(klasses.first, src, cfg)).to be_empty
     end
   end
+
+  # 1.92 `closing_bracket_kept_apart?` (rubocop#15997, #16079): the first
+  # child of a const pattern is its constant, which decides the line check.
+  {
+    "a nested array on the opening bracket line" => "x = [[1, 2],\n  [3, 4]\n]\n",
+    "a parenthesized const pattern" => "case x\nin Foo(\n  [a, b],\n  [c]\n)\nend\n",
+    "a bracketed const pattern" => "case x\nin Foo[\n  a, b\n]\nend\n"
+  }.each do |label, src|
+    it "matches stock under compact for #{label}" do
+      cfg = config_with("EnforcedStyle" => "compact")
+      expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
+      expect_autocorrect_parity(*klasses, src, cfg)
+    end
+  end
 end

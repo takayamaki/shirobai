@@ -176,6 +176,7 @@ pub(crate) fn build_rule(source: &[u8], config: Config) -> Visitor<'_> {
         node_ops: Vec::new(),
         rbrack_closers: HashSet::new(),
         const_scope_end: 0,
+        first_child: None,
     }
 }
 
@@ -205,6 +206,10 @@ pub(crate) struct Visitor<'a> {
     /// far; a node starting below it sits inside one (ranges nest or are
     /// disjoint in document order).
     const_scope_end: usize,
+    /// Start of `node.children.first` of the node being entered (parser
+    /// children: a const pattern's constant first). Read by the compact
+    /// `closing_bracket_kept_apart?` check.
+    first_child: Option<usize>,
 }
 
 impl<'a> Visitor<'a> {
@@ -429,6 +434,15 @@ impl<'a> Visitor<'a> {
                 // Right: the previous non-whitespace byte (the token walk
                 // skipping tNLs). A `]` byte needs the closer set, which is
                 // complete only after the walk.
+                // 1.92 `closing_bracket_kept_apart?`: a `]` on its own line
+                // stays apart unless the `[` shares the first element's line
+                // (rubocop#15997, #16079).
+                let first_child_same_line = self
+                    .first_child
+                    .is_some_and(|c| self.line_index.line_of(c) == self.line_index.line_of(lb_s));
+                if self.end_has_own_line(rb_s) && !multi_left && !first_child_same_line {
+                    return;
+                }
                 let prev_end = prev_non_space(src, rb_s).expect("a `[` precedes");
                 if src[prev_end - 1] == b']' {
                     self.items.push(Item::PendingCompactRight {
@@ -502,6 +516,34 @@ impl<'a> Visitor<'a> {
             );
         }
     }
+}
+
+/// `node.children.first` start for the nodes the cop checks (parser order:
+/// a const pattern's constant comes first).
+fn first_child_start(node: &Node<'_>) -> Option<usize> {
+    let start = |n: Node<'_>| n.location().start_offset();
+    if let Some(a) = node.as_array_node() {
+        return a.elements().iter().next().map(start);
+    }
+    if let Some(p) = node.as_array_pattern_node() {
+        return p
+            .constant()
+            .map(start)
+            .or_else(|| p.requireds().iter().next().map(start))
+            .or_else(|| p.rest().map(start))
+            .or_else(|| p.posts().iter().next().map(start));
+    }
+    if let Some(p) = node.as_find_pattern_node() {
+        return Some(p.constant().map_or_else(|| p.left().location().start_offset(), start));
+    }
+    if let Some(p) = node.as_hash_pattern_node() {
+        return p
+            .constant()
+            .map(start)
+            .or_else(|| p.elements().iter().next().map(start))
+            .or_else(|| p.rest().map(start));
+    }
+    None
 }
 
 /// Child scan for the redirected const-pattern checks: min/max bracket-token
@@ -623,6 +665,7 @@ impl<'pr> Visit<'pr> for SubtreeScan<'_> {
 
 impl super::dispatch::Rule for Visitor<'_> {
     fn enter(&mut self, node: &Node<'_>) {
+        self.first_child = first_child_start(node);
         if let Some(array) = node.as_array_node() {
             if let (Some(o), Some(c)) = (array.opening_loc(), array.closing_loc())
                 && self.source.get(o.start_offset()) == Some(&b'[')
@@ -975,5 +1018,19 @@ mod tests {
             ),
             vec![(14, 15, 1, 0, false)]
         );
+    }
+
+    // 1.92 `closing_bracket_kept_apart?`. Expected offenses from the stock CLI.
+    #[test]
+    fn compact_keeps_an_own_line_closing_bracket_apart() {
+        // `[` apart from the first element: the own-line `]` is left alone.
+        assert!(run("x = [\n  { a: 1 },\n  [ 3, 4 ]\n]\n", Style::Compact, false).is_empty());
+        // `[` on the first element's line: the `]` is still checked.
+        let got: Vec<(usize, usize, u8)> =
+            run("x = [{ a: 1 },\n  [ 3, 4 ]\n]\n", Style::Compact, false)
+                .into_iter()
+                .map(|(s, e, m, _, _)| (s, e, m))
+                .collect();
+        assert_eq!(got, vec![(4, 5, 0), (26, 26, 1)]);
     }
 }
