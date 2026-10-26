@@ -86,3 +86,28 @@ RSpec.describe Shirobai::Cop::Layout::RescueEnsureAlignment do
     end
   end
 end
+
+# 1.92 tabs autocorrect (rubocop#15769 / #15837): under
+# `Layout/IndentationStyle: tabs` the keyword takes the target line's own
+# indentation, and is left alone when the target does not begin its line.
+# Mixed tab/space anchors and a nested `def` are not in the vendor spec.
+RSpec.describe Shirobai::Cop::Layout::RescueEnsureAlignment do
+  include EdgeCaseParity
+
+  klasses = [
+    RuboCop::Cop::Layout::RescueEnsureAlignment,
+    Shirobai::Cop::Layout::RescueEnsureAlignment
+  ]
+
+  it "matches stock under tabs" do
+    cfg = RuboCop::ConfigLoader.merge_with_default(
+      RuboCop::Config.new({ "Layout/IndentationStyle" => { "EnforcedStyle" => "tabs" } }, "(test)"),
+      "(test)"
+    )
+    source = "\tbegin\n\t\tfoo\n rescue\n\t\tbar\n\tend\n" \
+             "\t  def m\n\t\tfoo\n\t\t\tensure\n\t\tbar\n\t  end\n" \
+             "\tx = [begin\n\t\tfoo\n  rescue\n\t\tbar\n\tend]\n"
+    expect_lint_parity(*klasses, source, cfg)
+    expect_autocorrect_parity(*klasses, source, cfg)
+  end
+end
