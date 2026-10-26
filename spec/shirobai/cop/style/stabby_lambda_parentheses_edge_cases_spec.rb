@@ -152,4 +152,24 @@ RSpec.describe Shirobai::Cop::Style::StabbyLambdaParentheses do
       )
     end
   end
+
+  # 1.92 (#15737, #15744), probed against the stock CLI.
+  describe "1.92 require_no_parentheses keeps / strips" do
+    it "keeps parens for a block or braced hash anywhere in a default value" do
+      src = <<~RUBY
+        a = ->(x = [{}]) { x }
+        b = ->(x = foo { 1 }) { x }
+        c = ->(x = super() { 1 }) { x }
+        d = ->(x = foo(a: 1)) { x }
+        e = ->(x = foo(&:y)) { x }
+      RUBY
+      expect_autocorrect_parity(*klasses, src, require_no_parens_config)
+    end
+
+    it "removes the padding with the parens, and keeps them around a comment" do
+      src = "e = ->( x, y ) { x }\nf = ->(\n  x\n) { x }\ng = ->(x; y) { x }\n" \
+            "i = ->(x, *r, k: 1, **o, &b) { x }\nm = ->(x # c\n) { x }\n"
+      expect_autocorrect_parity(*klasses, src, require_no_parens_config)
+    end
+  end
 end
