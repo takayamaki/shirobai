@@ -142,7 +142,16 @@ module Shirobai
 
         def ignored_ranges
           @ignored_ranges ||= ignored_literal_ranges(processed_source.ast) +
-                              comment_ranges(processed_source.comments)
+                              comment_ranges(processed_source.comments) +
+                              output_record_separator_ranges(processed_source.ast)
+        end
+
+        # Stock 1.92 (rubocop#15793), verbatim: a `$\` global is no line
+        # continuation. Lazy like the rest of `ignored_ranges`.
+        def output_record_separator_ranges(ast)
+          return [] if ast.nil?
+
+          ast.each_node(:gvar).select { |gvar| gvar.source == "$\\" }.map(&:source_range)
         end
 
         def ignored_parent?(node)
