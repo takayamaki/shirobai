@@ -195,6 +195,15 @@ impl<'s> Visitor<'s> {
             }
         }
 
+        // 4. `contains_escaped_delimiter?` (1.92, rubocop#15843) — `%q` / `%s`
+        //    / `%r`: an escaped delimiter in the raw body changes meaning (or,
+        //    for a regexp, its source) once the delimiters change.
+        if (type_index == 3 /* %q */ || type_index == 6 /* %s */ || type_index == 5 /* %r */)
+            && contains_escaped_delimiter(&source[opening_end..closing_start], matchpairs(begin_byte))
+        {
+            return;
+        }
+
         // Stock's `node.loc.end` is the closer byte (regex options excluded)
         // even though prism's `closing_loc` may also span them. Snap the
         // end-replacement range to a single byte.
@@ -521,8 +530,28 @@ impl<'s> Visitor<'s> {
     }
 }
 
+/// `body.scan(/\\./m).any? { |escape| delimiters.include?(escape[1]) }`:
+/// non-overlapping `\x` pairs, so `\\` consumes the second backslash. Only
+/// the byte after the backslash matters (delimiters are ASCII; a multibyte
+/// char's continuation bytes are never a backslash).
+fn contains_escaped_delimiter(body: &[u8], delimiters: [u8; 2]) -> bool {
+    let mut i = 0;
+    while i + 1 < body.len() {
+        if body[i] == b'\\' {
+            if delimiters.contains(&body[i + 1]) {
+                return true;
+            }
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    false
+}
+
 /// `PercentLiteralDelimiters#matchpairs`: the pair characters used by
-/// `include_same_character_as_used_for_delimiter?` for `%w` / `%i`.
+/// `include_same_character_as_used_for_delimiter?` (`%w` / `%i`) and
+/// `contains_escaped_delimiter?` (`%q` / `%s` / `%r`).
 fn matchpairs(begin: u8) -> [u8; 2] {
     match begin {
         b'(' => *b"()",
@@ -844,6 +873,24 @@ mod tests {
             let off = run_one(&src, &all_brackets());
             assert_eq!(off.len(), 1, "type {ty}");
             assert_eq!(off[0].type_index as usize, i, "type {ty}");
+        }
+    }
+
+    // 1.92 (rubocop#15843): `%q` / `%s` / `%r` with an escaped delimiter in
+    // the body are left alone. Expected results taken from the stock CLI.
+    #[test]
+    fn escaped_delimiter_skips_q_s_r() {
+        let cfg = default_config();
+        for src in [
+            "%r!a\\!b!i", "%r!#{x}\\!!", "%q(a\\(b)", "%q!a\\\\\\!b!", "%q!\u{e9}\\!!",
+            "%s!x\\!y!", "%q<a\\>b>", "%r{a\\}b}",
+        ] {
+            assert!(run_one(src, &cfg).is_empty(), "{src}");
+        }
+        // `\\` consumes the second backslash; `%Q` interpolates, so it still
+        // fires.
+        for src in ["%q!a\\\\!", "%q!a\\\\\\\\!", "%Q!a\\!b!", "%q!a\\\nb!"] {
+            assert_eq!(run_one(src, &cfg).len(), 1, "{src}");
         }
     }
 }
