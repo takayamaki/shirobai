@@ -44,8 +44,8 @@ jobs:
 
   # Prebuilt platform gems for the core gem only (the 3 plugin gems are pure
   # Ruby). Runs after `release` so the source gems are already on the index;
-  # then a user on arm64-darwin / x86_64-linux installs a precompiled gem and
-  # needs no Rust toolchain. Each platform gem is a fat gem carrying a .so per
+  # then a user on arm64-darwin / x86_64-linux / aarch64-linux installs a
+  # precompiled gem and needs no Rust toolchain. Each platform gem is a fat gem carrying a .so per
   # Ruby ABI; lib/shirobai.rb loads the versioned path first, source .so second.
   #
   # Three jobs on purpose: build, install smoke, push. The v2026.0709.0000
@@ -63,7 +63,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [arm64-darwin, x86_64-linux]
+        platform: [arm64-darwin, x86_64-linux, aarch64-linux]
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -91,8 +91,8 @@ jobs:
           if-no-files-found: error
 
   # Install smoke on the real target platform (ubuntu-latest is x86_64-linux,
-  # macos-14 is arm64-darwin): scratch GEM_HOME, install of the exact built
-  # artifact, then a require + wrapper-enlist check. This applies the
+  # macos-14 is arm64-darwin, ubuntu-24.04-arm is aarch64-linux): scratch
+  # GEM_HOME, install of the exact built artifact, then a require + wrapper-enlist check. This applies the
   # runbook's install-smoke rule to platform gems, and is the only stage that
   # exercises the fat gem's versioned .so load path end to end.
   cross-gem-smoke:
@@ -106,6 +106,8 @@ jobs:
             runner: ubuntu-latest
           - platform: arm64-darwin
             runner: macos-14
+          - platform: aarch64-linux
+            runner: ubuntu-24.04-arm
 
     runs-on: ${{ matrix.runner }}
 
@@ -152,7 +154,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [arm64-darwin, x86_64-linux]
+        platform: [arm64-darwin, x86_64-linux, aarch64-linux]
 
     steps:
       - uses: ruby/setup-ruby@89f90524b88a01fe6e0b732220432cc6142926af # v1.313.0

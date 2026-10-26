@@ -40,7 +40,7 @@ Without it, `gem push` for that gem is rejected.
    waits for the index to serve it, then pushes the 3 plugins
    (their `= version` dependency must resolve against the new core).
    Then the `cross-gem` job (which `needs: release`) cross-compiles and
-   pushes the prebuilt core gems for `arm64-darwin` and `x86_64-linux`
+   pushes the prebuilt core gems for `arm64-darwin`, `x86_64-linux` and `aarch64-linux`
    (see "Prebuilt platform gems" below).
 
 4. **Verify**: the 4 rubygems.org pages show the new version, and
@@ -50,7 +50,7 @@ Without it, `gem push` for that gem is rejected.
    ```
 
    resolves cleanly on a machine with a Rust toolchain.
-   On `arm64-darwin` / `x86_64-linux` the same command should pull the
+   On `arm64-darwin` / `x86_64-linux` / `aarch64-linux` the same command should pull the
    prebuilt platform gem and install with no Rust toolchain at all.
 
 ## Local rehearsal (no push)
@@ -94,15 +94,15 @@ plugin gem at the pinned version.
 
 ## Prebuilt platform gems
 
-The core gem also ships precompiled for `arm64-darwin` (Apple Silicon)
-and `x86_64-linux` (glibc Linux), so users on those platforms install
-without a Rust toolchain.
+The core gem also ships precompiled for `arm64-darwin` (Apple Silicon),
+`x86_64-linux` and `aarch64-linux` (glibc Linux on x86_64 / arm64),
+so users on those platforms install without a Rust toolchain.
 The 3 plugin gems are pure Ruby and need no platform build.
 
 How it works:
 
 - `Rakefile` lists the targets on the `RbSys::ExtensionTask`
-  (`ext.cross_compile = true`, `ext.cross_platform = %w[arm64-darwin x86_64-linux]`).
+  (`ext.cross_compile = true`, `ext.cross_platform = %w[arm64-darwin x86_64-linux aarch64-linux]`).
 - Three jobs in `release.yml` run after the `release` job:
   `cross-gem` (build) -> `cross-gem-smoke` (install smoke) -> `cross-gem-push`.
   The build job uses `oxidize-rb/actions/cross-gem`, which cross-compiles inside
@@ -114,7 +114,7 @@ How it works:
   `lib/shirobai.rb` requires the versioned path first and falls back to the
   flat `shirobai/shirobai` a source install produces.
 - RubyGems serves the matching platform gem automatically; other platforms
-  (musl/Alpine, arm-linux, x86_64-darwin) fall back to the source gem and
+  (musl/Alpine, 32-bit arm-linux, x86_64-darwin) fall back to the source gem and
   still build from source with a Rust toolchain.
 
 Trusted publishing: the platform gems are the same gem name (`shirobai`)
@@ -131,7 +131,8 @@ Push ordering: `cross-gem` has `needs: release`, so the 4 source gems are
 already indexed before any platform gem is pushed.
 Between build and push, `cross-gem-smoke` installs the exact built
 artifact into a scratch `GEM_HOME` **on the real target platform**
-(`ubuntu-latest` for `x86_64-linux`, `macos-14` for `arm64-darwin`) and
+(`ubuntu-latest` for `x86_64-linux`, `macos-14` for `arm64-darwin`,
+`ubuntu-24.04-arm` for `aarch64-linux`) and
 checks require + wrapper enlistment.
 This applies the install-smoke rule (see the incident above) to platform
 gems: a gem that does not install never reaches `gem push`.
@@ -140,4 +141,4 @@ a half-pushed gem; "Re-run failed jobs" retries only the failed platform
 cleanly.
 
 Adding musl (Alpine) later is a one-line matrix addition
-(`x86_64-linux-musl`); it is out of scope for now.
+(`x86_64-linux-musl` / `aarch64-linux-musl`); it is out of scope for now.
