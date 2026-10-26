@@ -1144,6 +1144,7 @@ pub struct BundleResult {
     pub block_delimiters: block_delimiters::BlockDelimitersResult,
     pub abc_size: Vec<abc_size::AbcMethod>,
     pub indentation_consistency: Vec<indentation_consistency::ConsistencyOffense>,
+    pub indentation_consistency_groups: Vec<indentation_consistency::ConsistencyGroup>,
     pub empty_line_between_defs: Vec<empty_line_between_defs::EmptyLineBetweenDefsOffense>,
     pub end_alignment: Vec<end_alignment::EndAlignmentRecord>,
     pub block_alignment: Vec<block_alignment::BlockAlignmentOffense>,
@@ -1866,7 +1867,8 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         .map(|r| block_delimiters::resolve(r.events, &[]))
         .unwrap_or_default();
     let abc_size = abc_rule.map(|r| r.out).unwrap_or_default();
-    let indentation_consistency = ic_rule.map(|r| r.offenses).unwrap_or_default();
+    let (indentation_consistency, indentation_consistency_groups) =
+        ic_rule.map(|r| (r.offenses, r.groups)).unwrap_or_default();
     let empty_line_between_defs = elbd_rule.map(|r| r.offenses).unwrap_or_default();
     let end_alignment = ea_rule.map(|r| r.records).unwrap_or_default();
     let block_alignment = ba_rule.map(|r| r.offenses).unwrap_or_default();
@@ -2089,6 +2091,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
         block_delimiters,
         abc_size,
         indentation_consistency,
+        indentation_consistency_groups,
         empty_line_between_defs,
         end_alignment,
         block_alignment,

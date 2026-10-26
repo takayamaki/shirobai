@@ -39,6 +39,25 @@ pub struct ConsistencyOffense {
     pub end_offset: usize,
     pub column_delta: isize,
     pub autocorrect: bool,
+    /// The `check_alignment` call (group) this offense came from, in walk
+    /// order. Pairs with `ConsistencyGroup::id`.
+    pub group: usize,
+}
+
+/// One `check_alignment(items, base_column)` call, recorded only when the
+/// source has a `rubocop:` directive comment. 1.92 (rubocop#16082)
+/// `governed_base_column` moves the base to the first item on which
+/// `Layout/IndentationWidth` is enabled when it is disabled on the first
+/// item's line; that needs `comment_config`, so the wrapper re-checks such a
+/// group in Ruby (per directive file, not per file).
+#[derive(Debug)]
+pub struct ConsistencyGroup {
+    pub id: usize,
+    /// `base_column_for_normal_style` when it forced a base (then
+    /// `governed_base_column` is never consulted).
+    pub forced_base: Option<isize>,
+    /// Every item's `[start, end)` range, in order.
+    pub items: Vec<(usize, usize)>,
 }
 
 #[derive(Clone, Copy)]
@@ -48,9 +67,17 @@ pub struct Config {
 }
 
 pub fn check_indentation_consistency(source: &[u8], config: Config) -> Vec<ConsistencyOffense> {
+    check_indentation_consistency_with_groups(source, config).0
+}
+
+/// Offenses plus the recorded groups (see `ConsistencyGroup`).
+pub fn check_indentation_consistency_with_groups(
+    source: &[u8],
+    config: Config,
+) -> (Vec<ConsistencyOffense>, Vec<ConsistencyGroup>) {
     let mut rule = build_rule(source, config);
     super::dispatch::run(source, &mut [&mut rule]);
-    rule.offenses
+    (rule.offenses, rule.groups)
 }
 
 /// Build the rule for use standalone or in a shared-walk bundle.
@@ -61,6 +88,9 @@ pub(crate) fn build_rule(source: &[u8], config: Config) -> Visitor<'_> {
         line_index,
         config,
         offenses: Vec::new(),
+        record_groups: source.windows(8).any(|w| w == b"rubocop:"),
+        group: 0,
+        groups: Vec::new(),
         // Walk-state: the kind and start offset of every ancestor node, used to
         // resolve `in_macro_scope?` and the parent column for
         // `base_column_for_normal_style`.
@@ -74,6 +104,11 @@ pub(crate) struct Visitor<'a> {
     line_index: Rc<LineIndex>,
     config: Config,
     pub(crate) offenses: Vec<ConsistencyOffense>,
+    /// The source has a `rubocop:` directive: record every group.
+    record_groups: bool,
+    /// Current group id (`check_alignment` call count).
+    group: usize,
+    pub(crate) groups: Vec<ConsistencyGroup>,
     /// `(kind, start_offset)` for each open ancestor node (pushed on `enter`,
     /// popped on `leave`). The top is the parent of the node currently entering.
     ancestors: Vec<(NodeKind, usize)>,
@@ -252,6 +287,14 @@ impl<'a> Visitor<'a> {
     /// `check_alignment(items, base_column)`. `base_column` defaults to the
     /// display column of the first item.
     fn check_alignment(&mut self, items: &[&Node<'_>], base_column: Option<isize>) {
+        self.group += 1;
+        if self.record_groups && !items.is_empty() {
+            self.groups.push(ConsistencyGroup {
+                id: self.group,
+                forced_base: base_column,
+                items: items.iter().map(|n| loc(&n.location())).collect(),
+            });
+        }
         let base = match base_column {
             Some(b) => b,
             None => match items.first() {
@@ -287,6 +330,7 @@ impl<'a> Visitor<'a> {
             end_offset: expr.1,
             column_delta,
             autocorrect: !within_prior,
+            group: self.group,
         });
     }
 }
@@ -510,6 +554,25 @@ mod tests {
                 indented_internal_methods: true,
             },
         )
+    }
+
+    // Groups are recorded only for sources with a `rubocop:` directive (the
+    // 1.92 `governed_base_column` input), and offenses carry their group id.
+    #[test]
+    fn groups_recorded_only_with_directive() {
+        let cfg = Config {
+            indented_internal_methods: false,
+        };
+        let plain = "module Foo\n  def a\n  end\n    def b\n    end\nend\n";
+        let (offs, groups) = check_indentation_consistency_with_groups(plain.as_bytes(), cfg);
+        assert_eq!(offs.len(), 1);
+        assert!(groups.is_empty());
+        let directive = "module Foo\nextend self # rubocop:disable Layout/IndentationWidth\n  def a\n  end\nend\n";
+        let (offs, groups) = check_indentation_consistency_with_groups(directive.as_bytes(), cfg);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].items.len(), 2);
+        assert_eq!(offs.len(), 1);
+        assert_eq!(offs[0].group, groups[0].id);
     }
 
     #[test]

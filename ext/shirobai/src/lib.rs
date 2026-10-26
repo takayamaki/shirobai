@@ -746,12 +746,27 @@ fn map_indentation_width(
         .collect()
 }
 
+/// `Layout/IndentationConsistency`: `[offenses, groups]` —
+/// offenses `[[start, end, column_delta, autocorrect, group], ...]`, groups
+/// `[[id, forced_base_or_nil, [[start, end], ...]], ...]` (only recorded when
+/// the source has a `rubocop:` directive).
+#[allow(clippy::type_complexity)]
 fn map_indentation_consistency(
     v: Vec<shirobai_core::rules::indentation_consistency::ConsistencyOffense>,
-) -> Vec<(usize, usize, isize, bool)> {
-    v.into_iter()
-        .map(|o| (o.start_offset, o.end_offset, o.column_delta, o.autocorrect))
-        .collect()
+    groups: Vec<shirobai_core::rules::indentation_consistency::ConsistencyGroup>,
+) -> (
+    Vec<(usize, usize, isize, bool, usize)>,
+    Vec<(usize, Option<isize>, Vec<(usize, usize)>)>,
+) {
+    (
+        v.into_iter()
+            .map(|o| (o.start_offset, o.end_offset, o.column_delta, o.autocorrect, o.group))
+            .collect(),
+        groups
+            .into_iter()
+            .map(|g| (g.id, g.forced_base, g.items))
+            .collect(),
+    )
 }
 
 /// `Layout/EmptyLineBetweenDefs`: `[[start, end, message, insert, pos, n], ...]`
@@ -1963,7 +1978,10 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_empty_lines(elab.exception_keywords))?;
         ary.push(map_block_delimiters(r.block_delimiters))?;
         ary.push(map_abc_size(r.abc_size))?;
-        ary.push(map_indentation_consistency(r.indentation_consistency))?;
+        ary.push(map_indentation_consistency(
+            r.indentation_consistency,
+            r.indentation_consistency_groups,
+        ))?;
         ary.push(map_empty_line_between_defs(r.empty_line_between_defs))?;
         ary.push(map_end_alignment(r.end_alignment))?;
         ary.push(map_block_alignment(r.block_alignment))?;
@@ -3265,16 +3283,19 @@ fn check_indentation_width(
 fn check_indentation_consistency(
     source: RString,
     internal: bool,
-) -> Vec<(usize, usize, isize, bool)> {
+) -> (
+    Vec<(usize, usize, isize, bool, usize)>,
+    Vec<(usize, Option<isize>, Vec<(usize, usize)>)>,
+) {
     let cfg = shirobai_core::rules::indentation_consistency::Config {
         indented_internal_methods: internal,
     };
-    map_indentation_consistency(
-        shirobai_core::rules::indentation_consistency::check_indentation_consistency(
+    let (offenses, groups) =
+        shirobai_core::rules::indentation_consistency::check_indentation_consistency_with_groups(
             bytes(&source),
             cfg,
-        ),
-    )
+        );
+    map_indentation_consistency(offenses, groups)
 }
 
 /// Ruby entry point for `Layout/EmptyLineBetweenDefs`. `nums` is
