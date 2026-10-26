@@ -87,7 +87,7 @@ shirobaiは日本語話者なら当然わかるでしょう、白バイです。
 
 > [!IMPORTANT]
 > shirobai のネイティブ拡張は Rust で書かれています。
-> **x86_64 Linux (glibc) と Apple Silicon macOS (arm64-darwin)** では
+> **x86_64 / arm64 Linux (glibc) と Apple Silicon macOS (arm64-darwin)** では
 > `gem install` がビルド済みの platform gem を取得するため、**Rust toolchain は不要です**。
 > それ以外のプラットフォームでは `bundle install` 時に `cargo build --release` が走るため、
 > **Rust toolchain（stable, 1.75 以上）** がインストール先ホストに必要です。
@@ -98,7 +98,7 @@ shirobaiは日本語話者なら当然わかるでしょう、白バイです。
 | RuboCop | **`= 1.92.1` で hard pin** |
 | Ruby | `>= 3.1` |
 | Rust | `>= 1.75`（stable）——下記ビルド済み対象では不要 |
-| ビルド済み提供 | `x86_64-linux`（glibc）/ `arm64-darwin`（Apple Silicon）、Ruby 3.1〜4.0 |
+| ビルド済み提供 | `x86_64-linux` / `aarch64-linux`（glibc）/ `arm64-darwin`（Apple Silicon）、Ruby 3.1〜4.0 |
 | その他プラットフォーム | Linux / macOS（`cargo build --release` が通れば動く。musl や Intel macOS 等） |
 | Ruby パーサ | `ruby-prism`（Latest 文法 ≈ Ruby 4.1） |
 
