@@ -3280,6 +3280,7 @@ fn check_indentation_width(
 /// autocorrect re-passes, when the bundle is not eligible). `internal` is true
 /// for the `indented_internal_methods` EnforcedStyle. Returns
 /// `[[start, end, column_delta, autocorrect], ...]`.
+#[allow(clippy::type_complexity)]
 fn check_indentation_consistency(
     source: RString,
     internal: bool,

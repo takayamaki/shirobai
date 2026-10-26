@@ -363,9 +363,9 @@ impl Visitor<'_> {
         }
     }
 
-    /// `check_based_on_longest_key`'s offset: `max(single-line key lengths)
-    /// - first key length` (`key.source_range.length`), or 0 when the first
-    /// key spans several lines (1.92, rubocop#15857).
+    /// `check_based_on_longest_key`'s offset: the longest single-line key
+    /// length minus the first key length (`key.source_range.length`), or 0
+    /// when the first key spans several lines (1.92, rubocop#15857).
     fn longest_key_offset(&self, h: &ruby_prism::HashNode<'_>, first: &PairInfo) -> usize {
         if !self.single_line(first.key_range) {
             return 0;
