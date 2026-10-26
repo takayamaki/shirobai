@@ -6,9 +6,9 @@ module Shirobai
       # Drop-in Rust reimplementation of `Style/RedundantFreeze`.
       #
       # Detection and autocorrect both happen in Rust; Ruby turns each tuple
-      # into an offense on the send node and two `corrector.remove` calls (the
-      # `.` and the `freeze` selector), matching stock's
-      # `corrector.remove(node.loc.dot)` + `corrector.remove(node.loc.selector)`.
+      # into an offense on the send node and one `corrector.remove` from the
+      # `.` through the `freeze` selector, matching stock's (1.92)
+      # `corrector.remove(node.loc.dot.join(node.loc.selector))`.
       #
       # The Rust side reproduces the `FrozenStringLiteral` mixin's
       # `frozen_string_literals_enabled?` on raw bytes, so this cop no longer
@@ -51,8 +51,7 @@ module Shirobai
             add_offense(range) do |corrector|
               dot = Parser::Source::Range.new(buffer, off[dot_start], off[dot_end])
               selector = Parser::Source::Range.new(buffer, off[sel_start], off[sel_end])
-              corrector.remove(dot)
-              corrector.remove(selector)
+              corrector.remove(dot.join(selector))
             end
           end
         end
