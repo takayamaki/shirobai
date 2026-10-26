@@ -1257,15 +1257,25 @@ fn map_redundant_freeze(
         .collect()
 }
 
-/// `Layout/BlockAlignment`: `[[end_start, end_end, message, align_column], ...]`
+/// `Layout/BlockAlignment`: `[[end_start, end_end, message, align_column,
+/// anchor_offset, anchor_begins_line], ...]`
 /// — `[end_start, end_end)` is the closing-token range (`end` / `}`);
 /// `message`/`align_column` carry the offense detail (only misaligned blocks
 /// are emitted).
 fn map_block_alignment(
     v: Vec<shirobai_core::rules::block_alignment::BlockAlignmentOffense>,
-) -> Vec<(usize, usize, String, usize)> {
+) -> Vec<(usize, usize, String, usize, usize, bool)> {
     v.into_iter()
-        .map(|o| (o.end_start, o.end_end, o.message, o.align_column))
+        .map(|o| {
+            (
+                o.end_start,
+                o.end_end,
+                o.message,
+                o.align_column,
+                o.anchor_offset,
+                o.anchor_begins_line,
+            )
+        })
         .collect()
 }
 
@@ -4305,7 +4315,10 @@ fn check_assignment_indentation(source: RString, indentation_width: usize) -> Ve
 /// Ruby entry point for `Layout/BlockAlignment`. `style` is the
 /// `EnforcedStyleAlignWith` selector (0 = either, 1 = start_of_block,
 /// 2 = start_of_line). Returns the shape documented on `map_block_alignment`.
-fn check_block_alignment(source: RString, style: u8) -> Vec<(usize, usize, String, usize)> {
+fn check_block_alignment(
+    source: RString,
+    style: u8,
+) -> Vec<(usize, usize, String, usize, usize, bool)> {
     let cfg = shirobai_core::rules::block_alignment::Config { style };
     map_block_alignment(shirobai_core::rules::block_alignment::check_block_alignment(
         bytes(&source),

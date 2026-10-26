@@ -58,6 +58,13 @@ pub struct BlockAlignmentOffense {
     /// (target > current) inserts spaces before the token; negative removes
     /// them.
     pub align_column: usize,
+    /// An offset on the autocorrect anchor's line (`anchor_indentation`,
+    /// 1.92 tabs support): the do-line anchor under `start_of_block`, else
+    /// the start of `start_for_line_node`.
+    pub anchor_offset: usize,
+    /// Whether that anchor's indentation is usable: always under
+    /// `start_of_block`, else `begins_its_line?(anchor)`.
+    pub anchor_begins_line: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -617,11 +624,15 @@ impl<'a> Visitor<'a> {
         );
 
         // compute_start_col (autocorrect target column).
-        let align_column = if self.style == STYLE_START_OF_BLOCK {
-            do_slc.2
+        let (align_column, anchor_offset, anchor_begins_line) = if self.style == STYLE_START_OF_BLOCK {
+            (do_slc.2, bl.anchor_start.unwrap_or(bl.open_start), true)
         } else {
             let line_node = self.start_for_line_node(start);
-            self.column(line_node.start)
+            (
+                self.column(line_node.start),
+                line_node.start,
+                self.begins_its_line(line_node.start),
+            )
         };
 
         let _ = block_range;
@@ -630,6 +641,8 @@ impl<'a> Visitor<'a> {
             end_end,
             message,
             align_column,
+            anchor_offset,
+            anchor_begins_line,
         });
     }
 }
@@ -841,6 +854,18 @@ mod tests {
 
     fn run(source: &str, style: u8) -> Vec<BlockAlignmentOffense> {
         check_block_alignment(source.as_bytes(), Config { style })
+    }
+
+    // 1.92 tabs autocorrect anchor (stock: `\t  bar do` -> `end` gets `\t  `;
+    // `\tx = [baz do` -> the line node is the assignment, which begins its line).
+    #[test]
+    fn tab_anchor_offsets() {
+        let src = "\t  bar do\n\t\tv\n end\n\tx = [baz do\n\t\tv\n   end]\n";
+        let got = run(src, STYLE_START_OF_LINE);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].anchor_offset, 3);
+        assert!(got[0].anchor_begins_line);
+        assert!(got[1].anchor_begins_line && got[1].anchor_offset == src.find("x =").unwrap());
     }
 
     #[test]
