@@ -14,7 +14,7 @@
 //! with which message, and computes the delta triple and the byte ranges of
 //! the key / operator / value (or, for the no-value path, the node). Ruby
 //! applies `corrector.insert_before` / `corrector.remove` exactly like stock's
-//! `adjust`, including the `key_delta` clamp to `-key.column`.
+//! `adjust`.
 //!
 //! Columns are parser-gem columns (character counts from the line start), not
 //! display width. Prism colon pairs (`a: 1`) carry the `:` inside the key and
@@ -50,7 +50,7 @@ pub struct HashAlignmentOffense {
     pub separator_delta: isize,
     pub value_delta: isize,
     /// Key range (parser geometry: colon excluded) and its column (for the
-    /// clamp). Only meaningful when `has_value`.
+    /// wrapper; unused since 1.92 dropped the clamp). Only meaningful when `has_value`.
     pub key_start: usize,
     pub key_end: usize,
     pub key_column: usize,
@@ -446,7 +446,19 @@ impl Visitor<'_> {
         if alignment == Alignment::Key {
             return true;
         }
-        !self.pairs_on_same_line(pairs) && !self.mixed_delimiters(pairs)
+        !self.pairs_on_same_line(pairs) && !self.mixed_delimiters(pairs) && self.alignable_values(pairs)
+    }
+
+    /// `ValueAlignment#alignable_values?`: the first pair has a value and no
+    /// value starts on a line after its key's last line.
+    fn alignable_values(&self, pairs: &[Pair]) -> bool {
+        let mut assoc = pairs.iter().filter(|p| p.is_pair());
+        if assoc.next().is_some_and(|p| p.value_omission()) {
+            return false;
+        }
+        pairs.iter().filter(|p| p.is_pair()).all(|p| {
+            self.line_of(p.key_end().saturating_sub(1)) == self.line_of(p.value_start())
+        })
     }
 
     fn pairs_on_same_line(&self, pairs: &[Pair]) -> bool {
@@ -491,7 +503,8 @@ impl Visitor<'_> {
     fn check_pairs(&mut self, pairs: &[Pair]) {
         // New `on_hash` callback => new hash group for clobber confinement.
         self.group += 1;
-        let first = pairs.iter().find(|p| p.is_pair()).unwrap();
+        let first_idx = pairs.iter().position(|p| p.is_pair()).unwrap();
+        let first = &pairs[first_idx];
         let ctx = HashCtx {
             target_operator_column: self.target_operator_column(pairs, first),
             max_delimiter_width: self.max_delimiter_width(pairs),
@@ -508,7 +521,7 @@ impl Visitor<'_> {
         // First pair: `alignment_for(first_pair).each { deltas_for_first_pair }`.
         for &alignment in self.alignment_for(first) {
             let delta = self.delta_for_first_pair(alignment, first, &ctx);
-            self.record(&mut by_class, alignment, 0, delta);
+            self.record(&mut by_class, alignment, first_idx, first.range.0, delta);
         }
 
         // `node.children.each` — every element, in source order.
@@ -516,7 +529,7 @@ impl Visitor<'_> {
             if current.is_pair() {
                 for &alignment in self.alignment_for(current) {
                     let delta = self.delta_current(alignment, first, current, &ctx);
-                    self.record(&mut by_class, alignment, idx, delta);
+                    self.record(&mut by_class, alignment, idx, current.range.0, delta);
                 }
             } else {
                 // `KeywordSplatAlignment#deltas`: `first.key_delta(current)`
@@ -550,7 +563,15 @@ impl Visitor<'_> {
             self.offenses
                 .push(self.build_offense(&pairs[idx], 3, delta));
         }
-        if let Some(winner) = by_class.iter().min_by_key(|e| e.offenders.len()) {
+        // 1.92: styles that found a key it cannot move far enough left
+        // (`unalignable_styles`) are skipped, unless every style is.
+        let alignable: Vec<&ClassEntry> = by_class.iter().filter(|e| !e.unalignable).collect();
+        let candidates: Vec<&ClassEntry> = if alignable.is_empty() {
+            by_class.iter().collect()
+        } else {
+            alignable
+        };
+        if let Some(winner) = candidates.into_iter().min_by_key(|e| e.offenders.len()) {
             let message = winner.class.message();
             // `register_offenses_with_format` iterates the (possibly
             // duplicated) node list; `add_offense` dedups by range. Emit each
@@ -586,7 +607,14 @@ impl Visitor<'_> {
     /// Insert/replace a `(class, pair)` delta and update the class's offender
     /// list. Mirrors `check_delta`: the class entry is created even when the
     /// delta is good (zero), and a later delta for the same pair overwrites.
-    fn record(&self, by_class: &mut Vec<ClassEntry>, class: Alignment, idx: usize, delta: Delta) {
+    fn record(
+        &self,
+        by_class: &mut Vec<ClassEntry>,
+        class: Alignment,
+        idx: usize,
+        node_start: usize,
+        delta: Delta,
+    ) {
         let entry = if let Some(e) = by_class.iter_mut().find(|e| e.class == class) {
             e
         } else {
@@ -594,10 +622,18 @@ impl Visitor<'_> {
                 class,
                 offenders: Vec::new(),
                 deltas: Vec::new(),
+                unalignable: false,
             });
             by_class.last_mut().unwrap()
         };
         let good = delta.key == 0 && delta.separator == 0 && delta.value == 0;
+        // `key_out_of_line?` (1.92): a key delta that would move the node
+        // past the start of its line marks the style unalignable and the
+        // pair is not recorded.
+        if !good && delta.key < -self.col(node_start) {
+            entry.unalignable = true;
+            return;
+        }
         // `check_delta` writes `column_deltas[class][node]` ONLY for a
         // non-good delta (it `return`s before the write otherwise). So a good
         // delta leaves no stored delta — and if such a pair is later reported
@@ -696,14 +732,26 @@ impl Visitor<'_> {
             }
             Alignment::Table => {
                 let k = self.key_delta_left(first, current);
-                let s = self.value_sep_delta(alignment, first, current, k, ctx);
+                // `separator_shift` (1.92): moving a multiline key's first
+                // line does not move its separator.
+                let shift = if self.single_line_key(current) { k } else { 0 };
+                let s = self.value_sep_delta(alignment, first, current, shift, ctx);
                 Delta {
                     key: k,
                     separator: s,
-                    value: self.table_val_delta(first, current, ctx) - k - s,
+                    value: self.table_val_delta(first, current, ctx) - shift - s,
                 }
             }
             Alignment::Separator => {
+                // 1.92 (rubocop#15821 / #16063): a multiline key (first or
+                // current) leaves the pair alone.
+                if !self.single_line_key(first) || !self.single_line_key(current) {
+                    return Delta {
+                        key: 0,
+                        separator: 0,
+                        value: 0,
+                    };
+                }
                 let k = self.sep_key_delta(first, current);
                 let s = self.value_sep_delta(alignment, first, current, k, ctx);
                 Delta {
@@ -819,15 +867,14 @@ impl Visitor<'_> {
         correct - self.col(current.value_start())
     }
 
-    /// SeparatorAlignment `value_delta`: `first.value_delta(current)`.
+    /// SeparatorAlignment `value_delta` (1.92, rubocop#15751): the value
+    /// goes one space after the first pair's separator, not at the first
+    /// pair's value column.
     fn sep_val_delta(&self, first: &Pair, current: &Pair) -> isize {
-        if current.value_omission() {
+        if first.range == current.range || current.value_omission() {
             return 0;
         }
-        if self.same_line(first, current) {
-            return 0;
-        }
-        self.col(first.value_start()) - self.col(current.value_start())
+        self.col(first.op_end()) + 1 - self.col(current.value_start())
     }
 
     /// `max_key_width`: `keys.select(&:single_line?).map { |k| k.source.length }.max`
@@ -872,6 +919,8 @@ struct ClassEntry {
     offenders: Vec<usize>,
     /// Stored delta per offending pair index (last write wins).
     deltas: Vec<(usize, Delta)>,
+    /// `unalignable_styles.include?(class)` (1.92).
+    unalignable: bool,
 }
 
 /// Per-hash precomputed widths for table alignment.
@@ -1080,3 +1129,25 @@ mod tests {
     }
 }
 
+
+#[cfg(test)]
+mod tests_192 {
+    use super::*;
+
+    fn cfg(hr: u8, co: u8) -> Config {
+        Config {
+            hash_rocket_styles: vec![hr],
+            colon_styles: vec![co],
+            last_argument_style: 0,
+            enforce_fixed_indentation: false,
+        }
+    }
+
+    #[test]
+    fn separator_skips_key_too_wide_to_right_align() {
+        // Stock 1.92.1: no offense (`key_out_of_line?` marks the style
+        // unalignable, rubocop#15717).
+        let src = "f(\n  short: a,\n  considerably_longer_key: b\n)\n";
+        assert!(check_hash_alignment(src.as_bytes(), &cfg(1, 1)).is_empty());
+    }
+}
