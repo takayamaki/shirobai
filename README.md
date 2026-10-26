@@ -98,7 +98,7 @@ The image is simple: RuboCop hops on a shiro-bai and gets faster.
 
 > [!IMPORTANT]
 > shirobai's native extension is written in Rust.
-> On **x86_64 Linux (glibc)** and **Apple Silicon macOS (arm64-darwin)**,
+> On **x86_64 / arm64 Linux (glibc)** and **Apple Silicon macOS (arm64-darwin)**,
 > `gem install` pulls a prebuilt platform gem and **no Rust toolchain is needed**.
 > On every other platform `bundle install` runs `cargo build --release`,
 > so you need **Rust toolchain (stable, 1.75 or newer)** on the machine where you install.
@@ -109,7 +109,7 @@ The image is simple: RuboCop hops on a shiro-bai and gets faster.
 | RuboCop | **pinned to `= 1.92.1`** |
 | Ruby | `>= 3.1` |
 | Rust | `>= 1.75` (stable) — not needed on the prebuilt platforms below |
-| Prebuilt platforms | `x86_64-linux` (glibc) / `arm64-darwin` (Apple Silicon), Ruby 3.1–4.0 |
+| Prebuilt platforms | `x86_64-linux` / `aarch64-linux` (glibc) / `arm64-darwin` (Apple Silicon), Ruby 3.1–4.0 |
 | Other platforms | Linux / macOS (anywhere `cargo build --release` works, e.g. musl, Intel macOS) |
 | Ruby parser | `ruby-prism` (Latest grammar ≈ Ruby 4.1) |
 
