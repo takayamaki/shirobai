@@ -131,8 +131,8 @@ pub(crate) struct Visitor<'a> {
 
 impl<'a> Visitor<'a> {
     fn push(&mut self, start: usize, end: usize, message: MessageId) {
-        // Stock's `offense` returns early when `begin_pos > end_pos`.
-        if start > end {
+        // Stock's `offense` returns early when `begin_pos >= end_pos` (1.92).
+        if start >= end {
             return;
         }
         self.offenses.push(SpaceInsideBlockBracesOffense {
@@ -308,6 +308,16 @@ impl<'a> Visitor<'a> {
             // keeps `begin_pos == left_begin` and extends the end from
             // `left_end`. space(bws.begin_pos + 1, bws.end_pos).
             let bws_end = self.surrounding_space_right(left_end);
+            // 1.92 `space_after_left_brace`: no offense when the space runs
+            // into a line break or up to a comment (rubocop#15719, #15983).
+            // Right after `{` and blanks, a `#` can only start a comment.
+            if self.source[left_begin..bws_end]
+                .iter()
+                .any(|&b| b == b'\n' || b == b'\r')
+                || self.source.get(bws_end) == Some(&b'#')
+            {
+                return;
+            }
             self.space(left_begin + 1, bws_end, MessageId::SpaceInsideLeft);
         }
     }
@@ -331,7 +341,7 @@ impl<'a> Visitor<'a> {
         } else {
             let column = self.column(block_start);
             if self.different_line(left_begin, right_begin)
-                && self.aligned_braces(inner, right_begin, column)
+                && self.aligned_braces(inner, left_begin, right_begin, column)
             {
                 return;
             }
@@ -342,8 +352,34 @@ impl<'a> Visitor<'a> {
     /// `aligned_braces?`: the closing brace column equals the block column, or
     /// the block column equals the trailing-space count of the inner's last
     /// line.
-    fn aligned_braces(&self, inner: &[u8], right_begin: usize, column: usize) -> bool {
-        column == self.column(right_begin) || column == inner_last_space_count(inner)
+    fn aligned_braces(
+        &self,
+        inner: &[u8],
+        left_begin: usize,
+        right_begin: usize,
+        column: usize,
+    ) -> bool {
+        column == self.column(right_begin)
+            || column == inner_last_space_count(inner)
+            || self.aligned_with_opening_brace_line(left_begin, right_begin)
+    }
+
+    /// 1.92 `aligned_with_opening_brace_line?`: the `}` begins its line at
+    /// the indentation of the line holding the `{`.
+    fn aligned_with_opening_brace_line(&self, left_begin: usize, right_begin: usize) -> bool {
+        let right_line_start = self.line_index.line_start(right_begin);
+        let begins_its_line = self.source[right_line_start..right_begin]
+            .iter()
+            .all(|b| b.is_ascii_whitespace_strict());
+        if !begins_its_line {
+            return false;
+        }
+        let left_line_start = self.line_index.line_start(left_begin);
+        let indent = self.source[left_line_start..]
+            .iter()
+            .take_while(|&&b| b.is_ascii_whitespace_strict() && b != b'\n')
+            .count();
+        self.column(right_begin) == indent
     }
 
     fn space_inside_right_brace(
@@ -368,7 +404,7 @@ impl<'a> Visitor<'a> {
             begin_pos = self.move_chars(end_pos, right_col - column as i64);
         }
 
-        if inner.last() == Some(&b']') {
+        if closing_bracket_on_own_line(inner) {
             end_pos -= 1;
             // begin_pos = end_pos - (inner_last_space_count(inner) - column)
             let delta = inner_last_space_count(inner) as i64 - column as i64;
@@ -390,6 +426,19 @@ impl<'a> Visitor<'a> {
         if self.config.style == Style::NoSpace {
             self.push(start, end, message);
         }
+    }
+}
+
+/// 1.92 `closing_bracket_on_own_line?`: the inner's last line is a lone `]`
+/// (`inner[/[^\n]*\z/].match?(/\A\s*\]\z/)`).
+fn closing_bracket_on_own_line(inner: &[u8]) -> bool {
+    let last_line = match inner.iter().rposition(|&b| b == b'\n') {
+        Some(i) => &inner[i + 1..],
+        None => inner,
+    };
+    match last_line.split_last() {
+        Some((b']', head)) => head.iter().all(|b| b.is_ascii_whitespace_strict()),
+        _ => false,
     }
 }
 
@@ -666,5 +715,17 @@ mod tests {
         // is already reached by the generic walk; the bare arm must not fire
         // twice for it. One offense pair, no duplicates.
         assert_eq!(run("super() {x}\n", SPACE), vec![(9, 10, 0), (10, 11, 2)]);
+    }
+
+    // 1.92 no_space multi-line changes. Expected offenses from the stock CLI.
+    #[test]
+    fn no_space_multiline_1_92() {
+        let ns = cfg(Style::NoSpace, Style::NoSpace, true);
+        // A comment right after `{ ` is not flagged (rubocop#15983).
+        assert_eq!(run("foo { # hi\n  x\n}\n", ns), vec![]);
+        // `}` at the opening line's indentation is aligned (rubocop#15722).
+        assert_eq!(run("  bar = foo {\n    x\n  }\n", ns), vec![]);
+        // A space before a line break is still checked on the right only.
+        assert_eq!(run("foo { x\n}\n", ns), vec![(5, 6, 1)]);
     }
 }
