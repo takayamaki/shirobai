@@ -106,3 +106,24 @@ RSpec.describe Shirobai::Cop::Layout::DefEndAlignment do
     expect(lint_offenses(klasses.first, src, sol_config)).to be_empty
   end
 end
+
+# 1.92: a single-line `def` under a modifier is skipped before `ignore_node`,
+# so its own `on_def` runs (and accepts it). Chained modifiers and a line
+# continuation are not in the vendor spec.
+RSpec.describe Shirobai::Cop::Layout::DefEndAlignment do
+  include EdgeCaseParity
+
+  klasses = [
+    RuboCop::Cop::Layout::DefEndAlignment,
+    Shirobai::Cop::Layout::DefEndAlignment
+  ]
+
+  it "matches stock for single-line defs under modifiers" do
+    cfg = RuboCop::ConfigLoader.default_configuration
+    source = "foo \\\n  def test; end\n" \
+             "private module_function \\\n  def m; end\n" \
+             "private def n\n  1\n    end\n"
+    expect_lint_parity(*klasses, source, cfg)
+    expect_autocorrect_parity(*klasses, source, cfg)
+  end
+end
