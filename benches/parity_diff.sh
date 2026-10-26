@@ -54,7 +54,7 @@ ruby -rjson <<RUBY
 # the per-cop counts are identical (the old oracle's blind spot).
 def load(path)
   d = JSON.parse(File.read(path))
-  h = Hash.new(0); per = {}
+  h = Hash.new(0); per = {}; corr = {}
   d["files"].each do |f|
     fp = f["path"]
     f["offenses"].each do |o|
@@ -66,12 +66,17 @@ def load(path)
              o["severity"], o["correctable"], o["message"]].join("|")
       h[cop] += 1
       (per[cop] ||= Hash.new(0))[key] += 1
+      # rubocop 1.92 reports the edits autocorrection would make
+      # (\`correction\`: safe flag + ordered edit list). The final bytes can
+      # agree while the edit decomposition differs (one replace vs remove +
+      # insert), so it is compared on its own below, keyed by the offense.
+      ((corr[cop] ||= {})[key] ||= []) << o["correction"].to_s
     end
   end
-  [d["files"].size, d["summary"]["offense_count"], h, per]
+  [d["files"].size, d["summary"]["offense_count"], h, per, corr]
 end
-st_files, st_total, st_h, st_per = load("$stock_json")
-sh_files, sh_total, sh_h, sh_per = load("$sh_json")
+st_files, st_total, st_h, st_per, st_corr = load("$stock_json")
+sh_files, sh_total, sh_h, sh_per, sh_corr = load("$sh_json")
 puts format("stock    files=%-6d offenses=%d", st_files, st_total)
 puts format("shirobai files=%-6d offenses=%d", sh_files, sh_total)
 puts format("total diff: %+d", sh_total - st_total)
@@ -79,8 +84,27 @@ cops = (st_h.keys + sh_h.keys).uniq.sort
 # A cop diverges when its key multiset differs — this catches equal-count,
 # different-message/correctable cases the per-cop count check would miss.
 diffs = cops.reject { |c| (st_per[c] || {}) == (sh_per[c] || {}) }
+# Correction (edit list) parity, offense by offense, for the cops whose
+# offense sets already agree. Edits are compared as sorted multisets per key.
+corr_diffs = {}
+(cops - diffs).each do |c|
+  stk = st_corr[c] || {}; shk = sh_corr[c] || {}
+  bad = stk.keys.select { |k| stk[k].sort != (shk[k] || []).sort }
+  corr_diffs[c] = bad unless bad.empty?
+end
+if corr_diffs.empty?
+  puts "correction divergence: NONE"
+else
+  puts "correction divergence (#{corr_diffs.size} cops; offense sets agree, edits differ):"
+  corr_diffs.each { |c, keys| printf "  %-50s %d offenses\\n", c, keys.size }
+  c, keys = corr_diffs.first
+  puts "sample (#{c}): #{keys.first}"
+  puts "  stock:    #{st_corr[c][keys.first].join(" / ")}"
+  puts "  shirobai: #{(sh_corr[c][keys.first] || []).join(" / ")}"
+end
 if diffs.empty?
   puts "per-cop divergence: NONE (full parity)"
+  exit 1 unless corr_diffs.empty?
 else
   puts "per-cop divergence (#{diffs.size} cops):"
   samples = []
