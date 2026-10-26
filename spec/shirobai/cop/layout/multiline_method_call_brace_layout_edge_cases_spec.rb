@@ -198,6 +198,21 @@ RSpec.describe Shirobai::Cop::Layout::MultilineMethodCallBraceLayout do
     expect(lint_offenses(klasses.first, src, default_config)).to be_empty
   end
 
+  # 1.92: a heredoc opened on the `)` line anywhere under the call, not only
+  # in the last argument (rubocop#15832), and the corrector skipping a nested
+  # closing bracket that would move before a comment (rubocop#15748, #15964).
+  {
+    "a heredoc receiver opened on the closing line" => "<<~A.foo(\nb, c)\n  x\nA\n",
+    "a heredoc nested in an argument on the closing line" => "foo(\na, bar(<<~EOM), b)\n  baz\nEOM\n",
+    "a nested call closing before a trailing comment" => "foo(a,\n  bar(\n    b\n  ) # c\n)\n",
+    "a nested array closing before a trailing comment" => "foo(a,\n  [\n    b\n  ] # c\n)\n"
+  }.each do |label, src|
+    it "matches stock for #{label}" do
+      expect_lint_parity(*klasses, src, default_config, expect_offenses: false)
+      expect_autocorrect_parity(*klasses, src, default_config)
+    end
+  end
+
   def config_with(base, cop_name, overrides)
     hash = base.to_h.dup
     hash[cop_name] = (hash[cop_name] || {}).merge(overrides)
