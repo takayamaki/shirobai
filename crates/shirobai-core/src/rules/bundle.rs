@@ -114,7 +114,7 @@ pub fn check_multiline_bundle(
 /// | 15-17 | multiline_operation style / indent / base |
 /// | 18-20 | multiline_method_call style / indent / base |
 /// | 21-23 | argument_alignment style / indent / incompatible |
-/// | 24-26 | first_argument_indentation style / indent / fixed_mode (0 off / 1 `with_fixed_indentation` with FirstMethodArgumentLineBreak off: defer all / 2 with it on: defer conflicts) |
+/// | 24-26 | first_argument_indentation style / indent / fixed_mode (low bits: 0 off / 1 `with_fixed_indentation` with FirstMethodArgumentLineBreak off: defer all / 2 with it on: defer conflicts; bit 4: HashAlignment separator style) |
 /// | 27-33 | indentation_width width / relative_to_receiver / access_modifier_outdent / indented_internal_methods / end_align / def_end_align_def / use_tabs |
 /// | 34  | closing_paren_indent |
 /// | 35-37 | first_array_element style / indent / enforce_fixed_indentation |
