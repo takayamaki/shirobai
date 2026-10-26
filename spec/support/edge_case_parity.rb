@@ -119,4 +119,36 @@ module EdgeCaseParity
     expect(shirobai_corrected).to eq(stock_corrected)
     stock_corrected
   end
+
+  # The edit list autocorrection would apply (rubocop 1.92 `Offense#corrections`,
+  # reported by the JSON formatter as `correction.edits`): one Team round with
+  # autocorrect on, every offense mapped to its sorted `[begin_pos, end_pos,
+  # replacement]` edits. Two correctors can reach the same final bytes through
+  # different edits (one replace vs remove + insert), and only this view sees
+  # the difference.
+  def correction_edits(klass, source, config)
+    # `stdin:` keeps `Team#autocorrect` from writing the corrected source to a
+    # file named after the (path-less) processed source.
+    options = { autocorrect: true, stdin: source.dup, raise_error: true }
+    cop = klass.new(config, options)
+    processed = RuboCop::ProcessedSource.new(source, RuboCop::TargetRuby::DEFAULT_VERSION)
+    processed.config = config
+    processed.registry = RuboCop::Cop::Registry.global
+    report = RuboCop::Cop::Team.new([cop], config, options).investigate(processed)
+    expect(report.errors).to be_empty
+    report.offenses.map do |o|
+      [o.location.begin_pos, o.location.end_pos,
+       o.corrections.map { |c| [c.begin_pos, c.end_pos, c.replacement] }]
+    end.sort
+  end
+
+  # Edit-list differential: stock and shirobai must build the same edits for
+  # the same offenses. Asserts stock produced at least one edit so a mistyped
+  # fixture cannot pass vacuously. Returns the stock snapshot.
+  def expect_correction_edits_parity(stock_klass, shirobai_klass, source, config)
+    stock = correction_edits(stock_klass, source, config)
+    expect(stock.flat_map(&:last)).not_to be_empty, "fixture produced no stock edit; fix the source"
+    expect(correction_edits(shirobai_klass, source, config)).to eq(stock)
+    stock
+  end
 end

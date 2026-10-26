@@ -20,10 +20,6 @@ module Shirobai
         def self.cop_name = "Layout/DotPosition"
         def self.badge = RuboCop::Cop::Badge.parse("Layout/DotPosition")
 
-        def self.autocorrect_incompatible_with
-          [RuboCop::Cop::Style::RedundantSelf]
-        end
-
         # Packed args for the bundled run: `[style]`. `EnforcedStyle` may be
         # absent when the config does not mention this cop (the slice is then
         # discarded); default to `leading` (0) in that case.
@@ -34,14 +30,28 @@ module Shirobai
         def on_new_investigation
           buffer = processed_source.buffer
 
+          source = buffer.source
           off = SourceOffsets.for(processed_source.raw_source)
           Dispatch.offenses_for(processed_source, config, :dot_position)
                   .each do |dot_start, dot_end, remove_start, remove_end, insert_pos|
             dot = Parser::Source::Range.new(buffer, off[dot_start], off[dot_end])
             add_offense(dot, message: message(dot)) do |corrector|
-              corrector.remove(Parser::Source::Range.new(buffer, off[remove_start], off[remove_end]))
-              insert = off[insert_pos]
-              corrector.insert_before(Parser::Source::Range.new(buffer, insert, insert), dot.source)
+              # Stock (1.92) moves the dot across the gap in ONE `replace` over
+              # `dot_range.join(gap)`, so another correction that rewrites a range
+              # spanning the dot clashes with this one instead of leaving the
+              # moved dot behind. Mirror the single edit and its exact range.
+              remove_begin = off[remove_start]
+              remove_end_pos = off[remove_end]
+              anchor = off[insert_pos]
+              if anchor >= remove_end_pos
+                # leading: `[dot_range][gap][selector]` -> gap text, then the dot
+                range = Parser::Source::Range.new(buffer, remove_begin, anchor)
+                corrector.replace(range, "#{source[remove_end_pos...anchor]}#{dot.source}")
+              else
+                # trailing: `[receiver][gap][dot_range]` -> the dot, then gap text
+                range = Parser::Source::Range.new(buffer, anchor, remove_end_pos)
+                corrector.replace(range, "#{dot.source}#{source[anchor...remove_begin]}")
+              end
             end
           end
         end
