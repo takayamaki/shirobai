@@ -277,6 +277,11 @@ fn classify(line: &[u8]) -> Magic {
     Magic::None
 }
 
+/// `MagicComment.parse(text).encoding_specified?`.
+pub(crate) fn encoding_specified(text: &[u8]) -> bool {
+    matches!(classify(text), Magic::Encoding)
+}
+
 /// `EmacsComment::REGEXP = /-\*-(?<token>.+)-\*-/`: token spans the first
 /// `-*-` (with at least one byte after it) to the LAST closing `-*-`.
 pub(crate) fn emacs_token(line: &[u8]) -> Option<&[u8]> {

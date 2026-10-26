@@ -179,4 +179,21 @@ RSpec.describe "Style/FrozenStringLiteralComment edge cases" do
       expect(lint_offenses(klasses.last, source, style_config(style))).to eq([])
     end
   end
+
+  # ---- 1.92 insertion below any encoding comment (rubocop#15799) ----
+  it "inserts below a non-UTF-8 encoding comment under a shebang" do
+    source = "#!/usr/bin/env ruby\n# encoding: ascii-8bit\nputs 1\n"
+    expect_lint_parity(*klasses, source, style_config("always"))
+    expect_autocorrect_parity(*klasses, source, style_config("always"))
+  end
+
+  # A plain string token's text is parsed as a magic comment too, so an
+  # Emacs-style encoding inside a leading `'...'` string moves the insertion
+  # point (stock then loops on autocorrect, so only the offense is compared).
+  ["'-*- coding: binary -*-'\nputs 1\n",
+   "\"-*- coding: binary; x: \#{x} -*-\"\nputs 1\n"].each do |source|
+    it "matches stock for a leading string #{source.lines.first.strip}" do
+      expect_lint_parity(*klasses, source, style_config("always"))
+    end
+  end
 end
