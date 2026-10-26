@@ -65,21 +65,25 @@ module Shirobai
 
         private
 
-        # Mirror of the cop's block-aware autocorrect: realign the selector line,
-        # the block body and the block's `end` keyword line.
+        # Mirror of the cop's block-aware autocorrect (1.92, rubocop#16033):
+        # realign the selector line, then each line of the block body and the
+        # block's closing line, one whole line at a time, skipping the
+        # selector line (`correct_block` / `block_lines`).
         def correct_with_block(corrector, range, column_delta, buffer, body_s, body_e, end_s, end_e)
           selector_line = buffer.line_range(range.line)
           selector_range = range_between(selector_line.begin_pos, selector_line.end_pos)
           RuboCop::Cop::AlignmentCorrector.correct(corrector, processed_source, selector_range, column_delta)
 
+          lines = []
           if body_e > body_s
             body = Parser::Source::Range.new(buffer, body_s, body_e)
-            RuboCop::Cop::AlignmentCorrector.correct(corrector, processed_source, body, column_delta)
+            lines = (body.first_line..body.last_line).to_a
           end
-
-          end_kw = Parser::Source::Range.new(buffer, end_s, end_e)
-          end_range = range_by_whole_lines(end_kw, include_final_newline: false)
-          RuboCop::Cop::AlignmentCorrector.correct(corrector, processed_source, end_range, column_delta)
+          lines << Parser::Source::Range.new(buffer, end_s, end_e).line
+          (lines.uniq - [range.first_line]).each do |line|
+            RuboCop::Cop::AlignmentCorrector.correct(corrector, processed_source, buffer.line_range(line),
+                                                     column_delta)
+          end
         end
       end
     end
