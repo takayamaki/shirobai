@@ -4,7 +4,7 @@ module Shirobai
   module Cop
     module Rails
       # Drop-in Rust-backed reimplementation of `Rails/HttpPositionalArguments`
-      # (rubocop-rails 2.35.5), Architecture B.
+      # (rubocop-rails 2.38.0), Architecture B.
       #
       # Rust supplies candidate SEND ranges (bare-receiver HTTP verb calls with
       # an action plus a data argument); this wrapper relocates each parser
@@ -59,6 +59,13 @@ module Shirobai
                 (const {nil? cbase} :Rack) :Test) :Methods))
         PATTERN
 
+        # Stock resets the per-file memo in `on_new_investigation`; the
+        # candidate loop lives in `CandidateSupport`, so reset before it runs.
+        def on_new_investigation
+          @use_rack_test_methods = nil
+          super
+        end
+
         private
 
         def candidate_slot = :rails_http_positional_arguments
@@ -67,7 +74,7 @@ module Shirobai
           Shirobai.check_rails_http_positional_arguments(processed_source.buffer.source)
         end
 
-        # --- stock's methods, copied verbatim (rubocop-rails 2.35.5);
+        # --- stock's methods, copied verbatim (rubocop-rails 2.38.0);
         # `on_send` renamed to `investigate_send` so it is not a node callback.
 
         def investigate_send(node)
@@ -88,13 +95,16 @@ module Shirobai
           !!node.each_ancestor(:block).detect { |block| ROUTING_METHODS.include?(block.method_name) }
         end
 
+        # The result is the same for every node in a file, so scan the AST only once.
         def use_rack_test_methods?
-          processed_source.ast.each_descendant(:send).any? do |node|
+          return @use_rack_test_methods unless @use_rack_test_methods.nil?
+
+          @use_rack_test_methods = processed_source.ast.each_descendant(:send).any? do |node|
             include_rack_test_methods?(node)
           end
         end
 
-        # rubocop:disable Metrics/CyclomaticComplexity
+        # rubocop:disable-next Metrics/CyclomaticComplexity
         def needs_conversion?(data)
           return false if data.forwarded_args_type? || forwarded_kwrestarg?(data)
           return true unless data.hash_type?
@@ -104,7 +114,6 @@ module Shirobai
             special_keyword_arg?(pair.key) || (format_arg?(pair.key) && data.pairs.one?)
           end
         end
-        # rubocop:enable Metrics/CyclomaticComplexity
 
         def special_keyword_arg?(node)
           node.sym_type? && KEYWORD_ARGS.include?(node.value)

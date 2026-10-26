@@ -92,4 +92,21 @@ RSpec.describe "Rails/HttpPositionalArguments edge cases" do
     corrected = expect_autocorrect_parity(*pair, "get :new, id: 1\r\n", config)
     expect(corrected).to include("get :new, params: { id: 1 }")
   end
+
+  it "scans the AST for Rack::Test::Methods once per file, not once per candidate" do
+    # rubocop-rails 2.37 memoizes `use_rack_test_methods?` (the answer is the
+    # same for every node in a file). Without the memo, a functional test
+    # with N http calls walks the whole AST N times.
+    source = (1..5).map { |i| "get :show, id: #{i}\n" }.join
+    processed = RuboCop::ProcessedSource.new(source, RuboCop::TargetRuby::DEFAULT_VERSION)
+    processed.config = config
+    processed.registry = RuboCop::Cop::Registry.global
+    cop = Shirobai::Cop::Rails::HttpPositionalArguments.new(config)
+    # One scan visits each of the 5 send nodes once; a scan per candidate
+    # would visit 25.
+    allow(cop).to receive(:include_rack_test_methods?).and_call_original
+    report = RuboCop::Cop::Team.new([cop], config, raise_error: true).investigate(processed)
+    expect(report.offenses.size).to eq(5)
+    expect(cop).to have_received(:include_rack_test_methods?).exactly(5).times
+  end
 end
