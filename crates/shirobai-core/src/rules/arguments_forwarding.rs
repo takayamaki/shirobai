@@ -92,6 +92,36 @@ impl AfOp {
     fn insert_after(pos: usize, text: &str) -> AfOp {
         AfOp { kind: 3, start: pos, end: pos, text: text.to_string() }
     }
+    /// Opens a paren group keyed by the node range `start..end` (see
+    /// `add_parens_ops_def`). Not a corrector call.
+    fn group_begin(start: usize, end: usize) -> AfOp {
+        AfOp { kind: 4, start, end, text: String::new() }
+    }
+    fn group_end() -> AfOp {
+        AfOp { kind: 5, start: 0, end: 0, text: String::new() }
+    }
+}
+
+/// rubocop-ast `OPERATOR_METHODS` (prism method names).
+const OPERATOR_METHODS: &[&[u8]] = &[
+    b"|", b"^", b"&", b"<=>", b"==", b"===", b"=~", b">", b">=", b"<", b"<=", b"<<", b">>",
+    b"+", b"-", b"*", b"/", b"%", b"**", b"~", b"+@", b"-@", b"!@", b"~@", b"[]", b"[]=",
+    b"!", b"!=", b"!~", b"`",
+];
+
+/// Parser's send range for a call that owns a literal block: parser keeps the
+/// block outside the send, prism includes it. The send ends at the furthest
+/// of its receiver / selector / arguments / closing paren.
+fn parser_send_end(begin: usize, ends: [Option<usize>; 4]) -> usize {
+    ends.into_iter().flatten().max().unwrap_or(begin)
+}
+
+/// `forwards_anonymous_args?(send_node)`: an anonymous `*` argument, or a
+/// hash argument holding an anonymous `**`.
+fn forwards_anonymous_args(send: &SendSnapshot) -> bool {
+    send.args
+        .iter()
+        .any(|a| (a.is_splat && a.splat_anon) || (a.is_hash && a.hash_anon_kwsplat))
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +144,8 @@ struct ArgInfo {
     is_hash: bool,
     hash_n_elements: usize,
     hash_kwsplat: Option<KwsplatInfo>,
+    /// The hash holds an anonymous `**` (parser `forwarded_kwrestarg`).
+    hash_anon_kwsplat: bool,
     is_block_pass: bool,
     bp_lvar: Option<String>,
     bp_anon: bool,
@@ -129,7 +161,12 @@ enum SendKind {
 struct SendSnapshot {
     #[allow(dead_code)]
     kind: SendKind,
-    is_index: bool,
+    /// `operator_or_setter_call?` (1.92): a setter (`a.b = v`, `a[k] = v`)
+    /// or a dotless operator call (`a[k]`, `a << b`, `!a`) never gets
+    /// parentheses.
+    paren_exempt: bool,
+    /// `send_node.block_literal?`: the call owns a literal block.
+    block_literal: bool,
     send_begin: usize,
     send_end: usize,
     has_parens: bool,
@@ -328,6 +365,7 @@ impl<'s> ArgumentsForwardingRule<'s> {
             is_hash: false,
             hash_n_elements: 0,
             hash_kwsplat: None,
+            hash_anon_kwsplat: false,
             is_block_pass: false,
             bp_lvar: None,
             bp_anon: false,
@@ -362,6 +400,9 @@ impl<'s> ArgumentsForwardingRule<'s> {
             if let Some(elements) = elements {
                 info.is_hash = true;
                 info.hash_n_elements = elements.len();
+                info.hash_anon_kwsplat = elements
+                    .iter()
+                    .any(|el| el.as_assoc_splat_node().is_some_and(|a| a.value().is_none()));
                 for el in &elements {
                     if let Some(a) = el.as_assoc_splat_node() {
                         let al = a.as_node().location();
@@ -413,12 +454,27 @@ impl<'s> ArgumentsForwardingRule<'s> {
             .map(|m| m.end_offset())
             .unwrap_or(loc.start_offset());
         let args = self.collect_args(call.arguments(), call.block());
+        let paren_exempt = call.equal_loc().is_some()
+            || (call.call_operator_loc().is_none() && OPERATOR_METHODS.contains(&name));
+        let send_end = if own_block {
+            parser_send_end(
+                loc.start_offset(),
+                [
+                    call.receiver().map(|r| r.location().end_offset()),
+                    call.message_loc().map(|m| m.end_offset()),
+                    args.iter().map(|a| a.end).max(),
+                    call.closing_loc().map(|c| c.end_offset()),
+                ],
+            )
+        } else {
+            loc.end_offset()
+        };
         self.sends.push(SendSnapshot {
             kind: SendKind::Call,
-            // `add_parens_if_missing` exempts only `node.method?(:[])`.
-            is_index: name == b"[]",
+            paren_exempt,
+            block_literal: own_block,
             send_begin: loc.start_offset(),
-            send_end: loc.end_offset(),
+            send_end,
             has_parens: call.closing_loc().is_some_and(|c| self.src(c.start_offset(), c.end_offset()) == b")"),
             selector_end,
             args,
@@ -429,11 +485,25 @@ impl<'s> ArgumentsForwardingRule<'s> {
     fn snapshot_super(&mut self, sup: &ruby_prism::SuperNode<'_>, own_block: bool) {
         let loc = sup.location();
         let args = self.collect_args(sup.arguments(), sup.block());
+        let send_end = if own_block {
+            parser_send_end(
+                loc.start_offset(),
+                [
+                    Some(sup.keyword_loc().end_offset()),
+                    args.iter().map(|a| a.end).max(),
+                    sup.rparen_loc().map(|c| c.end_offset()),
+                    None,
+                ],
+            )
+        } else {
+            loc.end_offset()
+        };
         self.sends.push(SendSnapshot {
             kind: SendKind::Super,
-            is_index: false,
+            paren_exempt: false,
+            block_literal: own_block,
             send_begin: loc.start_offset(),
-            send_end: loc.end_offset(),
+            send_end,
             has_parens: sup.rparen_loc().is_some(),
             selector_end: sup.keyword_loc().end_offset(),
             args,
@@ -446,7 +516,8 @@ impl<'s> ArgumentsForwardingRule<'s> {
         let args = self.collect_args(y.arguments(), None);
         self.sends.push(SendSnapshot {
             kind: SendKind::Yield,
-            is_index: false,
+            paren_exempt: false,
+            block_literal: false,
             send_begin: loc.start_offset(),
             send_end: loc.end_offset(),
             has_parens: y.rparen_loc().is_some(),
@@ -564,6 +635,13 @@ impl<'s> ArgumentsForwardingRule<'s> {
         let only_all = classes
             .iter()
             .all(|c| matches!(c.classification, Classification::All | Classification::AllAnon));
+        // `forward_all?` (1.92, rubocop#16020): `...` would also swallow the
+        // block, so an unclassified call that forwards an anonymous `*` / `**`
+        // elsewhere in the def blocks the forward-all collapse.
+        let only_all = only_all
+            && !send_indices.iter().any(|&si| {
+                !classes.iter().any(|c| c.idx == si) && forwards_anonymous_args(&self.sends[si])
+            });
 
         let mut new_offenses: Vec<AfOffense> = Vec::new();
         if only_all {
@@ -711,8 +789,11 @@ impl<'s> ArgumentsForwardingRule<'s> {
         if self.cfg.target_ruby >= 32 && !(fwd_rest.is_some() && fwd_kwrest.is_some()) {
             return false;
         }
-        // offensive_block_forwarding?
-        let offensive = if def.block.is_some() {
+        // offensive_block_forwarding? (1.92, rubocop#15893: never with a
+        // block literal, which `...` cannot carry)
+        let offensive = if send.block_literal {
+            false
+        } else if def.block.is_some() {
             fwd_block.is_some()
         } else {
             !self.cfg.allow_only_rest_arguments
@@ -760,23 +841,34 @@ impl<'s> ArgumentsForwardingRule<'s> {
 
     // --- offense construction --------------------------------------------
 
+    // `add_parens_if_missing` adds parentheses to a node at most once per
+    // investigation (1.92, rubocop#15962: a `Set` of the nodes already
+    // parenthesized). Whether an earlier offense's corrector ran (it does not
+    // for a duplicate range or a disabled line) is only known on the Ruby
+    // side, so the paren ops are bracketed by a group-begin op (kind 4, keyed
+    // by the node range) and a group-end op (kind 5); the wrapper applies a
+    // group only the first time its key comes up.
     fn add_parens_ops_def(&self, def: &DefInfo, ops: &mut Vec<AfOp>) {
         if def.has_parens {
             return;
         }
         let leading = final_pos_left(self.source, def.params_begin);
+        ops.push(AfOp::group_begin(def.params_begin, def.params_end));
         ops.push(AfOp::replace(leading, def.params_begin, "("));
         ops.push(AfOp::insert_after(def.params_end, ")"));
+        ops.push(AfOp::group_end());
     }
 
     fn add_parens_ops_send(&self, send: &SendSnapshot, ops: &mut Vec<AfOp>) {
-        if send.has_parens || send.is_index {
+        if send.has_parens || send.paren_exempt {
             return;
         }
         let sel = send.selector_end;
+        ops.push(AfOp::group_begin(send.send_begin, send.send_end));
         ops.push(AfOp::remove(sel, sel + 1));
         ops.push(AfOp::insert_before(sel, "("));
         ops.push(AfOp::insert_after(send.send_end, ")"));
+        ops.push(AfOp::group_end());
     }
 
     /// `register_forward_all_offense` on the SEND side.
@@ -1123,5 +1215,98 @@ impl<'s> Rule for ArgumentsForwardingRule<'s> {
 
     fn interest(&self) -> Interest {
         Interest(Interest::LEAVE | Interest::LEAF | Interest::ENTER_ALL)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg(target_ruby: i64) -> Config {
+        Config {
+            target_ruby,
+            allow_only_rest_arguments: false,
+            use_anonymous_forwarding: true,
+            explicit_block_name: false,
+            redundant_rest: vec!["args".into(), "arguments".into()],
+            redundant_kwrest: vec!["kwargs".into(), "options".into(), "opts".into()],
+            redundant_block: vec!["blk".into(), "block".into(), "proc".into()],
+        }
+    }
+
+    fn messages(src: &str, target: i64) -> Vec<u8> {
+        check_arguments_forwarding(src.as_bytes(), &cfg(target))
+            .iter()
+            .map(|o| o.message)
+            .collect()
+    }
+
+    /// Every op of every offense as `(kind, start, end, text)`.
+    fn ops(src: &str, target: i64) -> Vec<(u8, usize, usize, String)> {
+        check_arguments_forwarding(src.as_bytes(), &cfg(target))
+            .into_iter()
+            .flat_map(|o| o.ops)
+            .map(|op| (op.kind, op.start, op.end, op.text))
+            .collect()
+    }
+
+    // Expected messages below come from the stock 1.92.1 CLI.
+
+    // rubocop#15893: a call with a block literal never collapses to `...`.
+    #[test]
+    fn block_literal_call_is_not_forward_all() {
+        let src = "def foo(*args, **kwargs)\n  bar(*args, **kwargs) do |x|\n  end\nend\n";
+        assert_eq!(messages(src, 34), vec![1, 1, 2, 2]);
+    }
+
+    // rubocop#16020: another call forwarding the anonymous `*` / `**` without
+    // the block keeps the def from collapsing to `...`.
+    #[test]
+    fn anonymous_forwarding_elsewhere_blocks_forward_all() {
+        let src = "def foo(*, **, &)\n  if x\n    bar(*, **, &)\n  else\n    bar(*, **)\n  end\nend\n";
+        assert!(messages(src, 32).is_empty());
+        let src = "def foo2(*, **, &)\n  bar(*, **, &)\n  qux(**)\nend\n";
+        assert!(messages(src, 34).is_empty());
+    }
+
+    // rubocop#16038: setters and dotless operator calls get no parentheses.
+    #[test]
+    fn setter_and_operator_calls_get_no_parentheses() {
+        for src in [
+            "def foo(**opts)\n  obj&.bar = {x: 1, **opts}\nend\n",
+            "def foo(key, **opts)\n  bar[key] = {x: 1, **opts}\nend\n",
+            "def foo(**opts)\n  obj << {x: 1, **opts}\nend\n",
+        ] {
+            let ops = ops(src, 34);
+            assert!(!ops.is_empty(), "{src}");
+            assert!(ops.iter().all(|o| o.0 == 0 && o.3 == "**"), "{src}: {ops:?}");
+        }
+        // With a dot, an operator method is parenthesized like any call.
+        let ops = ops("def foo(*args)\n  obj.<< *args\nend\n", 34);
+        assert!(ops.iter().any(|o| o.0 == 2 && o.3 == "("));
+    }
+
+    // rubocop#15962: the paren ops are bracketed per node (kind 4 keyed by
+    // the node range, kind 5) so the wrapper adds them once.
+    #[test]
+    fn paren_ops_are_grouped_by_node() {
+        let src = "def foo **kwargs, &block\n  bar(**kwargs, &block)\nend\n";
+        let ops = ops(src, 32);
+        let keys: Vec<(usize, usize)> =
+            ops.iter().filter(|o| o.0 == 4).map(|o| (o.1, o.2)).collect();
+        // kwargs + block offenses on the def side, same node key.
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0], keys[1]);
+        assert_eq!(ops.iter().filter(|o| o.0 == 5).count(), 2);
+    }
+
+    // A paren-less call with a literal block closes its `)` after the last
+    // argument, not after the block (parser keeps the block outside the send).
+    #[test]
+    fn paren_less_block_call_closes_before_the_block() {
+        let src = "def foo *args, **kwargs\n  bar *args, **kwargs do end\nend\n";
+        let close = src.find("kwargs do").unwrap() + "kwargs".len();
+        let ops = ops(src, 34);
+        assert!(ops.iter().any(|o| o.0 == 3 && o.1 == close && o.3 == ")"), "{ops:?}");
     }
 }
