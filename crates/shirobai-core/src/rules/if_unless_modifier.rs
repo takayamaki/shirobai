@@ -124,6 +124,7 @@ pub(crate) fn build_rule(source: &[u8], cfg: Config) -> Visitor<'_> {
         comments,
         comment_lines,
         frames: Vec::new(),
+        current: None,
         candidates: Vec::new(),
     }
 }
@@ -145,6 +146,8 @@ pub(crate) struct Visitor<'a> {
     comments: Vec<(usize, usize)>,
     comment_lines: Vec<usize>,
     frames: Vec<Node<'static>>,
+    /// The if/unless `handle` is looking at (valid during `handle` only).
+    current: Option<Node<'static>>,
     pub(crate) candidates: Vec<IfUnlessModifierCandidate>,
 }
 
@@ -182,19 +185,6 @@ impl Rule for Visitor<'_> {
 /// Ruby `String#length` for valid UTF-8: count non-continuation bytes.
 fn char_count(bytes: &[u8]) -> usize {
     bytes.iter().filter(|&&b| (b & 0xC0) != 0x80).count()
-}
-
-/// Ruby `String#chomp`: strip one trailing `"\r\n"`, `"\n"` or `"\r"`.
-fn chomp(bytes: &[u8]) -> &[u8] {
-    if let Some(b) = bytes.strip_suffix(b"\r\n") {
-        b
-    } else if let Some(b) = bytes.strip_suffix(b"\n") {
-        b
-    } else if let Some(b) = bytes.strip_suffix(b"\r") {
-        b
-    } else {
-        bytes
-    }
 }
 
 fn lossy(bytes: &[u8]) -> String {
@@ -332,6 +322,10 @@ impl<'a> Visitor<'a> {
             .as_ref()
             .map(|s| s.body().iter().collect())
             .unwrap_or_default();
+
+        // `another_modifier_if_on_same_line?` compares siblings with parser
+        // `Node#==` (structural) against this node.
+        self.current = Some(unsafe { copy_to_static(node) });
 
         // Every check below is a pure rejection, so the order is free; the
         // cheap byte-shaped gates go first, the condition/subtree scans and
@@ -531,10 +525,23 @@ impl<'a> Visitor<'a> {
     fn if_body_source(&self, body: &Node<'_>) -> Vec<u8> {
         let loc = body.location();
         let plain = self.slice(loc.start_offset(), loc.end_offset()).to_vec();
+        // 1.92 `wrapped_value`: recurse into the value of a one-argument
+        // `return`/`next`/`break` or of a simple assignment.
+        if let Some(value) = wrapped_value(body) {
+            let vl = value.location();
+            let mut out = self.slice(loc.start_offset(), vl.start_offset()).to_vec();
+            out.extend(self.if_body_source(&value));
+            out.extend_from_slice(self.slice(vl.end_offset(), loc.end_offset()));
+            return out;
+        }
         let Some(call) = body.as_call_node() else {
             return plain;
         };
         if call.name().as_slice() == b"[]=" {
+            return plain;
+        }
+        // 1.92: a parenthesized call keeps its own source.
+        if call.opening_loc().is_some_and(|o| o.as_slice() == b"(") {
             return plain;
         }
         // A block/block-pass makes the parser-side `last_argument` a
@@ -629,15 +636,26 @@ impl<'a> Visitor<'a> {
         {
             return true;
         }
+        // 1.92: `yield` / `super` arguments too (`zsuper` takes none).
+        if parent.as_yield_node().is_some() || parent.as_super_node().is_some() {
+            return true;
+        }
+        // 1.92 `ternary_branch_or_endless_method_body?`.
+        if let Some(i) = parent.as_if_node() {
+            return i.if_keyword_loc().is_none();
+        }
+        if parent.as_else_node().is_some() {
+            // A ternary's else branch: parser's parent is the ternary `if`.
+            return anc
+                .next()
+                .and_then(|g| g.as_if_node())
+                .is_some_and(|i| i.if_keyword_loc().is_none());
+        }
+        if let Some(d) = parent.as_def_node() {
+            return d.equal_loc().is_some();
+        }
         if let Some(call) = parent.as_call_node() {
-            // parser `csend` is not `send_type?`.
-            if call
-                .call_operator_loc()
-                .is_some_and(|op| op.as_slice() == b"&.")
-            {
-                return false;
-            }
-            // parser folds `MatchWriteNode`'s inner call into ONE
+            // 1.92 checks `call` (send AND csend). parser folds `MatchWriteNode`'s inner call into ONE
             // `match_with_lvasgn` node, which is not a send.
             if let Some(grand) = anc.next()
                 && let Some(mw) = grand.as_match_write_node()
@@ -699,6 +717,16 @@ impl<'a> Visitor<'a> {
         if self.another_statement_on_same_line(ns, ne) {
             return;
         }
+        // 1.92 `modifier_sharing_line_in_logical_operator?`: no offense at
+        // all for a modifier sharing its line with another one inside the
+        // same `&&` / `||`.
+        if self
+            .find_containing_collection(ns)
+            .is_some_and(|c| c.as_and_node().is_some() || c.as_or_node().is_some())
+            && self.another_modifier_if_on_same_line(ns, line_no)
+        {
+            return;
+        }
         let [body] = body_nodes else {
             return; // modifier form always has exactly one body statement
         };
@@ -742,25 +770,32 @@ impl<'a> Visitor<'a> {
             text.push(b' ');
             text.extend_from_slice(cond_src);
             ops.push(Op { kind: 0, start: ns, end: ne, text: lossy(&text) });
-        } else if let Some((hb, he)) = self.heredoc_in_if_branch(body) {
-            ops.push(self.remove_whole_lines(hb));
-            ops.push(self.remove_whole_lines(he));
+        } else if let (cond_docs, body_docs) =
+            (self.heredoc_ranges_in(predicate), self.heredoc_ranges_in(body))
+            && !(cond_docs.is_empty() && body_docs.is_empty())
+        {
+            // 1.92 `to_normal_form_with_heredoc`: every heredoc of the node
+            // (condition first, then body, parser `each_node` order) is moved
+            // as whole lines, kept byte for byte, after its own line.
+            for &range in cond_docs.iter().chain(&body_docs) {
+                ops.push(self.remove_whole_lines(range));
+            }
             let mut text: Vec<u8> = Vec::new();
             text.extend_from_slice(keyword);
             text.push(b' ');
             text.extend_from_slice(cond_src);
+            for &(s, e) in &cond_docs {
+                text.push(b'\n');
+                text.extend_from_slice(self.slice(s, e));
+            }
             text.push(b'\n');
             text.extend_from_slice(indent.as_bytes());
             text.extend_from_slice(b"  ");
             text.extend_from_slice(body_src);
-            text.push(b'\n');
-            text.extend_from_slice(indent.as_bytes());
-            text.extend_from_slice(b"  ");
-            text.extend_from_slice(chomp(self.slice(hb.0, hb.1)));
-            text.push(b'\n');
-            text.extend_from_slice(indent.as_bytes());
-            text.extend_from_slice(b"  ");
-            text.extend_from_slice(chomp(self.slice(he.0, he.1)));
+            for &(s, e) in &body_docs {
+                text.push(b'\n');
+                text.extend_from_slice(self.slice(s, e));
+            }
             text.push(b'\n');
             text.extend_from_slice(indent.as_bytes());
             text.extend_from_slice(b"end");
@@ -803,37 +838,40 @@ impl<'a> Visitor<'a> {
         });
     }
 
-    /// Stock: `node.if_branch.last_argument if node.if_branch.send_type?`
-    /// then `last_argument.heredoc?`. Returns the parser `heredoc_body` and
-    /// `heredoc_end` byte ranges.
-    fn heredoc_in_if_branch(&self, body: &Node<'_>) -> Option<((usize, usize), (usize, usize))> {
-        let call = body.as_call_node()?;
-        // parser `send_type?` excludes csend.
-        if call
-            .call_operator_loc()
-            .is_some_and(|op| op.as_slice() == b"&.")
-        {
-            return None;
-        }
-        // A block-pass is parser's last argument (not a heredoc); a block
-        // makes the parser body a `block` node (not `send_type?`).
-        if call.block().is_some() {
-            return None;
-        }
-        let args = call.arguments()?;
-        let last = args.arguments().iter().last()?;
-        heredoc_ranges(&last)
+    /// Stock 1.92 `heredoc_ranges_in(body)`: the whole-line range
+    /// (`range_by_whole_lines(heredoc_body.join(heredoc_end))`, no final
+    /// newline) of every heredoc in the subtree, in `each_node` order, minus
+    /// the ones strictly contained in another (a heredoc opened in another
+    /// heredoc's interpolation moves along with it).
+    fn heredoc_ranges_in(&self, root: &Node<'_>) -> Vec<(usize, usize)> {
+        let mut scan = HeredocScan { found: Vec::new() };
+        scan.visit(root);
+        let ranges: Vec<(usize, usize)> = scan
+            .found
+            .iter()
+            .map(|&(body, end)| {
+                let begin = self.li.line_starts()[self.li.line_of(body.0) - 1];
+                let (_, le) = self.line_bounds(self.li.line_of(end.1));
+                (begin, le)
+            })
+            .collect();
+        ranges
+            .iter()
+            .filter(|r| {
+                // parser `Range#contains?` is strict for non-empty ranges.
+                !ranges
+                    .iter()
+                    .any(|o| o != *r && o.0 <= r.0 && r.1 <= o.1)
+            })
+            .copied()
+            .collect()
     }
 
     /// `range_by_whole_lines(range, include_final_newline: true)` as a
-    /// remove op.
+    /// remove op (`range` is already whole lines).
     fn remove_whole_lines(&self, range: (usize, usize)) -> Op {
-        let start_line = self.li.line_of(range.0);
-        let begin = self.li.line_starts()[start_line - 1];
-        let end_line = self.li.line_of(range.1);
-        let (_, le) = self.line_bounds(end_line);
-        let end = (le + 1).min(self.source.len());
-        Op { kind: 1, start: begin, end, text: String::new() }
+        let end = (range.1 + 1).min(self.source.len());
+        Op { kind: 1, start: range.0, end, text: String::new() }
     }
 
     // -----------------------------------------------------------------------
@@ -909,7 +947,12 @@ impl<'a> Visitor<'a> {
         node: &Node<'static>,
         anc: &mut impl Iterator<Item = &'x Node<'static>>,
     ) -> Option<Node<'static>> {
-        if node.as_array_node().is_some() || node.as_call_node().is_some() {
+        // 1.92 adds `and` / `or`.
+        if node.as_array_node().is_some()
+            || node.as_call_node().is_some()
+            || node.as_and_node().is_some()
+            || node.as_or_node().is_some()
+        {
             return Some(unsafe { copy_to_static(node) });
         }
         if node.as_assoc_node().is_some() {
@@ -955,13 +998,18 @@ impl<'a> Visitor<'a> {
             return false;
         };
         let mut scan = ModifierIfScan {
-            self_start: ns,
             line,
             li: &self.li,
-            found: false,
+            found: Vec::new(),
         };
         scan.visit(&coll);
-        scan.found
+        // `sibling != node` is parser's STRUCTURAL `Node#==`: a sibling that
+        // equals this node (same shape, any spacing) does not count, and
+        // neither does the node itself.
+        let Some(me) = self.current.as_ref() else {
+            return !scan.found.is_empty();
+        };
+        scan.found.iter().any(|s| !structural_eq(self.source, s, me))
     }
 
     // -----------------------------------------------------------------------
@@ -1232,6 +1280,12 @@ fn collection_children<'pr>(coll: &Node<'pr>) -> Vec<Node<'pr>> {
         }
         return out;
     }
+    if let Some(a) = coll.as_and_node() {
+        return vec![a.left(), a.right()];
+    }
+    if let Some(o) = coll.as_or_node() {
+        return vec![o.left(), o.right()];
+    }
     if let Some(h) = coll.as_hash_node() {
         return h.elements().iter().collect();
     }
@@ -1467,13 +1521,13 @@ impl<'pr> Visit<'pr> for NestedIfScan {
     }
 }
 
-/// `another_modifier_if_on_same_line?`'s descendant scan: a DIFFERENT
-/// modifier-form if/unless starting on `line`.
+/// `another_modifier_if_on_same_line?`'s descendant scan: every
+/// modifier-form if/unless starting on `line` (the caller drops the ones
+/// structurally equal to the node itself).
 struct ModifierIfScan<'s> {
-    self_start: usize,
     line: usize,
     li: &'s LineIndex,
-    found: bool,
+    found: Vec<Node<'static>>,
 }
 
 impl ModifierIfScan<'_> {
@@ -1490,9 +1544,8 @@ impl ModifierIfScan<'_> {
         if !modifier {
             return;
         }
-        let start = node.location().start_offset();
-        if start != self.self_start && self.li.line_of(start) == self.line {
-            self.found = true;
+        if self.li.line_of(node.location().start_offset()) == self.line {
+            self.found.push(unsafe { copy_to_static(node) });
         }
     }
 }
@@ -1500,5 +1553,210 @@ impl ModifierIfScan<'_> {
 impl<'pr> Visit<'pr> for ModifierIfScan<'_> {
     fn visit_branch_node_enter(&mut self, node: Node<'pr>) {
         self.check(&node);
+    }
+}
+
+/// Parser `Node#==` (type + children, no locations), approximated the way
+/// `hash_each_methods` does: if/unless and calls are compared part by part,
+/// everything else by node kind + identical source text.
+fn structural_eq(source: &[u8], a: &Node<'_>, b: &Node<'_>) -> bool {
+    let src_eq = |a: &Node<'_>, b: &Node<'_>| {
+        let (la, lb) = (a.location(), b.location());
+        std::mem::discriminant(a) == std::mem::discriminant(b)
+            && source[la.start_offset()..la.end_offset()]
+                == source[lb.start_offset()..lb.end_offset()]
+    };
+    let opt_eq = |a: Option<Node<'_>>, b: Option<Node<'_>>| match (a, b) {
+        (None, None) => true,
+        (Some(x), Some(y)) => structural_eq(source, &x, &y),
+        _ => false,
+    };
+    let stmts_eq = |a: Option<StatementsNode<'_>>, b: Option<StatementsNode<'_>>| {
+        let la: Vec<Node<'_>> = a.map(|s| s.body().iter().collect()).unwrap_or_default();
+        let lb: Vec<Node<'_>> = b.map(|s| s.body().iter().collect()).unwrap_or_default();
+        la.len() == lb.len() && la.iter().zip(&lb).all(|(x, y)| structural_eq(source, x, y))
+    };
+    if let (Some(x), Some(y)) = (a.as_if_node(), b.as_if_node()) {
+        return x.subsequent().is_none()
+            && y.subsequent().is_none()
+            && structural_eq(source, &x.predicate(), &y.predicate())
+            && stmts_eq(x.statements(), y.statements());
+    }
+    if let (Some(x), Some(y)) = (a.as_unless_node(), b.as_unless_node()) {
+        return x.else_clause().is_none()
+            && y.else_clause().is_none()
+            && structural_eq(source, &x.predicate(), &y.predicate())
+            && stmts_eq(x.statements(), y.statements());
+    }
+    if let (Some(x), Some(y)) = (a.as_call_node(), b.as_call_node()) {
+        if x.block().is_some() || y.block().is_some() {
+            return src_eq(a, b);
+        }
+        fn args<'p>(c: &ruby_prism::CallNode<'p>) -> Vec<Node<'p>> {
+            c.arguments()
+                .map(|l| l.arguments().iter().collect())
+                .unwrap_or_default()
+        }
+        let (ax, ay) = (args(&x), args(&y));
+        return x.is_safe_navigation() == y.is_safe_navigation()
+            && x.name().as_slice() == y.name().as_slice()
+            && opt_eq(x.receiver(), y.receiver())
+            && ax.len() == ay.len()
+            && ax.iter().zip(&ay).all(|(p, q)| structural_eq(source, p, q));
+    }
+    src_eq(a, b)
+}
+
+/// `each_node(:any_str).select(&:heredoc?)`: parser heredoc body/end ranges
+/// of every heredoc string in a subtree, pre-order (nested heredocs in
+/// interpolations included).
+struct HeredocScan {
+    #[allow(clippy::type_complexity)]
+    found: Vec<((usize, usize), (usize, usize))>,
+}
+
+impl<'pr> Visit<'pr> for HeredocScan {
+    fn visit_branch_node_enter(&mut self, node: Node<'pr>) {
+        if let Some(r) = heredoc_ranges(&node) {
+            self.found.push(r);
+        }
+    }
+
+    fn visit_leaf_node_enter(&mut self, node: Node<'pr>) {
+        if let Some(r) = heredoc_ranges(&node) {
+            self.found.push(r);
+        }
+    }
+}
+
+/// `StatementModifier#wrapped_value`: the sole argument of a
+/// `return`/`next`/`break`, or the value of a simple assignment.
+///
+/// rubocop-ast's `WrappedArguments#arguments` returns the CHILDREN of a
+/// leading parser `begin` (parentheses), so `next(x)` and even
+/// `return (x), y` count as one argument: `x`.
+fn wrapped_value<'pr>(node: &Node<'pr>) -> Option<Node<'pr>> {
+    let args = if let Some(r) = node.as_return_node() {
+        r.arguments()
+    } else if let Some(n) = node.as_next_node() {
+        n.arguments()
+    } else if let Some(b) = node.as_break_node() {
+        b.arguments()
+    } else {
+        return assignment_value(node);
+    };
+    let list: Vec<Node<'pr>> = args?.arguments().iter().collect();
+    let first = list.first()?;
+    if let Some(p) = first.as_parentheses_node() {
+        let body = p.body()?;
+        if let Some(s) = body.as_statements_node() {
+            let inner: Vec<Node<'pr>> = s.body().iter().collect();
+            return if inner.len() == 1 { inner.into_iter().next() } else { None };
+        }
+        return Some(body);
+    }
+    if list.len() == 1 { list.into_iter().next() } else { None }
+}
+
+/// Value of a parser `lvasgn`/`ivasgn`/`cvasgn`/`gvasgn`/`casgn`.
+fn assignment_value<'pr>(node: &Node<'pr>) -> Option<Node<'pr>> {
+    if let Some(w) = node.as_local_variable_write_node() {
+        Some(w.value())
+    } else if let Some(w) = node.as_instance_variable_write_node() {
+        Some(w.value())
+    } else if let Some(w) = node.as_class_variable_write_node() {
+        Some(w.value())
+    } else if let Some(w) = node.as_global_variable_write_node() {
+        Some(w.value())
+    } else if let Some(w) = node.as_constant_write_node() {
+        Some(w.value())
+    } else {
+        node.as_constant_path_write_node().map(|w| w.value())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Expected values come from the stock 1.92.1 CLI (`-A` output / JSON
+    // `correction` edits) on the same sources.
+
+    fn run(src: &str) -> Vec<IfUnlessModifierCandidate> {
+        check_if_unless_modifier(
+            src.as_bytes(),
+            Config { max_line_length: Some(120), tab_width: 2 },
+        )
+    }
+
+    fn apply(src: &str, ops: &[Op]) -> String {
+        let mut edits: Vec<&Op> = ops.iter().collect();
+        edits.sort_by_key(|o| std::cmp::Reverse(o.start));
+        let mut out = src.to_string();
+        for op in edits {
+            out.replace_range(op.start..op.end, &op.text);
+        }
+        out
+    }
+
+    #[test]
+    fn moves_condition_and_body_heredocs_after_their_lines() {
+        let long = "b".repeat(100);
+        let src = format!("foo(<<~EOS) if {long}(<<~EOT)\n  string\nEOS\n  text\nEOT\n");
+        let c = run(&src);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].ops.len(), 3); // two whole-line removals + the replace
+        assert_eq!(
+            apply(&src, &c[0].ops),
+            format!("if {long}(<<~EOT)\n  text\nEOT\n  foo(<<~EOS)\n  string\nEOS\nend\n")
+        );
+    }
+
+    #[test]
+    fn keeps_a_heredoc_nested_in_another_heredoc_inside_it() {
+        let long = "f".repeat(110);
+        let src = format!("x = <<~A + <<~B if {long}\n  a #{{<<~C}}\n    c\n  C\nA\n  b\nB\n");
+        let c = run(&src);
+        assert_eq!(c[0].ops.len(), 3);
+        assert_eq!(
+            apply(&src, &c[0].ops),
+            format!("if {long}\n  x = <<~A + <<~B\n  a #{{<<~C}}\n    c\n  C\nA\n  b\nB\nend\n")
+        );
+    }
+
+    #[test]
+    fn parenthesizes_yield_super_csend_ternary_and_endless_def() {
+        for (src, want) in [
+            ("def f\n  yield(if a\n    1\n  end)\nend\n", "(1 if a)"),
+            ("def f\n  super(if a\n    1\n  end)\nend\n", "(1 if a)"),
+            ("x&.push(if a\n  1\nend)\n", "(1 if a)"),
+            ("p(b ? 1 : if a\n  1\nend)\n", "(1 if a)"),
+            ("def foo(a) = if a\n  1\nend\n", "(1 if a)"),
+        ] {
+            let c = run(src);
+            assert_eq!(c.len(), 1, "{src}");
+            assert!(c[0].parenthesize, "{src}");
+            assert_eq!(c[0].replacement_no_comment, want, "{src}");
+        }
+    }
+
+    #[test]
+    fn recurses_into_return_and_assignment_values() {
+        let c = run("if c\n  next(item.foo)\nend\nif c\n  @x = $g = y = obj.call a, b: 2\nend\n");
+        assert_eq!(c[0].replacement_no_comment, "next(item.foo) if c");
+        assert_eq!(c[1].replacement_no_comment, "@x = $g = y = obj.call a, b: 2 if c");
+    }
+
+    #[test]
+    fn logical_operator_modifiers_on_one_line() {
+        let f = "f".repeat(50);
+        let b = "b".repeat(50);
+        // Different modifiers sharing the line: no offense at all.
+        assert!(run(&format!("y = ({f} if one) && ({b} unless two)\n")).is_empty());
+        // Structurally equal ones do not see each other (parser `==`).
+        let half = format!("({f} if one)");
+        let c = run(&format!("x = {half} || {half}\n"));
+        assert_eq!(c.len(), 2);
+        assert!(c.iter().all(|c| !c.another_modifier_same_line));
     }
 }
