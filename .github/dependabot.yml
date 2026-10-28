@@ -1,0 +1,40 @@
+# Dependabot here is a tripwire for upstream releases, not an auto-updater.
+# shirobai pins RuboCop and each plugin exactly,
+# so a new upstream release blocks users until shirobai follows it.
+# Treat each bump PR as the follow-up task: check parity on a branch
+# and update the other pins before merging:
+# Gemfile.stock*, Gemfile.with_shirobai*, benches/Gemfile.*,
+# the vendor/ submodules, and the versions written in the READMEs.
+#
+# One entry per gemspec, each allowing only the gem that gemspec pins.
+# The plugin directories also see rubocop through the path gem,
+# and allowing it there would open duplicate PRs against shirobai.gemspec.
+version: 2
+updates:
+  - package-ecosystem: bundler
+    directory: "/"
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-name: "rubocop"
+
+  - package-ecosystem: bundler
+    directory: "/gems/shirobai-performance"
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-name: "rubocop-performance"
+
+  - package-ecosystem: bundler
+    directory: "/gems/shirobai-rails"
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-name: "rubocop-rails"
+
+  - package-ecosystem: bundler
+    directory: "/gems/shirobai-rspec"
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-name: "rubocop-rspec"
