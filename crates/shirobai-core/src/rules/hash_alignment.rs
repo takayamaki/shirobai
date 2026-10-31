@@ -446,7 +446,34 @@ impl Visitor<'_> {
         if alignment == Alignment::Key {
             return true;
         }
-        !self.pairs_on_same_line(pairs) && !self.mixed_delimiters(pairs) && self.alignable_values(pairs)
+        !self.pairs_on_same_line(pairs)
+            && !self.mixed_delimiters(pairs)
+            && self.alignable_values(pairs)
+            && !self.pair_after_kwsplat_on_same_line(pairs)
+    }
+
+    /// `ValueAlignment#pair_after_kwsplat_on_same_line?` (1.92.2,
+    /// rubocop#16134): two consecutive children where the current one is a
+    /// pair other than the first pair and starts on the previous child's last
+    /// line (the previous child is usually a `**kwsplat`).
+    fn pair_after_kwsplat_on_same_line(&self, pairs: &[Pair]) -> bool {
+        let Some(first_idx) = pairs.iter().position(|p| p.is_pair()) else {
+            return false;
+        };
+        pairs.windows(2).enumerate().any(|(i, w)| {
+            let (previous, current) = (&w[0], &w[1]);
+            current.is_pair()
+                && i + 1 != first_idx
+                && self.line_of(previous.range.1.saturating_sub(1)) == self.line_of(current.range.0)
+        })
+    }
+
+    /// `ValueAlignment#deltas` guard (1.92.2, rubocop#16175): with several
+    /// enforced styles, deltas are computed even for a hash this style cannot
+    /// check, so a pair that is not the first pair and does not begin its
+    /// line is left alone.
+    fn value_alignment_skips(&self, first: &Pair, current: &Pair) -> bool {
+        !std::ptr::eq(first, current) && !self.begins_its_line(current.range.0)
     }
 
     /// `ValueAlignment#alignable_values?`: the first pair has a value and no
@@ -731,6 +758,13 @@ impl Visitor<'_> {
                 }
             }
             Alignment::Table => {
+                if self.value_alignment_skips(first, current) {
+                    return Delta {
+                        key: 0,
+                        separator: 0,
+                        value: 0,
+                    };
+                }
                 let k = self.key_delta_left(first, current);
                 // `separator_shift` (1.92): moving a multiline key's first
                 // line does not move its separator.
@@ -745,7 +779,10 @@ impl Visitor<'_> {
             Alignment::Separator => {
                 // 1.92 (rubocop#15821 / #16063): a multiline key (first or
                 // current) leaves the pair alone.
-                if !self.single_line_key(first) || !self.single_line_key(current) {
+                if !self.single_line_key(first)
+                    || !self.single_line_key(current)
+                    || self.value_alignment_skips(first, current)
+                {
                     return Delta {
                         key: 0,
                         separator: 0,
@@ -885,7 +922,8 @@ impl Visitor<'_> {
         pairs
             .iter()
             .filter(|p| p.is_pair() && self.single_line_key(p))
-            .map(|p| (p.key_end() - p.key_start()) as isize)
+            // `key.source.length` counts chars, not bytes.
+            .map(|p| char_len(&self.source[p.key_start()..p.key_end()]) as isize)
             .max()
             .unwrap_or(0)
     }
@@ -901,6 +939,15 @@ impl Visitor<'_> {
             .unwrap_or(0)
     }
 
+}
+
+/// Ruby `String#length` of a source slice: the char count, or the byte count
+/// on invalid UTF-8 (the scan helpers' fallback).
+fn char_len(s: &[u8]) -> usize {
+    match std::str::from_utf8(s) {
+        Ok(s) => s.chars().count(),
+        Err(_) => s.len(),
+    }
 }
 
 /// `column_deltas` triple for one pair under one alignment.
