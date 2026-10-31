@@ -2341,7 +2341,8 @@ fn map_if_unless_modifier(
 
 /// Standalone `Style/IfUnlessModifier` (fallback when the bundle path is not
 /// usable, e.g. CRLF/BOM sources scanned via `buffer.source`). `nums` is
-/// `[max_line_length (-1 = Layout/LineLength disabled), tab_width]`.
+/// `[max_line_length (-1 = Layout/LineLength disabled), tab_width,
+/// space_inside_parens]`.
 #[allow(clippy::type_complexity)]
 fn check_if_unless_modifier(
     source: RString,
@@ -2350,6 +2351,7 @@ fn check_if_unless_modifier(
     let cfg = shirobai_core::rules::if_unless_modifier::Config {
         max_line_length: if nums[0] < 0 { None } else { Some(nums[0]) },
         tab_width: nums[1],
+        space_inside_parens: nums[2] != 0,
     };
     map_if_unless_modifier(
         shirobai_core::rules::if_unless_modifier::check_if_unless_modifier(bytes(&source), cfg),

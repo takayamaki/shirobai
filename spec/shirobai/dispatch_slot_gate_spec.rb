@@ -5,7 +5,7 @@ require "spec_helper"
 # The per-slot enable gate of the shared bundle (`Shirobai::Dispatch`).
 #
 # `check_all` computes a core slot only when its bit is set in the slot mask
-# (core nums 134 / 135, `BundleConfig::enabled_slots`). The mask holds the
+# (core nums 135 / 136, `BundleConfig::enabled_slots`). The mask holds the
 # slots of the cops the config enables (`COP_KEYS` over
 # `Registry#enabled`), plus the config's "forced" keys.
 #
@@ -37,7 +37,7 @@ RSpec.describe Shirobai::Dispatch do
 
   def mask_of(nums)
     core = nums[0]
-    low, high = core[134], core[135]
+    low, high = core[135], core[136]
     (low & 0xFFFF_FFFF_FFFF_FFFF) | ((high & 0xFFFF_FFFF_FFFF_FFFF) << 64)
   end
 
@@ -76,9 +76,9 @@ RSpec.describe Shirobai::Dispatch do
   end
 
   describe "slot mask packing" do
-    it "appends the mask as two nums at core indices 134 and 135" do
+    it "appends the mask as two nums at core indices 135 and 136" do
       nums, = described_class.send(:packed_config, config_with({}))
-      expect(nums[0].size).to eq(136)
+      expect(nums[0].size).to eq(137)
       nums[0].last(2).each do |word|
         expect(word).to be_a(Integer)
         expect(word).to be_between(-(2**63), (2**63) - 1)
@@ -98,7 +98,7 @@ RSpec.describe Shirobai::Dispatch do
       config = config_with({})
       nums, = described_class.send(:packed_config, config)
       expect(described_class.enabled_keys(config)).to include(:empty_line_after_guard_clause)
-      expect(nums[0][134]).to be_negative
+      expect(nums[0][135]).to be_negative
     end
 
     it "adds the forced keys to the mask" do
