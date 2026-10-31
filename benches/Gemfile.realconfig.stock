@@ -2,7 +2,7 @@
 
 source "https://rubygems.org"
 
-gem "rubocop", "= 1.92.1"
+gem "rubocop", "= 1.92.2"
 
 # Plugins required by test corpora. Every version is pinned: Gemfile.lock is
 # not tracked, so an unpinned gem floats to the newest release on each run.
