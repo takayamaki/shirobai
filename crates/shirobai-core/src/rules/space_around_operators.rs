@@ -28,8 +28,9 @@
 //! 1. **"Space around operator detected"** — only `**` (when exponent style is
 //!    `no_space`) and the rational `/` (rational style `no_space`): an offense
 //!    iff there *is* surrounding space.
-//! 2. **"Surrounding space missing"** — `with_space.source` is not `/^\s.*\s$/`
-//!    (at least one side lacks a space). Alignment-independent.
+//! 2. **"Surrounding space missing"** — `missing_surrounding_space?`: at least
+//!    one side lacks a space, unless the gap starts with a space and a `\`
+//!    line continuation follows it (1.92.2). Alignment-independent.
 //! 3. **"should be surrounded by a single space"** — there is excess leading or
 //!    trailing space. **This is the only arm that consults `AllowForAlignment`.**
 //!
@@ -138,6 +139,10 @@ struct ExcessCandidate {
     /// `right_operand.source_range` for `excess_trailing_space?`.
     right_start: usize,
     right_end: usize,
+    /// `:pair` only: `aligned_with_another_hash_rocket?(pair)` (1.92.2,
+    /// rubocop#16123) — another `=>` pair of the same hash has its operator
+    /// at the same char column. Computed in the walk, where the hash is known.
+    rocket_aligned: bool,
 }
 
 /// The product of the AST walk: offenses already decided plus the excess-space
@@ -190,6 +195,8 @@ pub(crate) fn build_rule(source: &[u8], config: Config) -> Visitor<'_> {
         excess: Vec::new(),
         def_equals: Vec::new(),
         hash_same_line: Vec::new(),
+        rocket_ops: Vec::new(),
+        rocket_frames: Vec::new(),
     }
 }
 
@@ -203,6 +210,11 @@ pub(crate) struct Visitor<'a> {
     /// Stack of the enclosing hash's `pairs_on_same_line?` (for the table-style
     /// `=>` guard). Top is the innermost hash/kwhash.
     hash_same_line: Vec<bool>,
+    /// Operator start offsets of the `=>` pairs of every enclosing hash, one
+    /// frame per hash (`rocket_frames` holds each frame's start index). Feeds
+    /// `aligned_with_another_hash_rocket?`.
+    rocket_ops: Vec<usize>,
+    rocket_frames: Vec<usize>,
 }
 
 impl<'a> Visitor<'a> {
@@ -297,6 +309,7 @@ impl<'a> Visitor<'a> {
                     align_type,
                     right_start,
                     right_end,
+                    rocket_aligned: false,
                 });
             }
             _ => {
@@ -336,8 +349,8 @@ impl<'a> Visitor<'a> {
             return Some((MessageKind::Detected, self.replacement(ws_start, ws_end, right_is_rational)));
         }
 
-        // `!/^\s.*\s$/.match?(with_space.source)` — missing space on a side.
-        if !is_surrounded_by_space(with_space) {
+        // `missing_surrounding_space?(with_space)` (1.92.2, rubocop#16148).
+        if self.missing_surrounding_space(ws_start, ws_end) {
             return Some((MessageKind::Missing, self.replacement(ws_start, ws_end, right_is_rational)));
         }
 
@@ -354,6 +367,55 @@ impl<'a> Visitor<'a> {
             ));
         }
         None
+    }
+
+    /// `missing_surrounding_space?(with_space)`: not missing when the gap
+    /// starts and ends with `\s` (`/\A\s.*\s\z/m`), or when it starts with
+    /// `\s` and a `\` line continuation (`"\\\n"`) follows it right away.
+    fn missing_surrounding_space(&self, ws_start: usize, ws_end: usize) -> bool {
+        let with_space = self.s(ws_start, ws_end);
+        if is_surrounded_by_space(with_space) {
+            return false;
+        }
+        let starts_with_space = with_space.first().is_some_and(|&b| is_ruby_space(b));
+        let continuation_after = self.source.get(ws_end..ws_end + 2) == Some(b"\\\n".as_slice());
+        !starts_with_space || !continuation_after
+    }
+
+    /// `aligned_with_another_hash_rocket?(pair)`: the `=>` at `op_start` shares
+    /// its char column with another `=>` pair of the innermost hash
+    /// (`hash_rocket_columns(pair.parent)[column] > 1`).
+    fn aligned_with_another_hash_rocket(&self, op_start: usize) -> bool {
+        let Some(&frame) = self.rocket_frames.last() else {
+            return false;
+        };
+        let column = self.line_index.column(self.source, op_start);
+        self.rocket_ops[frame..]
+            .iter()
+            .filter(|&&op| self.line_index.column(self.source, op) == column)
+            .count()
+            > 1
+    }
+
+    /// Push the `=>` operator offsets of a hash's pairs as a new frame.
+    fn push_rocket_frame<'pr, I>(&mut self, elements: I)
+    where
+        I: Iterator<Item = Node<'pr>>,
+    {
+        self.rocket_frames.push(self.rocket_ops.len());
+        for e in elements {
+            if let Some(op) = e.as_assoc_node().and_then(|a| a.operator_loc())
+                && self.s(op.start_offset(), op.end_offset()) == b"=>"
+            {
+                self.rocket_ops.push(op.start_offset());
+            }
+        }
+    }
+
+    fn pop_rocket_frame(&mut self) {
+        if let Some(frame) = self.rocket_frames.pop() {
+            self.rocket_ops.truncate(frame);
+        }
     }
 
     /// `should_not_have_surrounding_space?`: `**` (exponent no_space) or `/`
@@ -415,11 +477,15 @@ impl<'a> Visitor<'a> {
 /// ends, so length >= 2 unless the single char satisfies both — but `^\s` and
 /// `\s$` on a 1-char string both match the same char).
 fn is_surrounded_by_space(s: &[u8]) -> bool {
-    let is_ws = |b: u8| matches!(b, b' ' | b'\t' | b'\r' | b'\n' | 0x0c | 0x0b);
     match (s.first(), s.last()) {
-        (Some(&f), Some(&l)) => is_ws(f) && is_ws(l),
+        (Some(&f), Some(&l)) => is_ruby_space(f) && is_ruby_space(l),
         _ => false,
     }
+}
+
+/// Ruby regexp `\s`: `[ \t\r\n\f\v]`.
+fn is_ruby_space(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\r' | b'\n' | 0x0c | 0x0b)
 }
 
 /// Ruby `String#strip`: trim leading/trailing whitespace (`\0` too) bytes.
@@ -465,8 +531,8 @@ pub fn resolve(
         }
         let excess_lead = source[c.ws_start..c.ws_end].starts_with(b"  ");
         let excess_trail = source[c.ws_start..c.ws_end].ends_with(b"  ");
-        let leading =
-            excess_lead && excess_leading_space(&aligner, config, c.align_type, c.op_start, c.op_end);
+        let leading = excess_lead
+            && excess_leading_space(&aligner, config, c.align_type, c.op_start, c.op_end, c.rocket_aligned);
         let trailing =
             excess_trail && excess_trailing_space(&aligner, config, c.right_start, c.right_end);
         if leading || trailing {
@@ -487,7 +553,7 @@ pub fn resolve(
 
 // ===== resolve phase: SAO-specific alignment arms =====
 
-/// `excess_leading_space?(type, operator, with_space)`. The
+/// `excess_leading_space?(type, operator, with_space, right_operand)`. The
 /// `with_space.source.start_with?(EXCESSIVE_SPACE)` gate is applied by the
 /// caller; here we only do the alignment decision.
 fn excess_leading_space(
@@ -496,6 +562,7 @@ fn excess_leading_space(
     align_type: AlignType,
     op_start: usize,
     op_end: usize,
+    rocket_aligned: bool,
 ) -> bool {
     // `return false unless allow_for_alignment?` — when alignment is *not*
     // allowed, a leading excess is *not* flagged by this arm (only excess
@@ -509,8 +576,10 @@ fn excess_leading_space(
     let grouped = align_type == AlignType::Assignment
         || (align_type == AlignType::SpecialAsgn && config.force_equal_sign_alignment);
     if !grouped {
-        // `!aligned_with_operator?(operator)`.
-        return !aligner.aligned_with_operator(op_start, op_end);
+        // `!aligned?(type, operator, right_operand)`: aligned with an operator
+        // on an adjacent line, or (`:pair` only) with another `=>` of the same
+        // hash. `rocket_aligned` is false for every non-pair candidate.
+        return !(aligner.aligned_with_operator(op_start, op_end) || rocket_aligned);
     }
     // The `:assignment` path.
     let align_preceding = aligner.aligned_with_preceding_equals_operator(op_start, op_end);
@@ -548,14 +617,18 @@ impl<'pr> Visit<'pr> for Visitor<'_> {
     fn visit_hash_node(&mut self, node: &ruby_prism::HashNode<'pr>) {
         let same_line = self.pairs_on_same_line(node.elements().iter());
         self.hash_same_line.push(same_line);
+        self.push_rocket_frame(node.elements().iter());
         ruby_prism::visit_hash_node(self, node);
+        self.pop_rocket_frame();
         self.hash_same_line.pop();
     }
 
     fn visit_keyword_hash_node(&mut self, node: &ruby_prism::KeywordHashNode<'pr>) {
         let same_line = self.pairs_on_same_line(node.elements().iter());
         self.hash_same_line.push(same_line);
+        self.push_rocket_frame(node.elements().iter());
         ruby_prism::visit_keyword_hash_node(self, node);
+        self.pop_rocket_frame();
         self.hash_same_line.pop();
     }
 
@@ -886,6 +959,13 @@ impl Visitor<'_> {
             pair.end_offset(),
             false,
         );
+        // Only a deferred excess-space candidate reads the column tally.
+        if self.excess.last().is_some_and(|c| c.op_start == op.start_offset()) {
+            let aligned = self.aligned_with_another_hash_rocket(op.start_offset());
+            if let Some(c) = self.excess.last_mut() {
+                c.rocket_aligned = aligned;
+            }
+        }
     }
 
     /// `pairs_on_same_line?`: any two consecutive `pair` (AssocNode, kwsplat
