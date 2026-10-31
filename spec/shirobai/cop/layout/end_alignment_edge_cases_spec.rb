@@ -116,3 +116,22 @@ RSpec.describe Shirobai::Cop::Layout::EndAlignment do
     expect(expect_autocorrect_parity(*klasses, source, cfg)).to eq("変数 = class Bar\n  x\nend\n")
   end
 end
+
+# A CRLF source takes the standalone path on the CR-stripped `buffer.source`,
+# so the offense range and the autocorrect line up with parser-gem's buffer.
+RSpec.describe Shirobai::Cop::Layout::EndAlignment do
+  include EdgeCaseParity
+
+  klasses = [
+    RuboCop::Cop::Layout::EndAlignment,
+    Shirobai::Cop::Layout::EndAlignment
+  ]
+
+  it "matches stock on a CRLF source" do
+    cfg = RuboCop::ConfigLoader.default_configuration
+    source = "a = 1\r\nx = if a\r\n  b\r\n  end\r\nFoo = class Bar\r\n  y\r\n      end\r\n"
+    expect_lint_parity(*klasses, source, cfg)
+    expect_correction_edits_parity(*klasses, source, cfg)
+    expect_autocorrect_parity(*klasses, source, cfg)
+  end
+end
