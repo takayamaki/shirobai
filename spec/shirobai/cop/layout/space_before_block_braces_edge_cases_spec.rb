@@ -16,7 +16,11 @@ require "spec_helper"
 #   - `{ }` is NOT "empty braces" for this cop (`empty_braces?` is
 #     byte-adjacency), so it takes the non-empty path;
 #   - the surrounding-space scan stops at a `\`-continuation: the offense
-#     range starts at the newline and its removal splices the lines.
+#     range starts at the newline. Since 1.92.2 the correction also removes
+#     the backslash and the spaces, tabs and backslashes before it, and does
+#     nothing when a heredoc body sits between the `\` and the brace;
+#   - CRLF sources take the standalone path on `buffer.source`, so the
+#     offense range lines up with the CR-stripped buffer.
 RSpec.describe Shirobai::Cop::Layout::SpaceBeforeBlockBraces do
   include EdgeCaseParity
 
@@ -68,14 +72,55 @@ RSpec.describe Shirobai::Cop::Layout::SpaceBeforeBlockBraces do
     expect(corrected).to eq("7.times{ }\n")
   end
 
-  it "removes the newline run up to a backslash continuation" do
-    src = "foo.bar \\\n  { |x| x }\n"
-    cfg = config_with(
-      { "EnforcedStyle" => "no_space" },
-      "Style/BlockDelimiters" => { "EnforcedStyle" => "always_braces" }
-    )
-    corrected = expect_autocorrect_parity(*klasses, src, cfg)
-    expect(corrected).to eq("foo.bar \\{ |x| x }\n")
+  context "with a brace after a backslash continuation" do
+    let(:cfg) do
+      config_with(
+        { "EnforcedStyle" => "no_space" },
+        "Style/BlockDelimiters" => { "EnforcedStyle" => "always_braces" }
+      )
+    end
+
+    it "removes the backslash and the spaces before it" do
+      src = "foo.bar \\\n  { |x| x }\n"
+      expect_correction_edits_parity(*klasses, src, cfg)
+      corrected = expect_autocorrect_parity(*klasses, src, cfg)
+      expect(corrected).to eq("foo.bar{ |x| x }\n")
+    end
+
+    it "removes a run of tabs and spaces before the continuation" do
+      src = "foo.bar\t \t\\\n  { |x| x }\n"
+      expect_correction_edits_parity(*klasses, src, cfg)
+      expect_autocorrect_parity(*klasses, src, cfg)
+    end
+
+    it "does not correct when a heredoc body sits before the brace" do
+      src = "foo(<<~X) \\\n  a\nX\n  { baz }\n"
+      expect_lint_parity(*klasses, src, cfg)
+      expect(correction_edits(klasses.first, src, cfg).flat_map(&:last)).to be_empty
+      expect(correction_edits(klasses.last, src, cfg).flat_map(&:last)).to be_empty
+    end
+
+    it "corrects on a CRLF source" do
+      src = "a\r\nfoo(1,     x) \\\r\n  { baz }\r\n"
+      expect_lint_parity(*klasses, src, cfg)
+      expect_correction_edits_parity(*klasses, src, cfg)
+      corrected = expect_autocorrect_parity(*klasses, src, cfg)
+      expect(corrected).to eq("a\nfoo(1,     x){ baz }\n")
+    end
+
+    it "keeps char offsets after a non-ASCII prefix" do
+      src = "# あいう\nfoo(\"日本\") \\\n  { baz }\n"
+      expect_lint_parity(*klasses, src, cfg)
+      expect_correction_edits_parity(*klasses, src, cfg)
+      corrected = expect_autocorrect_parity(*klasses, src, cfg)
+      expect(corrected).to eq("# あいう\nfoo(\"日本\"){ baz }\n")
+    end
+
+    it "keeps char offsets on a non-ASCII CRLF source" do
+      src = "# あいう\r\nfoo(\"日本\") \\\r\n  { baz }\r\n"
+      expect_correction_edits_parity(*klasses, src, cfg)
+      expect_autocorrect_parity(*klasses, src, cfg)
+    end
   end
 
   it "handles super, numbered and it blocks and lambda braces" do

@@ -162,7 +162,7 @@ impl ParenthesesAsGroupedExpressionVisitor {
 /// ```ruby
 /// node = node.children.first while node&.begin_type? && node.children.one?
 /// return false unless node
-/// keyword_operator?(node) || modifier_expression?(node)
+/// keyword_operator?(node) || modifier_expression?(node) || command_call_operand?(node)
 /// ```
 ///
 /// Parser wraps `(...)` in a `begin` whose children are the statements; prism
@@ -183,7 +183,115 @@ fn invalid_bare_argument(node: &Node<'_>) -> bool {
         // modifier expression.
         return false;
     }
-    keyword_operator(node) || modifier_expression(node)
+    keyword_operator(node) || modifier_expression(node) || command_call_operand(node)
+}
+
+/// `command_call_operand?` (1.92.2, rubocop#16143): an assignment (or an
+/// assignment-method call such as `x.y = v` / `x[i] = v`) whose value is a
+/// command call, or a prefix-bang `!` send whose receiver is one — both
+/// recursively. Parser's `node.children.last` is the assigned value for every
+/// `ASSIGNMENTS` type (`lvasgn` … `masgn`, `op_asgn`, `or_asgn`, `and_asgn`)
+/// and the last argument for an assignment-method send.
+fn command_call_operand(node: &Node<'_>) -> bool {
+    if let Some(value) = assignment_value(node) {
+        return command_call_value(&value);
+    }
+    if let Some(c) = node.as_call_node() {
+        // `node.call_type? && node.assignment_method?`: `!comparison_method?
+        // && method_name.end_with?('=')`; `children.last` is the last
+        // argument (a send with no argument would hand stock its method-name
+        // symbol, which cannot be a command call).
+        if is_setter_name(c.name().as_slice()) {
+            let Some(args) = c.arguments() else { return false };
+            let Some(last) = args.arguments().iter().last() else { return false };
+            return command_call_value(&last);
+        }
+        // `node.send_type? && node.prefix_bang?`: `send` only (not `csend`),
+        // `negation_method?` (`:!`) spelled with a `!` selector.
+        if !c.is_safe_navigation()
+            && c.name().as_slice() == b"!"
+            && c.message_loc().is_some_and(|m| m.as_slice() == b"!")
+        {
+            return c.receiver().is_some_and(|r| command_call_value(&r));
+        }
+    }
+    false
+}
+
+/// The value of a parser `ASSIGNMENTS`-type node, in prism terms.
+fn assignment_value<'pr>(node: &Node<'pr>) -> Option<Node<'pr>> {
+    macro_rules! value_of {
+        ($($as:ident),* $(,)?) => {
+            $(if let Some(n) = node.$as() { return Some(n.value()); })*
+        };
+    }
+    value_of!(
+        as_local_variable_write_node,
+        as_instance_variable_write_node,
+        as_class_variable_write_node,
+        as_global_variable_write_node,
+        as_constant_write_node,
+        as_constant_path_write_node,
+        as_multi_write_node,
+        as_local_variable_operator_write_node,
+        as_instance_variable_operator_write_node,
+        as_class_variable_operator_write_node,
+        as_global_variable_operator_write_node,
+        as_constant_operator_write_node,
+        as_constant_path_operator_write_node,
+        as_call_operator_write_node,
+        as_index_operator_write_node,
+        as_local_variable_or_write_node,
+        as_instance_variable_or_write_node,
+        as_class_variable_or_write_node,
+        as_global_variable_or_write_node,
+        as_constant_or_write_node,
+        as_constant_path_or_write_node,
+        as_call_or_write_node,
+        as_index_or_write_node,
+        as_local_variable_and_write_node,
+        as_instance_variable_and_write_node,
+        as_class_variable_and_write_node,
+        as_global_variable_and_write_node,
+        as_constant_and_write_node,
+        as_constant_path_and_write_node,
+        as_call_and_write_node,
+        as_index_and_write_node,
+    );
+    None
+}
+
+/// `command_call_value?`: `command_call?(node) || command_call_operand?(node)`.
+fn command_call_value(node: &Node<'_>) -> bool {
+    command_call(node) || command_call_operand(node)
+}
+
+/// `command_call?`: unwrap a block to its send node, then a `send` / `csend`
+/// / `super` / `yield` with arguments, no `(...)`, and not an operator
+/// method. Prism keeps a `do … end` / `{ }` block on its call (the call IS
+/// parser's `send_node`), and splits a block-pass (`&blk`, an argument in
+/// parser) into the `block` field, so a `BlockArgumentNode` block counts as an
+/// argument. A lambda literal (`-> {}`) is a `LambdaNode` here; in parser its
+/// send node is the argument-less `lambda`, so both say no. `zsuper`
+/// (`ForwardingSuperNode`) is not `super`-typed.
+fn command_call(node: &Node<'_>) -> bool {
+    let is_block_arg = |b: Option<Node<'_>>| b.is_some_and(|b| b.as_block_argument_node().is_some());
+    if let Some(c) = node.as_call_node() {
+        let has_args = c.arguments().is_some_and(|a| a.arguments().iter().next().is_some())
+            || is_block_arg(c.block());
+        let parenthesized = c.closing_loc().is_some_and(|l| l.as_slice() == b")");
+        return has_args && !parenthesized && !is_operator_method(c.name().as_slice());
+    }
+    if let Some(s) = node.as_super_node() {
+        let has_args = s.arguments().is_some_and(|a| a.arguments().iter().next().is_some())
+            || is_block_arg(s.block());
+        return has_args && s.rparen_loc().is_none();
+    }
+    if let Some(y) = node.as_yield_node() {
+        let has_args = y.arguments().is_some_and(|a| a.arguments().iter().next().is_some());
+        return has_args && y.rparen_loc().is_none();
+    }
+    false
 }
 
 /// `keyword_operator?`: `(operator_keyword? && semantic_operator?)` — an
@@ -503,5 +611,47 @@ mod tests {
         assert!(detect("false? ((foo and bar))\n").is_empty());
         assert_eq!(detect("false? (foo && bar)\n"), vec![(6, 7, 7, 19)]);
         assert_eq!(detect("false? (!foo)\n"), vec![(6, 7, 7, 13)]);
+    }
+
+    // 1.92.2 `command_call_operand?` (rubocop#16143): removing the space would
+    // turn the parentheses into the argument list of the outer call and
+    // change how the inner command call binds.
+    #[test]
+    fn accepts_command_call_operands() {
+        for src in [
+            "obj.do_something (x = foo.bar 'baz')\n",
+            "obj.do_something (x ||= foo 'baz')\n",
+            "obj.do_something (x.y = foo 'baz')\n",
+            "obj.do_something (x[1] = foo 'baz')\n",
+            "obj.do_something (x = y = foo 'baz')\n",
+            "obj.do_something (x = foo 'baz' do end)\n",
+            "obj.do_something (!foo 'baz')\n",
+            "obj.do_something (!foo 'baz' do end)\n",
+            "obj.do_something (x += foo 'baz')\n",
+            "obj.do_something (x = a&.foo 'baz')\n",
+            "obj.do_something (x = foo &blk)\n",
+            "obj.do_something (a, b = foo 'baz')\n",
+            "def m\n  obj.do_something (x = super 'baz')\nend\n",
+            "def m\n  obj.do_something (x = yield 'baz')\nend\n",
+        ] {
+            assert!(detect(src).is_empty(), "{src:?}");
+        }
+    }
+
+    #[test]
+    fn flags_non_command_call_operands() {
+        for src in [
+            "obj.do_something (foo 'baz')\n",
+            "obj.do_something (x = foo(1))\n",
+            "obj.do_something (x = a + b)\n",
+            "obj.do_something (x = foo)\n",
+            "obj.do_something (x = -> {})\n",
+            "obj.do_something (x = (foo 'baz'))\n",
+            "obj.do_something (x == foo 'baz')\n",
+            "def m\n  obj.do_something (x = super)\nend\n",
+            "def m\n  obj.do_something (x = yield(1))\nend\n",
+        ] {
+            assert_eq!(detect(src).len(), 1, "{src:?}");
+        }
     }
 }

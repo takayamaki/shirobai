@@ -52,11 +52,15 @@ module Shirobai
           [RuboCop::Cop::Style::Next, RuboCop::Cop::Style::SoleNestedConditional]
         end
 
-        # Packed args for the bundled run: `[max_line_length, tab_width]`.
+        # Packed args for the bundled run:
+        # `[max_line_length, tab_width, space_inside_parens]`.
         # `max_line_length` mirrors `AutocorrectLogic#max_line_length`
         # (`-1` when `Layout/LineLength` is disabled); `tab_width` mirrors
         # `LineLengthHelp#tab_indentation_width` resolved with THIS cop's
         # `cop_config` (the `configured_indentation_width` fallback).
+        # `space_inside_parens` mirrors `StatementModifier#space_inside_parens?`
+        # (1.92.2): `Layout/SpaceInsideParens` enabled with `EnforcedStyle`
+        # `space` or `compact`.
         def self.bundle_args(config)
           cop_config = config.for_badge(badge)
           max = if config.cop_enabled?("Layout/LineLength")
@@ -67,7 +71,9 @@ module Shirobai
           tab = config.for_cop("Layout/IndentationStyle")["IndentationWidth"] ||
                 cop_config["IndentationWidth"] ||
                 config.for_cop("Layout/IndentationWidth")["Width"] || 2
-          [max, tab]
+          sip = config.cop_enabled?("Layout/SpaceInsideParens") &&
+                %w[space compact].include?(config.for_cop("Layout/SpaceInsideParens")["EnforcedStyle"])
+          [max, tab, sip ? 1 : 0]
         end
 
         def on_new_investigation

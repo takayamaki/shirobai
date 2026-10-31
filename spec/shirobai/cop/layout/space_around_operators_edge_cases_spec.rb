@@ -101,12 +101,73 @@ RSpec.describe Shirobai::Cop::Layout::SpaceAroundOperators do
     expect(lint_offenses(klasses.first, src, config)).to be_empty
   end
 
-  it "inserts a space without consuming the line-continuation backslash" do
-    # `range_with_surrounding_space` runs with continuations: false, so the
-    # `\\\n` after `+` is NOT swallowed: the missing-space correction inserts a
-    # space between `+` and the backslash and leaves the continuation intact.
+  it "accepts a leading-spaced operator followed by a line continuation" do
+    # 1.92.2 (rubocop#16148) `missing_surrounding_space?`: a gap that starts
+    # with a space and is followed right away by `\` + newline is not missing
+    # space. `range_with_surrounding_space` runs with continuations: false, so
+    # the gap stops before the backslash.
     src = "a = 1 +\\\n  2\n"
+    expect_lint_parity(*klasses, src, config, expect_offenses: false)
+    expect(lint_offenses(klasses.first, src, config)).to be_empty
+  end
+
+  it "still flags a continuation operator with no leading space" do
+    # The acceptance needs leading space: `1+\` is still missing space, and
+    # the correction inserts a space between `+` and the backslash.
+    src = "a = 1+\\\n  2\n"
     expect_lint_parity(*klasses, src, config)
+    expect_correction_edits_parity(*klasses, src, config)
     expect(expect_autocorrect_parity(*klasses, src, config)).to eq("a = 1 + \\\n  2\n")
+  end
+
+  it "flags a leading-spaced operator on a CRLF continuation like stock" do
+    src = "a = 1 +\\\r\n  2\r\nb = 3+\\\r\n  4\r\n"
+    expect_lint_parity(*klasses, src, config)
+    expect_correction_edits_parity(*klasses, src, config)
+    expect_autocorrect_parity(*klasses, src, config)
+  end
+
+  it "accepts hash rockets aligned on non-adjacent lines of the same hash" do
+    # 1.92.2 (rubocop#16123): a `=>` whose column matches another `=>` of the
+    # same hash is aligned, even when the lines in between break the
+    # adjacent-line check.
+    src = "{\n" \
+          "  :a      => 1,\n" \
+          "  :longer_key_here => 2,\n" \
+          "  :b      => 3\n" \
+          "}\n"
+    expect_lint_parity(*klasses, src, config, expect_offenses: false)
+    expect(lint_offenses(klasses.first, src, config)).to be_empty
+  end
+
+  it "counts char columns, not bytes, for the hash rocket tally" do
+    # `"あい"` is 4 chars but 8 bytes: the two rockets share a char column
+    # only. A byte-column tally would flag the first pair.
+    src = "foo(\n" \
+          "  \"あい\"   => 1,\n" \
+          "  :something_long_x => 2,\n" \
+          "  :abcd  => 3\n" \
+          ")\n"
+    expect_lint_parity(*klasses, src, config, expect_offenses: false)
+    expect(lint_offenses(klasses.first, src, config)).to be_empty
+  end
+
+  it "does not tally rockets across nested hashes" do
+    src = "{\n" \
+          "  :a  => 1,\n" \
+          "  :bbbbbbbbbbbbbbbbbbbb => { :c => 2 },\n" \
+          "  :x => 1,\n" \
+          "  :d  => { :e => 3,\n" \
+          "           :f  => 4 }\n" \
+          "}\n"
+    expect_lint_parity(*klasses, src, config)
+    expect_correction_edits_parity(*klasses, src, config)
+    expect_autocorrect_parity(*klasses, src, config)
+  end
+
+  it "still flags a lone excess hash rocket" do
+    src = "{\n  :a  => 1,\n  :bbbb => 2\n}\n"
+    expect_lint_parity(*klasses, src, config)
+    expect_autocorrect_parity(*klasses, src, config)
   end
 end

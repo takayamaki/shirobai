@@ -198,8 +198,9 @@ pub fn check_multiline_bundle(
 /// | 131 | space_inside_string_interpolation style (`Layout/SpaceInsideStringInterpolation` `EnforcedStyle`: 0 = no_space, 1 = space) — toucher-batch-2's first core index |
 /// | 132 | ascii_identifiers (`Naming/AsciiIdentifiers`): 0 = disabled, 1 = enabled with `AsciiConstants` off, 2 = enabled with `AsciiConstants` on — toucher-batch-3's core index |
 /// | 133 | rescue_ensure_alignment (`Layout/RescueEnsureAlignment`): 0 = disabled, 1 = enabled (gates the modifier-`rescue` keyword collection) — toucher-batch-4's core index |
-/// | 134 | enabled_slots low 64 bits: the per-slot enable mask over core slots 0..63 ([`core_slot`]). Bit `n` set means slot `n` is computed; a clear bit leaves that slot at its `Default` value. Carried as `i64` (bit 63 makes it negative) and read back with `as u64` |
-/// | 135 | enabled_slots high 64 bits: the same mask for core slots 64..127 (only 64..105 exist) |
+/// | 134 | if_unless_modifier_space_inside_parens (`StatementModifier#space_inside_parens?`: `Layout/SpaceInsideParens` enabled with `EnforcedStyle` `space` or `compact`) |
+/// | 135 | enabled_slots low 64 bits: the per-slot enable mask over core slots 0..63 ([`core_slot`]). Bit `n` set means slot `n` is computed; a clear bit leaves that slot at its `Default` value. Carried as `i64` (bit 63 makes it negative) and read back with `as u64` |
+/// | 136 | enabled_slots high 64 bits: the same mask for core slots 64..127 (only 64..105 exist) |
 ///
 /// Core segment `lists[0]` (`Vec<String>`):
 ///
@@ -421,7 +422,7 @@ pub struct BundleConfig {
     /// `Layout/RescueEnsureAlignment` enabled gate: `false` skips collecting
     /// modifier-`rescue` keyword positions on the shared walk.
     pub rescue_ensure_alignment_enabled: bool,
-    /// The per-slot enable mask over the core slots (nums 134 / 135): bit
+    /// The per-slot enable mask over the core slots (nums 135 / 136): bit
     /// `n` is [`core_slot`] slot `n`. A clear bit skips that slot's rule (and
     /// any walk-outer scan behind it) and leaves the slot at its `Default`
     /// value. The Ruby side sets the bits of the cops the config enables, plus
@@ -672,7 +673,7 @@ pub mod core_slot {
     pub const ALL_ON: u128 = (1u128 << COUNT) - 1;
 }
 
-const CORE_NUMS_LEN: usize = 136;
+const CORE_NUMS_LEN: usize = 137;
 const CORE_LISTS_LEN: usize = 30;
 const PERF_NUMS_LEN: usize = 3;
 const PERF_LISTS_LEN: usize = 1;
@@ -922,7 +923,7 @@ impl BundleConfig {
             ascii_identifiers_enabled: nums[132] != 0,
             ascii_identifiers_constants: nums[132] == 2,
             rescue_ensure_alignment_enabled: nums[133] != 0,
-            enabled_slots: (nums[134] as u64 as u128) | ((nums[135] as u64 as u128) << 64),
+            enabled_slots: (nums[135] as u64 as u128) | ((nums[136] as u64 as u128) << 64),
             ambiguous_block_association: ambiguous_block_association::Config {
                 allowed_methods: next_list(),
             },
@@ -954,6 +955,7 @@ impl BundleConfig {
             if_unless_modifier: if_unless_modifier::Config {
                 max_line_length: if nums[98] < 0 { None } else { Some(nums[98]) },
                 tab_width: nums[99],
+                space_inside_parens: nums[134] != 0,
             },
             space_before_block_braces: space_before_block_braces::Config {
                 style: if nums[100] != 0 {
@@ -2270,8 +2272,9 @@ pub mod test_support {
             0, // space_inside_string_interpolation: style (no_space) — index 131
             2, // ascii_identifiers: enabled + AsciiConstants on (default) — index 132
             1, // rescue_ensure_alignment: enabled (default) — index 133
-            core_slot::ALL_ON as u64 as i64, // enabled_slots low 64 bits (all on) — index 134
-            (core_slot::ALL_ON >> 64) as u64 as i64, // enabled_slots high bits (all on) — index 135
+            0, // if_unless_modifier: space_inside_parens (SpaceInsideParens default no_space) — index 134
+            core_slot::ALL_ON as u64 as i64, // enabled_slots low 64 bits (all on) — index 135
+            (core_slot::ALL_ON >> 64) as u64 as i64, // enabled_slots high bits (all on) — index 136
         ];
         let lists = vec![
             vec!["binding.pry".to_string(), "debugger".to_string()],
