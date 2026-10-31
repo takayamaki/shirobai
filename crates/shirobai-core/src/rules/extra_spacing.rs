@@ -73,9 +73,12 @@ pub struct Edit {
 pub enum Correction {
     /// `corrector.remove(range)`: delete the offense's own `[start, end)`.
     Remove,
-    /// The `ForceEqualSignAlignment` edits: a (possibly empty) list of
-    /// `insert_before` / `remove_preceding` operations on the assignment tokens
-    /// of the offense's block that no earlier offense has already corrected.
+    /// The `ForceEqualSignAlignment` edits: the `insert_before` /
+    /// `remove_preceding` operations on every assignment token of the
+    /// offense's block. The Ruby wrapper applies stock's `@corrected` dedup
+    /// (an edit's `end` is its token's begin) and the 1.92.2
+    /// `exceeds_max_line_length?` skip, both of which depend on runtime state
+    /// (`Layout/LineLength`, directive-disabled lines).
     Align(Vec<Edit>),
 }
 
@@ -296,7 +299,6 @@ pub fn resolve(
 
     // ForceEqualSignAlignment: check_assignment.
     if cfg.force_equal_sign_alignment && !rule.asgns.is_empty() {
-        let mut corrected: BTreeSet<usize> = BTreeSet::new();
         // `interrupting_operator_lines`: `relevant_assignment_lines` stops at
         // a line with an assignment or comparison operator that is not an
         // assignment line, in the corrector's grouping too.
@@ -315,8 +317,7 @@ pub fn resolve(
             {
                 continue;
             }
-            let edits =
-                align_equal_signs(source, &line_index, &rule.assignment_set, &interrupting, a.begin, &mut corrected);
+            let edits = align_equal_signs(source, &line_index, &rule.assignment_set, &interrupting, a.begin);
             out.push(ExtraSpacingOffense {
                 start_offset: a.begin,
                 end_offset: a.end,
@@ -330,19 +331,17 @@ pub fn resolve(
     out
 }
 
-/// `align_equal_signs(range, corrector)`: align every relevant assignment `=` in
-/// the contiguous block around `asgn_begin`'s line to a common column, returning
-/// the `insert_before` / `remove_preceding` edits for the block's tokens not yet
-/// corrected by an earlier offense (`@corrected` dedup; `corrected` is shared
-/// across the file's offenses, so the first offense in a block carries its
-/// edits and later ones carry none).
+/// `equal_sign_alignment(line)` + `align_equal_sign` per token: align every
+/// relevant assignment `=` in the contiguous block around `asgn_begin`'s line
+/// to a common column, returning the `insert_before` / `remove_preceding`
+/// edits for all of the block's tokens. The `@corrected` dedup is the Ruby
+/// wrapper's (see [`Correction::Align`]).
 fn align_equal_signs(
     source: &[u8],
     line_index: &LineIndex,
     assignment_set: &BTreeSet<usize>,
     interrupting: &BTreeSet<usize>,
     asgn_begin: usize,
-    corrected: &mut BTreeSet<usize>,
 ) -> Vec<Edit> {
     let line = line_index.line_of(asgn_begin);
     let lines = all_relevant_assignment_lines(source, line_index, assignment_set, interrupting, line);
@@ -360,10 +359,6 @@ fn align_equal_signs(
 
     let mut edits = Vec::new();
     for &p in &block_tokens {
-        // `return unless @corrected.add?(token)`.
-        if !corrected.insert(p) {
-            continue;
-        }
         // `diff = align_to - token.pos.last_column`. The token's end is its
         // last `=` char; for an op-assign (`+=`) the token spans several chars,
         // so use the token's actual end. We recover the `=` token end from the
