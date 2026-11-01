@@ -90,14 +90,14 @@ shirobaiは日本語話者なら当然わかるでしょう、白バイです。
 > **x86_64 / arm64 Linux (glibc) と Apple Silicon macOS (arm64-darwin)** では
 > `gem install` がビルド済みの platform gem を取得するため、**Rust toolchain は不要です**。
 > それ以外のプラットフォームでは `bundle install` 時に `cargo build --release` が走るため、
-> **Rust toolchain（stable, 1.75 以上）** がインストール先ホストに必要です。
+> **Rust toolchain（stable, 1.88 以上）** がインストール先ホストに必要です。
 > [rustup](https://rustup.rs/) 等で事前にインストールしてください。
 
 | | |
 |---|---|
 | RuboCop | **`= 1.92.2` で hard pin** |
 | Ruby | `>= 3.1` |
-| Rust | `>= 1.75`（stable）——下記ビルド済み対象では不要 |
+| Rust | `>= 1.88`（stable）——下記ビルド済み対象では不要 |
 | ビルド済み提供 | `x86_64-linux` / `aarch64-linux`（glibc）/ `arm64-darwin`（Apple Silicon）、Ruby 3.1〜4.0 |
 | その他プラットフォーム | Linux / macOS（`cargo build --release` が通れば動く。musl や Intel macOS 等） |
 | Ruby パーサ | `ruby-prism`（Latest 文法 ≈ Ruby 4.1） |
