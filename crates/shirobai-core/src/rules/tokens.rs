@@ -616,8 +616,10 @@ fn line_of(source: &[u8], off: usize) -> usize {
 /// body/end tokens contiguously after the opening `<<~ID`, so a token that
 /// *starts* before them (e.g. the `)` closing the call that owns the heredoc)
 /// appears later in lex order. whitequark's `sorted_tokens` re-sorts by
-/// `begin_pos`, and the cops in this cluster consume `sorted_tokens`, so we
-/// reproduce that ordering here.
+/// `begin_pos`, and most cops in this cluster consume `sorted_tokens`, so we
+/// reproduce that ordering here. `Layout/ExtraSpacing` also walks its token
+/// pairs in lex order (`processed_source.tokens.each_cons(2)`); it uses
+/// [`translate_token_streams`], which keeps both orders.
 ///
 /// `source` is the exact bytes `raw` was lexed from; the two must come from the
 /// same parse (as `crate::rules::parse_cache::with_parsed_and_tokens` guarantees).
