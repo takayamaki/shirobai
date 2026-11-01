@@ -12,7 +12,6 @@ module Shirobai
       # (`AllowConsecutiveOneLiners`, default true).
       class EmptyLineAfterHook < RuboCop::Cop::Base
         extend RuboCop::Cop::AutoCorrector
-        include Shirobai::Cop::BundleEligible
         include Shirobai::Cop::RSpec::EmptyLineSeparationSupport
 
         MSG = "Add an empty line after `%<hook>s`."
@@ -34,10 +33,8 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            offenses = Dispatch.offenses_for(processed_source, config, :rspec_empty_line_after_hook)
-            return offenses unless offenses.nil?
-          end
+          offenses = Dispatch.offenses_for(processed_source, config, :rspec_empty_line_after_hook)
+          return offenses unless offenses.nil?
           Shirobai.check_rspec_empty_line_after_hook(
             processed_source.buffer.source, *Shirobai::RSpec.segment(config)
           )

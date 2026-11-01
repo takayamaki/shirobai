@@ -17,22 +17,9 @@ module Shirobai
       # checks of `class Foo\n\nend` hitting the same blank line) is inherited
       # for free by emitting in stock's order. The including cop selects its
       # result slot via `SLOT`; the three configurable cops pack their
-      # `EnforcedStyle` through `bundle_args`, so the family is bundle-eligible
-      # on every config; CRLF/BOM files take the standalone fallback.
+      # `EnforcedStyle` through `bundle_args`, so the family always takes the
+      # shared walk.
       module EmptyLinesAroundBodyShared
-        include Shirobai::Cop::BundleEligible
-
-        # Index of each member in the standalone `check_empty_lines_around_body`
-        # result (slot order: method, class, module, block, begin, keywords).
-        STANDALONE_INDEX = {
-          empty_lines_around_method_body: 0,
-          empty_lines_around_class_body: 1,
-          empty_lines_around_module_body: 2,
-          empty_lines_around_block_body: 3,
-          empty_lines_around_begin_body: 4,
-          empty_lines_around_exception_handling_keywords: 5
-        }.freeze
-
         # `SupportedStyles` order of `Layout/EmptyLinesAroundClassBody`,
         # mirrored by the Rust style constants.
         STYLES = {
@@ -51,18 +38,11 @@ module Shirobai
         def on_new_investigation
           buffer = processed_source.buffer
 
-          # Rust byte offsets are converted against the source they were
-          # computed on (`raw_source` for the bundled run, which must equal
-          # `buffer.source`); on the CRLF/BOM fallback the standalone path
-          # scans `buffer.source` instead so every offset Rust returns lines
-          # up with the parser-gem buffer.
-          if bundle_eligible?
-            source = processed_source.buffer.source
-            offenses = Dispatch.offenses_for(processed_source, config, self.class::SLOT)
-          else
-            source = buffer.source
-            offenses = standalone_offenses(source)
-          end
+          # Rust scanned `buffer.source` (`Dispatch` passes it, also on CRLF /
+          # BOM files), so every offset Rust returns lines up with the
+          # parser-gem buffer.
+          source = processed_source.buffer.source
+          offenses = Dispatch.offenses_for(processed_source, config, self.class::SLOT)
           off = SourceOffsets.for(source)
           offenses.each do |start, fin, insert, message, block_body_deferred|
             next if block_body_deferred && left_to_block_body_cop?
@@ -88,17 +68,6 @@ module Shirobai
         end
 
         private
-
-        # The standalone run for the CRLF/BOM fallback: the whole family at
-        # once (same Rust rule as the shared walk), this cop's slot picked out.
-        def standalone_offenses(source)
-          Shirobai.check_empty_lines_around_body(
-            source,
-            EmptyLinesAroundClassBody.bundle_args(config)[0],
-            EmptyLinesAroundModuleBody.bundle_args(config)[0],
-            EmptyLinesAroundBlockBody.bundle_args(config)[0]
-          )[STANDALONE_INDEX.fetch(self.class::SLOT)]
-        end
 
         # The config half of EHK's `left_to_block_body_cop?` (1.92,
         # rubocop#15814); Rust already checked the block parent and the blank

@@ -14,8 +14,8 @@ require "spec_helper"
 #   kwsplat / forwarded-arg all self-filter in the wrapper.
 # - **non-ASCII**: byte offsets ahead of char offsets must go through
 #   `SourceOffsets` before hitting `Parser::Source::Range`.
-# - **CRLF**: `buffer.source != raw_source`, so the wrapper falls back to its
-#   standalone entry scanning `buffer.source`; offsets must still line up.
+# - **CRLF**: `buffer.source != raw_source`; the shared walk scans
+#   `buffer.source`, and offsets must still line up.
 RSpec.describe "Rails/HttpPositionalArguments edge cases" do
   include EdgeCaseParity
 
@@ -86,9 +86,8 @@ RSpec.describe "Rails/HttpPositionalArguments edge cases" do
     expect(corrected).to eq("# 多バイトのコメント\nget :new, params: { user_id: @user.id }\n")
   end
 
-  it "matches stock on CRLF source (standalone fallback path)" do
-    # `buffer.source != raw_source` -> the wrapper takes its standalone entry;
-    # the differential is the assertion.
+  it "matches stock on CRLF source" do
+    # `buffer.source != raw_source`; the differential is the assertion.
     corrected = expect_autocorrect_parity(*pair, "get :new, id: 1\r\n", config)
     expect(corrected).to include("get :new, params: { id: 1 }")
   end

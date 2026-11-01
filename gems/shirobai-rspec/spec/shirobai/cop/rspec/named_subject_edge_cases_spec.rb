@@ -188,7 +188,7 @@ RSpec.describe Shirobai::Cop::RSpec::NamedSubject do
     end
   end
 
-  describe "CRLF sources (bundle-ineligible fallback)" do
+  describe "CRLF sources" do
     it "matches stock offense positions on a CRLF source" do
       expect_parity(
         "RSpec.describe User do\r\n  subject { x }\r\n" \

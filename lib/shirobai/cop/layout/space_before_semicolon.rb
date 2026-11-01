@@ -14,7 +14,6 @@ module Shirobai
       # Each offense is the `[start, end)` whitespace run before the
       # semicolon; the corrector removes it.
       class SpaceBeforeSemicolon < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         MSG = "Space found before semicolon."
@@ -44,12 +43,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :space_before_semicolon)
-          else
-            nums, = self.class.bundle_args(config)
-            Shirobai.check_space_before_semicolon(processed_source.buffer.source, nums[0] == 1)
-          end
+          Dispatch.offenses_for(processed_source, config, :space_before_semicolon)
         end
       end
     end

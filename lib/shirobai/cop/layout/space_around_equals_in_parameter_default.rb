@@ -17,7 +17,6 @@ module Shirobai
       # `detected` under `no_space`) and its `/=\s*(\S+)/` autocorrect verbatim
       # on the Ruby side, so detection and autocorrect are byte-identical.
       class SpaceAroundEqualsInParameterDefault < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::ConfigurableEnforcedStyle
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
@@ -64,14 +63,7 @@ module Shirobai
         end
 
         def offenses_for_source
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :space_around_equals_in_parameter_default)
-          else
-            Shirobai.check_space_around_equals_in_parameter_default(
-              processed_source.buffer.source,
-              STYLE_TO_U8.fetch(style, 0)
-            )
-          end
+          Dispatch.offenses_for(processed_source, config, :space_around_equals_in_parameter_default)
         end
       end
     end

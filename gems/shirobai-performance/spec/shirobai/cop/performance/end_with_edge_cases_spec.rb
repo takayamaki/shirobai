@@ -123,10 +123,9 @@ RSpec.describe Shirobai::Cop::Performance::EndWith do
     end
   end
 
-  describe "CRLF sources (bundle-ineligible fallback)" do
+  describe "CRLF sources" do
     # See `Detect`'s CRLF case: the parser buffer normalizes `\r\n` to `\n`,
-    # so `bundle_eligible?` must route CRLF files to the standalone entry
-    # point over `buffer.source`.
+    # and the shared walk scans that `buffer.source`.
     it "matches stock offenses and autocorrect on a CRLF source" do
       src = "x = 1\r\ny = str.match?(/abc\\z/)\r\n"
       expect_lint_parity(*klasses, src, config)

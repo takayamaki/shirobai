@@ -212,8 +212,8 @@ detection / autocorrect unchanged, so offenses, messages, and corrected bytes
 match stock by construction. The offense ranges themselves come from
 `node.loc.keyword` on the parser AST (never through Rust), so only the modifier
 keyword positions — used purely for set membership — cross the byte/char
-boundary. CRLF/BOM files (`buffer.source != raw_source`) fall back to the
-standalone `check_rescue_ensure_alignment` against `buffer.source`. Under the
+boundary. CRLF/BOM files (`buffer.source != raw_source`) take the shared walk
+too, since it scans `buffer.source`. Under the
 default config `Layout/BeginEndAlignment.EnforcedStyleAlignWith` is
 `start_of_line`, so the corpus parity always exercises that branch (the
 block-send multiline branch is covered by edge specs under the `keyword` style).
@@ -663,7 +663,7 @@ Verified with the same bar as core cops: vendor specs from the
 shared contexts), differential edge-case specs for every probed quirk
 (cbase base, scope-insensitive name exemption, the Class.new exemption /
 block / cbase-casgn / namespaced-casgn / cross-cop cases, arity gating,
-CRLF fallback), lint-mode correctable parity, non-ASCII offset parity, and
+CRLF), lint-mode correctable parity, non-ASCII offset parity, and
 the plugin parity oracle (`benches/parity_diff_rails.sh`) at zero diff on
 Mastodon / Redmine / Discourse (rails-dense) and fluentd (no-rails
 non-interference).
@@ -708,7 +708,7 @@ examples across both cops), differential edge-case specs for every probed
 quirk (session-arg conversion, parentheses, multiline hash join, routing
 block / rack-test / kwsplat guards, `keys`-node-not-`include?` offense,
 version gate, uncorrectable `details <<` and `[]=`, a heredoc-interpolated
-`errors.to_h`, non-ASCII, CRLF fallback), lint-mode correctable parity,
+`errors.to_h`, non-ASCII, CRLF), lint-mode correctable parity,
 non-ASCII offset parity, and the parity oracle at zero diff on Mastodon /
 Redmine / Discourse (`app` and `spec` targets), plus a direct `--only ... -A`
 byte comparison. The self-test fixture fires both cops on the stock side.
@@ -781,7 +781,7 @@ Verified with the same bar as core cops: vendor specs from the
 contexts and the `DidYouMean`-available branch), differential edge-case specs
 for every probed quirk (csend; the nested-class `each_ancestor(:class).any?`
 case; the block-pass virtual argument; the lone-bang column; multiline keyword
-inserts; CRLF fallback; cbase `::Rails.env`; both comparison operand orders;
+inserts; CRLF; cbase `::Rails.env`; both comparison operand orders;
 multi-condition `case`; non-string `when`), lint-mode correctable parity,
 non-ASCII offset parity (DynamicFindBy through the full autocorrect, UnknownEnv
 on offense offsets), and the rails parity oracle at zero diff on Mastodon /
@@ -816,7 +816,7 @@ assembles the pieces.
   only the `TargetRailsVersion >= 5.0` gate and the offense message.
   Verified with the standard bar: vendor specs, differential edge specs
   (numblock, itblock, ancestor guard, arg shadowing, regexp key, csend,
-  `collect`, string / method-call keys, CRLF fallback), lint-mode
+  `collect`, string / method-call keys, CRLF), lint-mode
   correctable parity, non-ASCII offset parity through the autocorrect,
   and the rails parity oracle.
 
@@ -863,7 +863,7 @@ assembles the pieces.
   Verified with the standard bar: vendor specs for both cops (through the
   `:rails60` / `:ruby26` contexts and the nested-offense case), differential
   edge specs (nested `ignore_node`, `map { }.to_h { }` double candidate,
-  heredoc-interior NodeLocator phase-2, CRLF standalone fallback, `collect`,
+  heredoc-interior NodeLocator phase-2, CRLF, `collect`,
   `::Hash`, csend, do..end block, the Rails-version gate), lint-mode correctable
   parity, non-ASCII offset parity through the autocorrect, and the rails parity
   oracle at zero diff on Mastodon / Redmine (self-test fixture extended so both

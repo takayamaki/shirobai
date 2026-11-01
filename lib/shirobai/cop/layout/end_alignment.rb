@@ -22,14 +22,12 @@ module Shirobai
       # whitespace before `end` with the target indentation, or (when something
       # non-space precedes `end`) insert a newline + indentation after it.
       #
-      # Offenses come from the per-file bundled run (`Shirobai::Dispatch`). On
-      # a CRLF / BOM source (`raw_source != buffer.source`) the standalone
-      # entry point scans `buffer.source`, so the offsets line up with the
-      # parser-normalized buffer.
+      # Offenses come from the per-file bundled run (`Shirobai::Dispatch`),
+      # which scans `buffer.source`, so on a CRLF / BOM source the offsets
+      # still line up with the parser-normalized buffer.
       class EndAlignment < RuboCop::Cop::Base
         include RuboCop::Cop::ConfigurableEnforcedStyle
         include RuboCop::Cop::RangeHelp
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         STYLE_TO_U8 = { keyword: 0, variable: 1, start_of_line: 2 }.freeze
@@ -73,11 +71,7 @@ module Shirobai
         private
 
         def records_for_source
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :end_alignment)
-          else
-            Shirobai.check_end_alignment(processed_source.buffer.source, self.class.bundle_args(config)[0])
-          end
+          Dispatch.offenses_for(processed_source, config, :end_alignment)
         end
 
         # `AlignmentCorrector#align_end`: the whitespace run immediately before

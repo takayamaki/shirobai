@@ -19,7 +19,7 @@ require "spec_helper"
 # - **E5** `inside_example?` guard prevents flagging.
 # - **E6** autocorrect: removed range matches stock byte for byte
 #   (whole lines, including final newline).
-# - **E7** CRLF fallback produces the same offense positions.
+# - **E7** A CRLF source produces the same offense positions.
 RSpec.describe Shirobai::Cop::RSpec::EmptyExampleGroup do
   include EdgeCaseParity
 
@@ -215,7 +215,7 @@ RSpec.describe Shirobai::Cop::RSpec::EmptyExampleGroup do
     end
   end
 
-  describe "CRLF fallback (E7)" do
+  describe "CRLF source (E7)" do
     it "matches stock offense positions on a CRLF source" do
       expect_parity(
         "describe Foo do\r\n  context 'empty' do\r\n    let(:foo) { bar }\r\n  end\r\n\r\n" \

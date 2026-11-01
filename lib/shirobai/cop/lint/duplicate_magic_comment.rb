@@ -26,7 +26,6 @@ module Shirobai
       # `SourceOffsets` conversion is needed; `line_range` is only built on
       # offense files (stock pays `line_begins` on every file).
       class DuplicateMagicComment < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
 
@@ -55,11 +54,7 @@ module Shirobai
         private
 
         def resolved_lines
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :duplicate_magic_comment)
-          else
-            Shirobai.check_duplicate_magic_comment(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :duplicate_magic_comment)
         end
       end
     end

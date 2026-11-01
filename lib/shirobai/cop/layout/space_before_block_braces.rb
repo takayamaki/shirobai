@@ -31,7 +31,6 @@ module Shirobai
       class SpaceBeforeBlockBraces < RuboCop::Cop::Base
         include RuboCop::Cop::ConfigurableEnforcedStyle
         include RuboCop::Cop::RangeHelp
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         MISSING_MSG = "Space missing to the left of {."
@@ -145,14 +144,7 @@ module Shirobai
         end
 
         def result_for_source
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :space_before_block_braces)
-          else
-            nums, = self.class.bundle_args(config)
-            Shirobai.check_space_before_block_braces(
-              processed_source.buffer.source, nums[0], nums[1], nums[2] == 1
-            )
-          end
+          Dispatch.offenses_for(processed_source, config, :space_before_block_braces)
         end
       end
     end

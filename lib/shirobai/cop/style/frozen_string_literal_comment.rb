@@ -22,7 +22,6 @@ module Shirobai
       # whole token-list cost. The cop only supports Ruby >= 2.3, gated here
       # exactly like the stock cop (`minimum_target_ruby_version 2.3`).
       class FrozenStringLiteralComment < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::ConfigurableEnforcedStyle
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
@@ -95,12 +94,7 @@ module Shirobai
           # `RuntimeError` for an unrecognized style before deriving config.
           style
 
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :frozen_string_literal_comment)
-          else
-            nums = self.class.bundle_args(config).first
-            Shirobai.check_frozen_string_literal_comment(processed_source.buffer.source, nums.first)
-          end
+          Dispatch.offenses_for(processed_source, config, :frozen_string_literal_comment)
         end
 
         # Mirrors stock's `insert_comment`: after the last special comment's

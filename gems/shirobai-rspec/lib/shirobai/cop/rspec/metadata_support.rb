@@ -24,7 +24,6 @@ module Shirobai
         # / `Hooks` / `#rspec?`; they resolve through this module's ancestry
         # (stock's `Metadata` mixin includes Language for the same reason).
         include RuboCop::RSpec::Language
-        include Shirobai::Cop::BundleEligible
 
         # --- stock RuboCop::Cop::RSpec::Metadata matchers, copied verbatim ---
 
@@ -68,14 +67,12 @@ module Shirobai
 
         private
 
-        # Bundle path only when raw_source and the parser buffer agree byte for
-        # byte; a gated-off file (nil from Dispatch) falls back to the standalone
-        # entry scanning `buffer.source`.
+        # The shared walk scans `buffer.source`. A gated-off file (nil from
+        # Dispatch) falls back to the standalone entry, which scans
+        # `buffer.source` too, so every offset lines up with parser-gem's index.
         def resolved_anchors
-          if bundle_eligible?
-            anchors = Dispatch.offenses_for(processed_source, config, metadata_slot)
-            return anchors unless anchors.nil?
-          end
+          anchors = Dispatch.offenses_for(processed_source, config, metadata_slot)
+          return anchors unless anchors.nil?
           Shirobai.check_rspec_metadata_anchors(
             processed_source.buffer.source, *Shirobai::RSpec.segment(config)
           )

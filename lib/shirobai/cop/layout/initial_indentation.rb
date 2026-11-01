@@ -21,7 +21,6 @@ module Shirobai
       # stock keeps), and `space_before`'s `column.zero?` / no-space-to-the-left
       # guards filter any over-report back to stock's answer.
       class InitialIndentation < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
 
@@ -68,11 +67,7 @@ module Shirobai
         end
 
         def offense?
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :initial_indentation)
-          else
-            Shirobai.check_initial_indentation(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :initial_indentation)
         end
       end
     end

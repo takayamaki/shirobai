@@ -25,11 +25,8 @@ module Shirobai
       #
       # Config inputs: `AllowForAlignment` (default true) /
       # `AllowBeforeTrailingComments` (default false) / `ForceEqualSignAlignment`
-      # (default false). All are purely config-driven, so the cop is always bundle
-      # eligible — except when `raw_source != buffer.source` (CRLF/BOM
-      # normalization), where the token byte positions would not line up and it
-      # falls back to a standalone lex of `buffer.source`. (CRLF/buffer.source
-      # trap, `aee0e8e`.)
+      # (default false). All are purely config-driven, so the cop always takes the
+      # shared walk, which lexes `buffer.source` (also on CRLF/BOM files).
       class ExtraSpacing < RuboCop::Cop::Base
         include RuboCop::Cop::LineLengthHelp
         include RuboCop::Cop::RangeHelp
@@ -131,24 +128,7 @@ module Shirobai
         end
 
         def resolved_result
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :extra_spacing)
-          else
-            # nums[0] is the token-cop gate (only the bundle reads it); the
-            # standalone fallback runs unconditionally, so skip it and pass the
-            # three config nums (allow / trailing / force).
-            nums = self.class.bundle_args(config).first
-            Shirobai.check_extra_spacing(
-              processed_source.buffer.source,
-              nums[1] != 0, nums[2] != 0, nums[3] != 0
-            )
-          end
-        end
-
-        def bundle_eligible?
-          return @bundle_eligible unless @bundle_eligible.nil?
-
-          @bundle_eligible = processed_source.buffer.source == processed_source.raw_source
+          Dispatch.offenses_for(processed_source, config, :extra_spacing)
         end
       end
     end

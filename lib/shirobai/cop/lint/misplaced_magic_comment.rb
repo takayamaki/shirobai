@@ -28,7 +28,6 @@ module Shirobai
       # objects themselves, so no offset crosses the Rust boundary and no
       # `SourceOffsets` conversion is needed.
       class MisplacedMagicComment < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
 
@@ -63,11 +62,7 @@ module Shirobai
         private
 
         def resolved_scan
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :misplaced_magic_comment)
-          else
-            Shirobai.check_misplaced_magic_comment(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :misplaced_magic_comment)
         end
 
         # The Rust side reports `index` into the parse's comment list, which is

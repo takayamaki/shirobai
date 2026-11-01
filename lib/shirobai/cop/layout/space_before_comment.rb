@@ -16,7 +16,6 @@ module Shirobai
       # Each offense is the `[start, end)` range of the comment; the
       # corrector inserts a space before it.
       class SpaceBeforeComment < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         MSG = "Put a space before an end-of-line comment."
@@ -44,11 +43,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :space_before_comment)
-          else
-            Shirobai.check_space_before_comment(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :space_before_comment)
         end
       end
     end

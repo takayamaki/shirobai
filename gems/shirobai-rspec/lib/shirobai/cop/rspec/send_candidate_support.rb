@@ -12,8 +12,6 @@ module Shirobai
       # so the Commissioner never dispatches a per-node `on_send`). Every guard,
       # matcher, and parent-relationship check runs on the real parser AST.
       module SendCandidateSupport
-        include Shirobai::Cop::BundleEligible
-
         def on_new_investigation
           RuboCop::RSpec::Language.config = config["RSpec"]["Language"]
           ranges = resolved_candidates
@@ -32,14 +30,12 @@ module Shirobai
 
         private
 
-        # Bundle path only when raw_source and the parser buffer agree byte for
-        # byte; a gated-off file (nil from Dispatch) falls back to the standalone
-        # entry scanning `buffer.source`.
+        # The shared walk scans `buffer.source`. A gated-off file (nil from
+        # Dispatch) falls back to the standalone entry, which scans
+        # `buffer.source` too, so every offset lines up with parser-gem's index.
         def resolved_candidates
-          if bundle_eligible?
-            ranges = Dispatch.offenses_for(processed_source, config, candidate_slot)
-            return ranges unless ranges.nil?
-          end
+          ranges = Dispatch.offenses_for(processed_source, config, candidate_slot)
+          return ranges unless ranges.nil?
           fallback_candidates
         end
       end

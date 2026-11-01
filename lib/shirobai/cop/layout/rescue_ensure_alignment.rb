@@ -24,7 +24,6 @@ module Shirobai
       # `SourceOffsets` conversion is needed for them; only the modifier keyword
       # positions (used purely for set membership) are byte-to-char converted.
       class RescueEnsureAlignment < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::Alignment
         include RuboCop::Cop::RangeHelp
         include RuboCop::Cop::EndKeywordAlignment
@@ -66,15 +65,11 @@ module Shirobai
           buffer = processed_source.buffer
           source = processed_source.buffer.source
           off = SourceOffsets.for(source)
-          raw_positions(source).map { |begin_byte, end_byte| [off[begin_byte], off[end_byte]] }
+          raw_positions.map { |begin_byte, end_byte| [off[begin_byte], off[end_byte]] }
         end
 
-        def raw_positions(source)
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :rescue_ensure_alignment) || []
-          else
-            Shirobai.check_rescue_ensure_alignment(source)
-          end
+        def raw_positions
+          Dispatch.offenses_for(processed_source, config, :rescue_ensure_alignment) || []
         end
 
         # Check alignment of node with rescue or ensure modifiers.

@@ -19,7 +19,6 @@ module Shirobai
       # corrector replaces it with `", "`
       # (`PunctuationCorrector.add_space`).
       class SpaceAfterComma < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         MSG = "Space missing after comma."
@@ -51,12 +50,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :space_after_comma)
-          else
-            nums, = self.class.bundle_args(config)
-            Shirobai.check_space_after_comma(processed_source.buffer.source, nums[0] == 1)
-          end
+          Dispatch.offenses_for(processed_source, config, :space_after_comma)
         end
       end
     end

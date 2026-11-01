@@ -24,7 +24,6 @@ module Shirobai
       # conversion runs through `SourceOffsets` so BOM / multibyte files line
       # up with parser-gem's character buffer indexing.
       class LeadingEmptyLines < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
 
@@ -42,10 +41,9 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          # On the bundle path Rust scanned `raw_source` (byte-identical to
-          # `buffer.source`); on the CRLF/BOM fallback the standalone path
-          # scans `buffer.source` instead so every offset Rust returns lines
-          # up with the parser-gem buffer.
+          # Rust scanned `buffer.source` (`Dispatch` passes it, also on CRLF /
+          # BOM files), so every offset Rust returns lines up with the
+          # parser-gem buffer.
           source = processed_source.buffer.source
           off = SourceOffsets.for(source)
           resolved_offenses.each do |start, fin, ac_start, ac_end|
@@ -60,11 +58,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :leading_empty_lines)
-          else
-            Shirobai.check_leading_empty_lines(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :leading_empty_lines)
         end
       end
     end

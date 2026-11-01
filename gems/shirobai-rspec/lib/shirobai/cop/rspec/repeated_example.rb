@@ -17,7 +17,6 @@ module Shirobai
       # and paren differences are repeats while a `dstr` and a heredoc body are
       # not, all decided on real nodes rather than bytewise.
       class RepeatedExample < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::RSpec::RepeatedItems
 
         MSG = "Don't repeat examples within an example group. " \
@@ -51,15 +50,12 @@ module Shirobai
 
         private
 
-        # Bundle path only when raw_source and the parser buffer agree byte for
-        # byte (CRLF/BOM break that — see Shirobai::Cop::BundleEligible); a
-        # gated-off file (nil from Dispatch) also falls back. The fallback scans
-        # `buffer.source` so every offset lines up with parser-gem's index.
+        # The shared walk scans `buffer.source`. A gated-off file (nil from
+        # Dispatch) falls back to the standalone entry, which scans
+        # `buffer.source` too, so every offset lines up with parser-gem's index.
         def resolved_groups
-          if bundle_eligible?
-            groups = Dispatch.offenses_for(processed_source, config, :rspec_repeated_example)
-            return groups unless groups.nil?
-          end
+          groups = Dispatch.offenses_for(processed_source, config, :rspec_repeated_example)
+          return groups unless groups.nil?
           Shirobai.check_rspec_repeated_example(
             processed_source.buffer.source, *Shirobai::RSpec.segment(config)
           )

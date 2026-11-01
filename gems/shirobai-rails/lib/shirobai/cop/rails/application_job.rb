@@ -14,7 +14,6 @@ module Shirobai
       # "replace the offense range with the superclass name", which is what
       # the shared wrapper corrector does here.)
       class ApplicationJob < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
         extend RuboCop::Cop::TargetRailsVersion
 
@@ -45,11 +44,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :rails_application_job)
-          else
-            Shirobai.check_rails_application_job(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :rails_application_job)
         end
       end
     end

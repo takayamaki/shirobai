@@ -19,8 +19,6 @@ module Shirobai
       # `get`, a non-model bare `errors`) are dropped by the stock matchers the
       # wrapper re-runs.
       module CandidateSupport
-        include Shirobai::Cop::BundleEligible
-
         def on_new_investigation
           ranges = resolved_candidates
           return if ranges.nil? || ranges.empty?
@@ -38,16 +36,13 @@ module Shirobai
 
         private
 
-        # Bundle path only when raw_source and the parser buffer agree byte for
-        # byte; a gated-off file (nil from Dispatch) falls back to the
-        # standalone entry scanning `buffer.source`. The rails origin has no
-        # per-file gate, so on a bundle-eligible file the bundle path always
-        # wins.
+        # The shared walk scans `buffer.source`. A gated-off origin (nil from
+        # Dispatch) would fall back to the standalone entry over
+        # `buffer.source`; the rails origin has no per-file gate, so the shared
+        # walk always wins.
         def resolved_candidates
-          if bundle_eligible?
-            ranges = Dispatch.offenses_for(processed_source, config, candidate_slot)
-            return ranges unless ranges.nil?
-          end
+          ranges = Dispatch.offenses_for(processed_source, config, candidate_slot)
+          return ranges unless ranges.nil?
           fallback_candidates
         end
       end

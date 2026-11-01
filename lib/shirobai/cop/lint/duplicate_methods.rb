@@ -31,7 +31,6 @@ module Shirobai
       #
       # No autocorrect (stock has none).
       class DuplicateMethods < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         # Project-index helpers for the 1.89 cross-file detection
         # (`definitions_in_other_files` etc.) and the
         # `external_dependency_checksum` ResultCache invalidation.
@@ -127,14 +126,7 @@ module Shirobai
         private
 
         def resolved_events
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :duplicate_methods)
-          else
-            Shirobai.check_duplicate_methods(
-              processed_source.buffer.source,
-              *self.class.bundle_args(config)
-            )
-          end
+          Dispatch.offenses_for(processed_source, config, :duplicate_methods)
         end
 
         # --- 1.89 cross-file detection, verbatim from stock (the index

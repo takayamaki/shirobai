@@ -8,9 +8,8 @@ require "spec_helper"
 #
 #   1. CRLF line endings. Prism's comment `location` includes the trailing
 #      `\r` while parser-gem's `comment.source_range` excludes it. The Rust
-#      side snaps the end back so candidate offsets line up.  And the bundle
-#      path requires `buffer.source == raw_source`; CRLF / BOM hits the
-#      standalone fallback that scans `buffer.source` (LF-normalized).
+#      side snaps the end back so candidate offsets line up. The shared
+#      walk scans `buffer.source` (LF-normalized).
 #   2. Emacs-style magic: `# -*- coding: utf-8 -*-`. Stock's
 #      `MagicComment.parse` routes this through `EmacsComment` and reports
 #      `encoding_specified? == true`, so it counts as a magic comment.
@@ -47,8 +46,8 @@ RSpec.describe Shirobai::Cop::Layout::EmptyLineAfterMagicComment do
   let(:cfg) { RuboCop::ConfigLoader.default_configuration }
 
   it "snaps prism's CRLF-included comment range back to parser-gem's range" do
-    # CRLF source: parser-gem normalizes to LF in buffer.source; the
-    # standalone fallback scans buffer.source (LF) directly.
+    # CRLF source: parser-gem normalizes to LF in buffer.source, and the
+    # shared walk scans buffer.source (LF) directly.
     expect_autocorrect_parity(stock_klass, shirobai_klass, "# frozen_string_literal: true\r\nclass Foo; end\n", cfg)
   end
 

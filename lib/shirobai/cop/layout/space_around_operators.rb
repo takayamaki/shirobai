@@ -26,11 +26,9 @@ module Shirobai
       # `EnforcedStyleForRationalLiterals` / `AllowForAlignment` (this cop) plus
       # `Layout/HashAlignment`'s `EnforcedHashRocketStyle` (the `table` guard) and
       # `Layout/ExtraSpacing`'s `ForceEqualSignAlignment` (the autocorrect
-      # collision avoidance). All are purely config-driven, so the cop is always
-      # bundle eligible — except when `raw_source != buffer.source` (CRLF/BOM
-      # normalization), where the token byte positions would not line up and it
-      # falls back to a standalone lex of `buffer.source`. (CRLF/buffer.source
-      # trap, `aee0e8e`.)
+      # collision avoidance). All are purely config-driven, so the cop always
+      # takes the shared walk, which lexes `buffer.source` (also on CRLF/BOM
+      # files).
       class SpaceAroundOperators < RuboCop::Cop::Base
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
@@ -96,24 +94,7 @@ module Shirobai
         end
 
         def resolved_result
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :space_around_operators)
-          else
-            # nums[0] is the token-cop gate (only the bundle reads it); the
-            # standalone fallback runs unconditionally, so skip it and pass the
-            # five config nums.
-            nums = self.class.bundle_args(config).first
-            Shirobai.check_space_around_operators(
-              processed_source.buffer.source,
-              nums[1], nums[2], nums[3] != 0, nums[4] != 0, nums[5] != 0
-            )
-          end
-        end
-
-        def bundle_eligible?
-          return @bundle_eligible unless @bundle_eligible.nil?
-
-          @bundle_eligible = processed_source.buffer.source == processed_source.raw_source
+          Dispatch.offenses_for(processed_source, config, :space_around_operators)
         end
       end
     end

@@ -3,9 +3,8 @@
 require "spec_helper"
 
 # CRLF files: `buffer.source` is LF-normalized while `raw_source` keeps the
-# `\r`, so the shared walk's byte offsets do not line up with the parser-gem
-# buffer. The family falls back to the standalone Rust entry on
-# `buffer.source` (the same rule), like every other bundle-eligible cop.
+# `\r`. The shared walk scans `buffer.source`, so its byte offsets line up
+# with the parser-gem buffer.
 RSpec.describe Shirobai::Cop::Layout::EmptyLinesAroundMethodBody do
   include EdgeCaseParity
 

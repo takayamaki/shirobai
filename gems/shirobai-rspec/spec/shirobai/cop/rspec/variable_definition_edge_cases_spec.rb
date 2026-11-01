@@ -137,11 +137,10 @@ RSpec.describe Shirobai::Cop::RSpec::VariableDefinition do
     end
   end
 
-  describe "CRLF sources (bundle-ineligible fallback)" do
+  describe "CRLF sources" do
     # A CRLF source normalizes to LF in the parser buffer while `raw_source`
-    # keeps the `\r`s, so shared-walk offsets no longer line up with parser
-    # positions. `bundle_eligible?` must route these files to the standalone
-    # entry point over `buffer.source` — both the offense positions and the
+    # keeps the `\r`s. The shared walk scans `buffer.source`, so its offsets
+    # line up with parser positions. Both the offense positions and the
     # autocorrected bytes must stay byte-identical to stock.
     it "matches stock offenses and autocorrect on a CRLF source" do
       src = "describe 'x' do\r\n  let('user') { 1 }\r\nend\r\n"

@@ -12,8 +12,7 @@ require "spec_helper"
 #   does NOT fire (N+1 query guard).
 # - **block argument shadowing**: `x.map { |x| x[x] }` does NOT fire.
 # - **regexp key**: `x.map { |e| e[/pattern/] }` does NOT fire.
-# - **CRLF source**: the wrapper falls back to its standalone entry point
-#   so offsets still line up with parser-gem's index.
+# - **CRLF source**: offsets still line up with parser-gem's index.
 RSpec.describe "Rails/Pluck edge cases" do
   include EdgeCaseParity
 
@@ -123,7 +122,7 @@ RSpec.describe "Rails/Pluck edge cases" do
   end
 
   describe "CRLF source" do
-    it "keeps offsets aligned on the standalone fallback" do
+    it "keeps offsets aligned" do
       expect_autocorrect_parity(*cops, "x.map { |a| a[:foo] }\r\n", config)
     end
   end

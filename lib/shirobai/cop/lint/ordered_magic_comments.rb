@@ -19,7 +19,6 @@ module Shirobai
       # asks the first token for its `line` — materializing `Buffer#line_begins`
       # — on every file).
       class OrderedMagicComments < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         MSG = "The encoding magic comment should precede all other magic comments."
@@ -50,11 +49,7 @@ module Shirobai
         private
 
         def resolved_offense
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :ordered_magic_comments)
-          else
-            Shirobai.check_ordered_magic_comments(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :ordered_magic_comments)
         end
       end
     end

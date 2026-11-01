@@ -22,7 +22,6 @@ module Shirobai
         include RuboCop::Cop::RSpec::RepeatedItems
         extend RuboCop::Cop::AutoCorrector
         include RuboCop::RSpec::Language
-        include Shirobai::Cop::BundleEligible
 
         MSG = 'Do not define multiple `%<hook_name>s` hooks in the same ' \
               'example group (also defined on %<lines>s).'
@@ -57,10 +56,8 @@ module Shirobai
         private
 
         def resolved_ranges
-          if bundle_eligible?
-            result = Dispatch.offenses_for(processed_source, config, :rspec_scattered_setup)
-            return result unless result.nil?
-          end
+          result = Dispatch.offenses_for(processed_source, config, :rspec_scattered_setup)
+          return result unless result.nil?
           Shirobai.check_rspec_scattered_setup(
             processed_source.buffer.source, *Shirobai::RSpec.segment(config)
           )

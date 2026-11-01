@@ -21,7 +21,6 @@ module Shirobai
       # (SimpleComment / EmacsComment / VimComment); keeping it on the Ruby
       # side reuses stock's implementation verbatim and avoids drift.
       class EmptyLineAfterMagicComment < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
 
@@ -50,9 +49,7 @@ module Shirobai
 
           # Find the last magic comment in document order (`reverse.find`).
           # The candidate slices come from the same buffer Rust scans
-          # (raw_source on the bundle path, buffer.source on the fallback);
-          # both are byte-identical to the bytes Rust used to compute the
-          # ranges, so plain byte indexing is safe.
+          # (`buffer.source`), so plain byte indexing is safe.
           source = processed_source.buffer.source
           last = nil
           candidates.reverse_each do |start, fin, line|
@@ -98,11 +95,7 @@ module Shirobai
         end
 
         def resolved_candidates
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :empty_line_after_magic_comment)
-          else
-            Shirobai.check_empty_line_after_magic_comment(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :empty_line_after_magic_comment)
         end
       end
     end

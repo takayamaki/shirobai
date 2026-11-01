@@ -14,7 +14,6 @@ module Shirobai
       # Each offense is the `[start, end)` range of the semicolon itself;
       # the corrector replaces it with `"; "`.
       class SpaceAfterSemicolon < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         MSG = "Space missing after semicolon."
@@ -44,12 +43,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :space_after_semicolon)
-          else
-            nums, = self.class.bundle_args(config)
-            Shirobai.check_space_after_semicolon(processed_source.buffer.source, nums[0] == 1)
-          end
+          Dispatch.offenses_for(processed_source, config, :space_after_semicolon)
         end
       end
     end

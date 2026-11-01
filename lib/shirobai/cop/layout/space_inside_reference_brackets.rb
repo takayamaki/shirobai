@@ -23,7 +23,6 @@ module Shirobai
       #   reduced to remove / insert-after / insert-before calls), applied on
       #   the node's first offense like stock's `ignore_node` grouping.
       class SpaceInsideReferenceBrackets < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
 
@@ -89,14 +88,7 @@ module Shirobai
         end
 
         def result_for_source
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :space_inside_reference_brackets)
-          else
-            nums, = self.class.bundle_args(config)
-            Shirobai.check_space_inside_reference_brackets(
-              processed_source.buffer.source, nums[0], nums[1] == 1
-            )
-          end
+          Dispatch.offenses_for(processed_source, config, :space_inside_reference_brackets)
         end
       end
     end

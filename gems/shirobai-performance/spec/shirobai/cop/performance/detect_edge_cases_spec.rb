@@ -157,12 +157,11 @@ RSpec.describe Shirobai::Cop::Performance::Detect do
     end
   end
 
-  describe "CRLF sources (bundle-ineligible fallback)" do
+  describe "CRLF sources" do
     # A CRLF source normalizes to LF in the parser buffer while `raw_source`
-    # keeps the `\r`s, so shared-walk offsets no longer line up with parser
-    # positions. `bundle_eligible?` must route these files to the standalone
-    # entry point over `buffer.source` — before the guard, both the offense
-    # positions and the autocorrected bytes were shifted.
+    # keeps the `\r`s. The shared walk scans `buffer.source`, so its offsets
+    # must still line up with parser positions (before #103, both the offense
+    # positions and the autocorrected bytes were shifted).
     it "matches stock offenses and autocorrect on a CRLF source" do
       src = "x = 1\r\narr.select { |i| i > 1 }.first\r\n"
       expect_lint_parity(*klasses, src, config)

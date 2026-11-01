@@ -18,8 +18,8 @@ require "spec_helper"
 # - **heredoc interior**: a candidate inside string interpolation in a heredoc
 #   sits outside every ancestor's expression range, exercising NodeLocator's
 #   phase-2 full-descent fallback.
-# - **CRLF source**: `buffer.source != raw_source`, so the wrapper takes the
-#   standalone fallback; offsets must still line up with parser-gem's index.
+# - **CRLF source**: `buffer.source != raw_source`; offsets from the shared
+#   walk (over `buffer.source`) must still line up with parser-gem's index.
 # - **collect alias / ::Hash / do..end block**: shape coverage through the
 #   real relocation path.
 RSpec.describe "Rails/IndexBy edge cases" do
@@ -67,7 +67,7 @@ RSpec.describe "Rails/IndexBy edge cases" do
     end
   end
 
-  describe "CRLF source (standalone fallback)" do
+  describe "CRLF source" do
     it "keeps offsets aligned for each_with_object" do
       expect_autocorrect_parity(
         *cops, "x.each_with_object({}) { |el, h| h[foo(el)] = el }\r\n", config
