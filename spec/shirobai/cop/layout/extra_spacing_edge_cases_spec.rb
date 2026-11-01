@@ -116,6 +116,37 @@ RSpec.describe Shirobai::Cop::Layout::ExtraSpacing do
     # Whatever stock does, shirobai must match byte for byte.
     expect(lint_offenses(klasses.first, result, cfg)).to eq(lint_offenses(klasses.last, result, cfg))
   end
+
+  # Stock walks `processed_source.tokens.each_cons(2)`, which is the lex order,
+  # not `sorted_tokens`. The lexer emits a heredoc body right after its opener,
+  # so the token after the opener on the same line is paired with the body end
+  # (another line) and its leading gap is never checked.
+  context "with tokens after a heredoc opener on the same line" do
+    it "does not flag the gap before a trailing comment" do
+      # ruby/optparse.rb: `COMPSYS_HEADER = <<'XXX'      # :nodoc:`.
+      src = "X = <<'XXX'      # :nodoc:\n\nfoo\nXXX\n"
+      expect_lint_parity(*klasses, src, config, expect_offenses: false)
+      expect(lint_offenses(klasses.first, src, config)).to be_empty
+    end
+
+    it "does not flag the gap before a comma" do
+      src = "foo(<<X   , 1)\nbody\nX\n"
+      expect_lint_parity(*klasses, src, config, expect_offenses: false)
+      expect(lint_offenses(klasses.first, src, config)).to be_empty
+    end
+
+    it "does not flag the gap between two heredoc openers" do
+      src = "x = <<A   + <<B\na\nA\nb\nB\n"
+      expect_lint_parity(*klasses, src, config, expect_offenses: false)
+      expect(lint_offenses(klasses.first, src, config)).to be_empty
+    end
+
+    it "still flags a gap between two later tokens on the opener line" do
+      src = "foo(<<X,   1)\nbody\nX\n"
+      expect_lint_parity(*klasses, src, config)
+      expect(expect_autocorrect_parity(*klasses, src, config)).to eq("foo(<<X, 1)\nbody\nX\n")
+    end
+  end
 end
 
 # 1.92 (rubocop#15759): with ForceEqualSignAlignment an `=` that follows a

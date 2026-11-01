@@ -623,21 +623,62 @@ fn line_of(source: &[u8], off: usize) -> usize {
 /// same parse (as `crate::rules::parse_cache::with_parsed_and_tokens` guarantees).
 #[must_use]
 pub fn translate_tokens(source: &[u8], raw: &[RawToken]) -> Vec<Token> {
-    // Adapt the borrowed RawToken stream into the `Copy` shape the translation
-    // was written against. The two carry the same 4-tuple; this only renames.
-    let raws: Vec<RawTok> = raw
-        .iter()
+    let mut toks = convert(&adapt(raw), source);
+    // Stable sort by begin_pos (matches `tokens.sort_by.with_index { [bp, i] }`).
+    toks.sort_by_key(|t| t.begin_pos);
+    toks
+}
+
+/// Adapt the borrowed RawToken stream into the `Copy` shape the translation
+/// was written against. The two carry the same 4-tuple; this only renames.
+fn adapt(raw: &[RawToken]) -> Vec<RawTok> {
+    raw.iter()
         .map(|t| RawTok {
             type_id: t.token_type,
             start: t.start_offset,
             len: t.length,
             lex_state: t.lex_state,
         })
-        .collect();
-    let mut toks = convert(&raws, source);
-    // Stable sort by begin_pos (matches `tokens.sort_by.with_index { [bp, i] }`).
-    toks.sort_by_key(|t| t.begin_pos);
-    toks
+        .collect()
+}
+
+/// The parser-gem token stream in both orders a cop can read.
+///
+/// `processed_source.tokens` is the lex order (a heredoc body comes right
+/// after its opener), and `processed_source.sorted_tokens` is the `begin_pos`
+/// order. Most files have no heredoc, so the two orders are the same and only
+/// one list is kept.
+pub struct TokenStreams {
+    lex: Vec<Token>,
+    sorted: Option<Vec<Token>>,
+}
+
+impl TokenStreams {
+    /// `processed_source.tokens` (lex order).
+    #[must_use]
+    pub fn lex(&self) -> &[Token] {
+        &self.lex
+    }
+
+    /// `processed_source.sorted_tokens` (stable sort by `begin_pos`).
+    #[must_use]
+    pub fn sorted(&self) -> &[Token] {
+        self.sorted.as_deref().unwrap_or(&self.lex)
+    }
+}
+
+/// Like [`translate_tokens`], but keep the lex order too. See [`TokenStreams`].
+#[must_use]
+pub fn translate_token_streams(source: &[u8], raw: &[RawToken]) -> TokenStreams {
+    let lex = convert(&adapt(raw), source);
+    let sorted = if lex.is_sorted_by_key(|t| t.begin_pos) {
+        None
+    } else {
+        let mut toks = lex.clone();
+        toks.sort_by_key(|t| t.begin_pos);
+        Some(toks)
+    };
+    TokenStreams { lex, sorted }
 }
 
 #[cfg(test)]

@@ -1424,9 +1424,9 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     // active, so a token-free run never pays the collection pass. Each token cop
     // ORs its enable flag into `collect_tokens`.
     let collect_tokens = space_around_operators_on || extra_spacing_on;
-    let bundle_tokens: Option<Vec<super::tokens::Token>> = if collect_tokens {
+    let bundle_tokens: Option<super::tokens::TokenStreams> = if collect_tokens {
         Some(super::parse_cache::with_parsed_and_tokens(source, |owner, _root, raw| {
-            super::tokens::translate_tokens(owner, raw)
+            super::tokens::translate_token_streams(owner, raw)
         }))
     } else {
         None
@@ -1825,7 +1825,7 @@ pub fn check_all_bundle(source: &[u8], cfg: &BundleConfig) -> BundleResult {
     let space_around_operators = match &bundle_tokens {
         Some(tokens) if space_around_operators_on => {
             let walk = space_around_operators::run_walk(source, cfg.space_around_operators);
-            space_around_operators::resolve(source, cfg.space_around_operators, walk, tokens)
+            space_around_operators::resolve(source, cfg.space_around_operators, walk, tokens.sorted())
         }
         _ => Vec::new(),
     };
@@ -5118,7 +5118,7 @@ mod tests {
     /// `check_with_tokens`) to the fallback.
     #[test]
     fn check_all_bundle_matches_standalone_extra_spacing() {
-        let src = "x =  1\na   = 1\nbbb = 2\ny = 3  # c\n";
+        let src = "x =  1\na   = 1\nbbb = 2\ny = 3  # c\nfoo(<<X   ,   1)\nbody\nX\n";
         let (nums, lists) = default_packed();
         let cfg = BundleConfig::from_packed(&nums, lists).unwrap();
         let bundle = check_all_bundle(src.as_bytes(), &cfg);

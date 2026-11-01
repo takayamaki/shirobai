@@ -1001,6 +1001,13 @@ path), `Layout/SpaceBeforeFirstArg`.
   `"` one line away and hid an offense (redmine `reposman.rb`). `rules::tokens`
   now merges plain strings back into one token, matching whitequark — the same
   class of fix the SAO AssocNode divergence needed in PR3.
+  Later (2026-11), stdlib `optparse.rb` showed that the pair walk must use the
+  lex order (`processed_source.tokens`), not `sorted_tokens`: the lexer puts a
+  heredoc body right after its opener, so stock pairs the token after
+  `<<'XXX'` on the same line with the heredoc end and never checks the gap
+  before it (`X = <<'XXX'      # :nodoc:` is silent). `rules::tokens` now
+  keeps both orders (`TokenStreams`); only this cop's pair walk reads the lex
+  order.
 
 ### `Style/RedundantBegin`
 
