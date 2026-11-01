@@ -27,7 +27,6 @@ module Shirobai
       # string. Either way the result is purely config-driven and stateless, so
       # the autocorrect re-passes (fresh `ProcessedSource`) recompute correctly.
       class TrailingEmptyLines < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::ConfigurableEnforcedStyle
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
@@ -91,12 +90,7 @@ module Shirobai
         end
 
         def resolved_result
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :trailing_empty_lines)
-          else
-            nums = self.class.bundle_args(config).first
-            Shirobai.check_trailing_empty_lines(processed_source.buffer.source, nums)
-          end
+          Dispatch.offenses_for(processed_source, config, :trailing_empty_lines)
         end
       end
     end

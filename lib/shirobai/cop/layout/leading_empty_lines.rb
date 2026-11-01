@@ -24,7 +24,6 @@ module Shirobai
       # conversion runs through `SourceOffsets` so BOM / multibyte files line
       # up with parser-gem's character buffer indexing.
       class LeadingEmptyLines < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
 
@@ -60,11 +59,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :leading_empty_lines)
-          else
-            Shirobai.check_leading_empty_lines(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :leading_empty_lines)
         end
       end
     end

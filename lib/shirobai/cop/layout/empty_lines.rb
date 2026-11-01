@@ -23,7 +23,6 @@ module Shirobai
       # BOM the standalone entry point scans `buffer.source` directly so every
       # returned offset still indexes into the parser-gem buffer.
       class EmptyLines < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
 
@@ -58,11 +57,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :empty_lines)
-          else
-            Shirobai.check_empty_lines(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :empty_lines)
         end
       end
     end

@@ -18,7 +18,6 @@ module Shirobai
       # byte. Messages come from Rust, formatted with the preferred method
       # resolved from `Style/CollectionMethods` below.
       class Detect < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         def self.cop_name = "Performance/Detect"
@@ -55,13 +54,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :perf_detect)
-          else
-            Shirobai.check_perf_detect(
-              processed_source.buffer.source, self.class.bundle_args(config)[0]
-            )
-          end
+          Dispatch.offenses_for(processed_source, config, :perf_detect)
         end
       end
     end

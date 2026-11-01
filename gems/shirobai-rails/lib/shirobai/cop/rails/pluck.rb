@@ -15,7 +15,6 @@ module Shirobai
       # Autocorrect: replace from the selector (map/collect) through the
       # block end with `pluck(<key source>)`.
       class Pluck < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
         extend RuboCop::Cop::TargetRailsVersion
 
@@ -49,11 +48,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :rails_pluck)
-          else
-            Shirobai.check_rails_pluck(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :rails_pluck)
         end
       end
     end

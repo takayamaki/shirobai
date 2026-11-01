@@ -22,7 +22,6 @@ module Shirobai
         include RuboCop::RSpec::Language
         include RuboCop::Cop::RSpec::InsideExample
         include RuboCop::Cop::RangeHelp
-        include Shirobai::Cop::BundleEligible
 
         MSG = "Empty example group detected."
 
@@ -93,10 +92,8 @@ module Shirobai
         private
 
         def resolved_candidates
-          if bundle_eligible?
-            candidates = Dispatch.offenses_for(processed_source, config, :rspec_empty_example_group)
-            return candidates unless candidates.nil?
-          end
+          candidates = Dispatch.offenses_for(processed_source, config, :rspec_empty_example_group)
+          return candidates unless candidates.nil?
           Shirobai.check_rspec_empty_example_group(
             processed_source.buffer.source, *Shirobai::RSpec.segment(config)
           )

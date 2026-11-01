@@ -25,7 +25,6 @@ module Shirobai
       # `class_emitter_method?` escape hatch is dead code on send nodes,
       # so `valid_name?` reduces to the regexp.
       class VariableName < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::ConfigurableNaming
         include RuboCop::Cop::AllowedPattern
 
@@ -72,10 +71,8 @@ module Shirobai
         # scans `buffer.source` so every offset lines up with parser-gem's
         # index.
         def resolved_data
-          if bundle_eligible?
-            data = Dispatch.offenses_for(processed_source, config, :rspec_variable_name)
-            return data unless data.nil?
-          end
+          data = Dispatch.offenses_for(processed_source, config, :rspec_variable_name)
+          return data unless data.nil?
           Shirobai.check_rspec_variable_name(
             processed_source.buffer.source, *Shirobai::RSpec.segment(config)
           )

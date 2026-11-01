@@ -20,8 +20,6 @@ module Shirobai
       # `EnforcedStyle` through `bundle_args`, so the family is bundle-eligible
       # on every config; CRLF/BOM files take the standalone fallback.
       module EmptyLinesAroundBodyShared
-        include Shirobai::Cop::BundleEligible
-
         # Index of each member in the standalone `check_empty_lines_around_body`
         # result (slot order: method, class, module, block, begin, keywords).
         STANDALONE_INDEX = {
@@ -56,13 +54,8 @@ module Shirobai
           # `buffer.source`); on the CRLF/BOM fallback the standalone path
           # scans `buffer.source` instead so every offset Rust returns lines
           # up with the parser-gem buffer.
-          if bundle_eligible?
-            source = processed_source.buffer.source
-            offenses = Dispatch.offenses_for(processed_source, config, self.class::SLOT)
-          else
-            source = buffer.source
-            offenses = standalone_offenses(source)
-          end
+          source = processed_source.buffer.source
+          offenses = Dispatch.offenses_for(processed_source, config, self.class::SLOT)
           off = SourceOffsets.for(source)
           offenses.each do |start, fin, insert, message, block_body_deferred|
             next if block_body_deferred && left_to_block_body_cop?

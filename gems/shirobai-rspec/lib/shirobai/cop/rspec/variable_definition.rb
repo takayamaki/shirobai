@@ -20,7 +20,6 @@ module Shirobai
       # colon (`variable.source[1..]`).
       class VariableDefinition < RuboCop::Cop::Base
         extend RuboCop::Cop::AutoCorrector
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::ConfigurableEnforcedStyle
 
         MSG = "Use %<style>s for variable names."
@@ -56,10 +55,8 @@ module Shirobai
         # scans `buffer.source` so every offset lines up with parser-gem's
         # index.
         def resolved_offenses
-          if bundle_eligible?
-            offenses = Dispatch.offenses_for(processed_source, config, :rspec_variable_definition)
-            return offenses unless offenses.nil?
-          end
+          offenses = Dispatch.offenses_for(processed_source, config, :rspec_variable_definition)
+          return offenses unless offenses.nil?
           Shirobai.check_rspec_variable_definition(
             processed_source.buffer.source, *Shirobai::RSpec.segment(config)
           )

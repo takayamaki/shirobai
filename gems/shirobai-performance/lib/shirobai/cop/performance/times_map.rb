@@ -16,7 +16,6 @@ module Shirobai
       # literal block), exactly like stock's
       # `corrector.replace(map_or_collect, ...)`.
       class TimesMap < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         def self.cop_name = "Performance/TimesMap"
@@ -46,11 +45,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :perf_times_map)
-          else
-            Shirobai.check_perf_times_map(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :perf_times_map)
         end
       end
     end

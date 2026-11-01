@@ -23,7 +23,6 @@ module Shirobai
       # produced on the Rust side as byte ranges, so the Ruby wrapper is just a
       # thin tuple-to-`Parser::Source::Range` conversion.
       class EmptyComment < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
 
@@ -62,12 +61,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :empty_comment)
-          else
-            args = self.class.bundle_args(config)
-            Shirobai.check_empty_comment(processed_source.buffer.source, args[0] != 0, args[1] != 0)
-          end
+          Dispatch.offenses_for(processed_source, config, :empty_comment)
         end
       end
     end

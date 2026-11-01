@@ -11,7 +11,6 @@ module Shirobai
       # following sibling in a `:begin` sequence. Config-less.
       class EmptyLineAfterExampleGroup < RuboCop::Cop::Base
         extend RuboCop::Cop::AutoCorrector
-        include Shirobai::Cop::BundleEligible
         include Shirobai::Cop::RSpec::EmptyLineSeparationSupport
 
         MSG = "Add an empty line after `%<example_group>s`."
@@ -32,10 +31,8 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            offenses = Dispatch.offenses_for(processed_source, config, :rspec_empty_line_after_example_group)
-            return offenses unless offenses.nil?
-          end
+          offenses = Dispatch.offenses_for(processed_source, config, :rspec_empty_line_after_example_group)
+          return offenses unless offenses.nil?
           Shirobai.check_rspec_empty_line_after_example_group(
             processed_source.buffer.source, *Shirobai::RSpec.segment(config)
           )

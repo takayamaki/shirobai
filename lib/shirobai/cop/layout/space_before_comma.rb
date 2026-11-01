@@ -18,7 +18,6 @@ module Shirobai
       # Each offense is the `[start, end)` whitespace run before the comma;
       # the corrector removes it (`PunctuationCorrector.remove_space`).
       class SpaceBeforeComma < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         MSG = "Space found before comma."
@@ -50,12 +49,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :space_before_comma)
-          else
-            nums, = self.class.bundle_args(config)
-            Shirobai.check_space_before_comma(processed_source.buffer.source, nums[0] == 1)
-          end
+          Dispatch.offenses_for(processed_source, config, :space_before_comma)
         end
       end
     end

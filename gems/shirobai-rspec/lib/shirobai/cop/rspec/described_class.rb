@@ -19,7 +19,6 @@ module Shirobai
         include RuboCop::Cop::ConfigurableEnforcedStyle
         include RuboCop::Cop::RSpec::Namespace
         include RuboCop::RSpec::Language
-        include Shirobai::Cop::BundleEligible
 
         DESCRIBED_CLASS = 'described_class'
         MSG             = 'Use `%<replacement>s` instead of `%<src>s`.'
@@ -199,10 +198,8 @@ module Shirobai
         # --- Resolution ---
 
         def resolved_candidates
-          if bundle_eligible?
-            ranges = Dispatch.offenses_for(processed_source, config, :rspec_described_class)
-            return ranges unless ranges.nil?
-          end
+          ranges = Dispatch.offenses_for(processed_source, config, :rspec_described_class)
+          return ranges unless ranges.nil?
           Shirobai.check_rspec_described_class(
             processed_source.buffer.source, *Shirobai::RSpec.segment(config)
           )

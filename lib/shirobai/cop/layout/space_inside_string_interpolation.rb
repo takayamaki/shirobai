@@ -17,7 +17,6 @@ module Shirobai
       # (stock's `ignore_node`), so Rust attaches all of an interpolation's edits
       # to its FIRST offense; the wrapper applies them only on that offense.
       class SpaceInsideStringInterpolation < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::ConfigurableEnforcedStyle
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
@@ -66,14 +65,7 @@ module Shirobai
         private
 
         def offenses_for_source
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :space_inside_string_interpolation)
-          else
-            Shirobai.check_space_inside_string_interpolation(
-              processed_source.buffer.source,
-              STYLE_TO_U8.fetch(style, 0)
-            )
-          end
+          Dispatch.offenses_for(processed_source, config, :space_inside_string_interpolation)
         end
       end
     end

@@ -20,8 +20,6 @@ module Shirobai
       # Probed quirks live as differential specs in
       # named_subject_edge_cases_spec.rb.
       class NamedSubject < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
-
         MSG = "Name your test subject if you need to reference it explicitly."
 
         def self.cop_name = "RSpec/NamedSubject"
@@ -57,10 +55,8 @@ module Shirobai
         # scans `buffer.source` so every offset lines up with parser-gem's
         # index.
         def resolved_offenses
-          if bundle_eligible?
-            offenses = Dispatch.offenses_for(processed_source, config, :rspec_named_subject)
-            return offenses unless offenses.nil?
-          end
+          offenses = Dispatch.offenses_for(processed_source, config, :rspec_named_subject)
+          return offenses unless offenses.nil?
           Shirobai.check_rspec_named_subject(
             processed_source.buffer.source, *Shirobai::RSpec.segment(config)
           )

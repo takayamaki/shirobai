@@ -14,7 +14,6 @@ module Shirobai
       # and insert each `col: ` keyword before its argument. The wrapper owns
       # only the fixed `MSG` (the method name comes from the selector range).
       class DynamicFindBy < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         MSG = "Use `%<static_name>s` instead of dynamic `%<method>s`."
@@ -50,15 +49,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :rails_dynamic_find_by)
-          else
-            Shirobai.check_rails_dynamic_find_by(
-              processed_source.buffer.source,
-              cop_config["AllowedMethods"] || [], cop_config["AllowedReceivers"] || [],
-              cop_config["Whitelist"] || []
-            )
-          end
+          Dispatch.offenses_for(processed_source, config, :rails_dynamic_find_by)
         end
       end
     end

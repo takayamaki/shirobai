@@ -19,8 +19,6 @@ module Shirobai
       # `get`, a non-model bare `errors`) are dropped by the stock matchers the
       # wrapper re-runs.
       module CandidateSupport
-        include Shirobai::Cop::BundleEligible
-
         def on_new_investigation
           ranges = resolved_candidates
           return if ranges.nil? || ranges.empty?
@@ -44,10 +42,8 @@ module Shirobai
         # per-file gate, so on a bundle-eligible file the bundle path always
         # wins.
         def resolved_candidates
-          if bundle_eligible?
-            ranges = Dispatch.offenses_for(processed_source, config, candidate_slot)
-            return ranges unless ranges.nil?
-          end
+          ranges = Dispatch.offenses_for(processed_source, config, candidate_slot)
+          return ranges unless ranges.nil?
           fallback_candidates
         end
       end

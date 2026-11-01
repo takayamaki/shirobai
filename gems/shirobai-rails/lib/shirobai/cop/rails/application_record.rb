@@ -20,7 +20,6 @@ module Shirobai
       # db/**/*.rb` from the merged default.yml is resolved by RuboCop through
       # this wrapper's badge, exactly as for the stock cop.
       class ApplicationRecord < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
         extend RuboCop::Cop::TargetRailsVersion
 
@@ -53,11 +52,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :rails_application_record)
-          else
-            Shirobai.check_rails_application_record(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :rails_application_record)
         end
       end
     end

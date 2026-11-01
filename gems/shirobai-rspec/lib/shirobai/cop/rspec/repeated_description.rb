@@ -21,8 +21,6 @@ module Shirobai
       # `[doc_string, example]` and reports the whole node. Both arms keep only
       # groups where the signature is truthy (`Array#any?`) and larger than one.
       class RepeatedDescription < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
-
         MSG = "Don't repeat descriptions within an example group."
 
         def self.cop_name = "RSpec/RepeatedDescription"
@@ -57,10 +55,8 @@ module Shirobai
         # gated-off file (nil from Dispatch) also falls back. The fallback scans
         # `buffer.source` so every offset lines up with parser-gem's index.
         def resolved_groups
-          if bundle_eligible?
-            groups = Dispatch.offenses_for(processed_source, config, :rspec_repeated_description)
-            return groups unless groups.nil?
-          end
+          groups = Dispatch.offenses_for(processed_source, config, :rspec_repeated_description)
+          return groups unless groups.nil?
           Shirobai.check_rspec_repeated_description(
             processed_source.buffer.source, *Shirobai::RSpec.segment(config)
           )

@@ -19,7 +19,6 @@ module Shirobai
       # file in the five corpora). The wrapper converts the byte range to char
       # offsets and builds stock's exact offense with `range_between`.
       class AsciiIdentifiers < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::RangeHelp
 
         IDENTIFIER_MSG = "Use only ascii symbols in identifiers."
@@ -51,11 +50,7 @@ module Shirobai
         private
 
         def resolved_result(source)
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :ascii_identifiers) || []
-          else
-            Shirobai.check_ascii_identifiers(source, cop_config["AsciiConstants"] ? true : false)
-          end
+          Dispatch.offenses_for(processed_source, config, :ascii_identifiers) || []
         end
       end
     end

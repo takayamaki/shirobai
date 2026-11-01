@@ -25,6 +25,8 @@ require_relative "../vendor/rubocop/spec/support/multiline_literal_brace_layout_
 # Differential helpers for the per-cop edge-case regression specs
 # (`spec/shirobai/cop/<dept>/<name>_edge_cases_spec.rb`).
 require_relative "support/edge_case_parity"
+# Call-count helpers that pin which path a wrapper takes on CRLF files.
+require_relative "support/standalone_path_parity"
 
 RSpec.configure do |config|
   config.expect_with :rspec do |expectations|

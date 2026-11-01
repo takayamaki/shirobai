@@ -34,7 +34,6 @@ module Shirobai
           # `prepare_correction`, `execute_correction`), then drop the public
           # node callbacks so only `on_new_investigation` drives the cop.
           base.include RuboCop::Cop::IndexMethod
-          base.include Shirobai::Cop::BundleEligible
           %i[on_block on_numblock on_itblock on_send on_csend].each do |m|
             base.send(:undef_method, m) if base.method_defined?(m)
           end
@@ -102,10 +101,8 @@ module Shirobai
         # per-file gate, so on a bundle-eligible file the bundle path always
         # wins.
         def resolved_candidates
-          if bundle_eligible?
-            ranges = Dispatch.offenses_for(processed_source, config, candidate_slot)
-            return ranges unless ranges.nil?
-          end
+          ranges = Dispatch.offenses_for(processed_source, config, candidate_slot)
+          return ranges unless ranges.nil?
           Shirobai.check_rails_index_method(processed_source.buffer.source)
         end
       end

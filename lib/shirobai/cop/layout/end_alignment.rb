@@ -29,7 +29,6 @@ module Shirobai
       class EndAlignment < RuboCop::Cop::Base
         include RuboCop::Cop::ConfigurableEnforcedStyle
         include RuboCop::Cop::RangeHelp
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         STYLE_TO_U8 = { keyword: 0, variable: 1, start_of_line: 2 }.freeze
@@ -73,11 +72,7 @@ module Shirobai
         private
 
         def records_for_source
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :end_alignment)
-          else
-            Shirobai.check_end_alignment(processed_source.buffer.source, self.class.bundle_args(config)[0])
-          end
+          Dispatch.offenses_for(processed_source, config, :end_alignment)
         end
 
         # `AlignmentCorrector#align_end`: the whitespace run immediately before

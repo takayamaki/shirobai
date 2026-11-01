@@ -10,7 +10,6 @@ module Shirobai
       # Unlike Record / Mailer / Job this cop has NO `TargetRailsVersion`
       # gate — stock does not declare one, so it runs on every Rails version.
       class ApplicationController < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         MSG = "Controllers should subclass `ApplicationController`."
@@ -38,11 +37,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :rails_application_controller)
-          else
-            Shirobai.check_rails_application_controller(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :rails_application_controller)
         end
       end
     end

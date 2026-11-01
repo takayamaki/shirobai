@@ -21,7 +21,6 @@ module Shirobai
       # produce the same value. No `SourceOffsets` conversion is needed (the
       # wrapper builds ranges with stock's own `source_range`).
       class EndOfLine < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::ConfigurableEnforcedStyle
         include RuboCop::Cop::RangeHelp
 
@@ -89,11 +88,7 @@ module Shirobai
         private
 
         def resolved_last_line
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :end_of_line)
-          else
-            Shirobai.check_end_of_line(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :end_of_line)
         end
       end
     end

@@ -18,7 +18,6 @@ module Shirobai
       # Each offense is the `[start, end)` range of the colon; the corrector
       # inserts a space after it.
       class SpaceAfterColon < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         MSG = "Space missing after colon."
@@ -46,11 +45,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :space_after_colon)
-          else
-            Shirobai.check_space_after_colon(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :space_after_colon)
         end
       end
     end

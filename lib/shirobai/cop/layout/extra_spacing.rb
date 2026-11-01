@@ -131,24 +131,7 @@ module Shirobai
         end
 
         def resolved_result
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :extra_spacing)
-          else
-            # nums[0] is the token-cop gate (only the bundle reads it); the
-            # standalone fallback runs unconditionally, so skip it and pass the
-            # three config nums (allow / trailing / force).
-            nums = self.class.bundle_args(config).first
-            Shirobai.check_extra_spacing(
-              processed_source.buffer.source,
-              nums[1] != 0, nums[2] != 0, nums[3] != 0
-            )
-          end
-        end
-
-        def bundle_eligible?
-          return @bundle_eligible unless @bundle_eligible.nil?
-
-          @bundle_eligible = processed_source.buffer.source == processed_source.raw_source
+          Dispatch.offenses_for(processed_source, config, :extra_spacing)
         end
       end
     end

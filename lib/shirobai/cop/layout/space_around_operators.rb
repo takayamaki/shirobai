@@ -96,24 +96,7 @@ module Shirobai
         end
 
         def resolved_result
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :space_around_operators)
-          else
-            # nums[0] is the token-cop gate (only the bundle reads it); the
-            # standalone fallback runs unconditionally, so skip it and pass the
-            # five config nums.
-            nums = self.class.bundle_args(config).first
-            Shirobai.check_space_around_operators(
-              processed_source.buffer.source,
-              nums[1], nums[2], nums[3] != 0, nums[4] != 0, nums[5] != 0
-            )
-          end
-        end
-
-        def bundle_eligible?
-          return @bundle_eligible unless @bundle_eligible.nil?
-
-          @bundle_eligible = processed_source.buffer.source == processed_source.raw_source
+          Dispatch.offenses_for(processed_source, config, :space_around_operators)
         end
       end
     end

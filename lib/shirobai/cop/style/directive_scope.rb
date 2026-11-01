@@ -24,7 +24,6 @@ module Shirobai
       # offset ever crosses the Rust boundary, so no `SourceOffsets` conversion
       # is needed). A file with no `rubocop` comment never touches tokens.
       class DirectiveScope < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
 
@@ -78,11 +77,7 @@ module Shirobai
         end
 
         def resolved_candidates
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :directive_scope)
-          else
-            Shirobai.check_directive_scope(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :directive_scope)
         end
 
         # Stock's `comment_config`, verbatim.

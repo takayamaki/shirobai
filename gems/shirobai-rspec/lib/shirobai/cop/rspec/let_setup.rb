@@ -17,8 +17,6 @@ module Shirobai
       # and `w(&b)` are not uses while `w { }` is). Probed quirks live as
       # differential specs in let_setup_edge_cases_spec.rb.
       class LetSetup < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
-
         MSG = "Do not use `let!` to setup objects not referenced in tests."
 
         def self.cop_name = "RSpec/LetSetup"
@@ -49,10 +47,8 @@ module Shirobai
         # scans `buffer.source` so every offset lines up with parser-gem's
         # index.
         def resolved_offenses
-          if bundle_eligible?
-            offenses = Dispatch.offenses_for(processed_source, config, :rspec_let_setup)
-            return offenses unless offenses.nil?
-          end
+          offenses = Dispatch.offenses_for(processed_source, config, :rspec_let_setup)
+          return offenses unless offenses.nil?
           Shirobai.check_rspec_let_setup(
             processed_source.buffer.source, *Shirobai::RSpec.segment(config)
           )

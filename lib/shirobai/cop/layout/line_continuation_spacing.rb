@@ -22,7 +22,6 @@ module Shirobai
       # or the CR-stripped `buffer.source`) and the offense range comes from
       # stock's own `source_range`, so no `SourceOffsets` conversion is needed.
       class LineContinuationSpacing < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
 
@@ -60,12 +59,7 @@ module Shirobai
         private
 
         def resolved_last_line
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :line_continuation_spacing)
-          else
-            # Same quantity as `Layout/EndOfLine`'s `last_line`.
-            Shirobai.check_end_of_line(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :line_continuation_spacing)
         end
 
         # --- everything below is stock, verbatim ---

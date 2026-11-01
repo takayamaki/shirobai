@@ -12,7 +12,6 @@ module Shirobai
       # stock `drop_start_metacharacter` before rebuilding the replacement
       # with RuboCop's own string helpers.
       class StartWith < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::RegexpMetacharacter
         extend RuboCop::Cop::AutoCorrector
 
@@ -47,13 +46,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :perf_start_with)
-          else
-            Shirobai.check_perf_start_with(
-              processed_source.buffer.source, self.class.bundle_args(config)[0] == 1
-            )
-          end
+          Dispatch.offenses_for(processed_source, config, :perf_start_with)
         end
       end
     end

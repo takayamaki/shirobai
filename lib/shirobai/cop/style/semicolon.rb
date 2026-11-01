@@ -30,7 +30,6 @@ module Shirobai
       # both paths touch.
       class Semicolon < RuboCop::Cop::Base
         include RuboCop::Cop::RangeHelp
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         MSG = "Do not use semicolons to terminate expressions."
@@ -87,11 +86,7 @@ module Shirobai
         end
 
         def path_a_offenses(source)
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :semicolon)
-          else
-            Shirobai.check_semicolon(source)
-          end
+          Dispatch.offenses_for(processed_source, config, :semicolon)
         end
 
         # The parser token right before the `;` on its line. Only used for the

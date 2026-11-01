@@ -24,7 +24,6 @@ module Shirobai
       # `bundle_args` and the instance-level fallback both ask it, never
       # RuboCop core's `Config#target_rails_version`.
       class UnknownEnv < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::TargetRailsVersion
 
         MSG = "Unknown environment `%<name>s`."
@@ -81,13 +80,7 @@ module Shirobai
         end
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :rails_unknown_env)
-          else
-            Shirobai.check_rails_unknown_env(
-              processed_source.buffer.source, environments, supports_local?
-            )
-          end
+          Dispatch.offenses_for(processed_source, config, :rails_unknown_env)
         end
       end
     end

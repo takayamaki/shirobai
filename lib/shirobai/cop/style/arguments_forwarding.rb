@@ -24,7 +24,6 @@ module Shirobai
       # the two boolean options plus the three redundant-name lists are packed
       # the same way.
       class ArgumentsForwarding < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
         extend RuboCop::Cop::TargetRubyVersion
 
@@ -85,16 +84,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :arguments_forwarding)
-          else
-            nums, lists = self.class.bundle_args(config)
-            Shirobai.check_arguments_forwarding(
-              processed_source.buffer.source,
-              nums[0], nums[1] == 1, nums[2] == 1, nums[3] == 1,
-              lists[0], lists[1], lists[2]
-            )
-          end
+          Dispatch.offenses_for(processed_source, config, :arguments_forwarding)
         end
 
         # Kinds 4 / 5 bracket the `add_parens_if_missing` ops of one node

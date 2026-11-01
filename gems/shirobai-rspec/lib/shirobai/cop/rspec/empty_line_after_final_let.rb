@@ -12,7 +12,6 @@ module Shirobai
       # body's last child. Config-less.
       class EmptyLineAfterFinalLet < RuboCop::Cop::Base
         extend RuboCop::Cop::AutoCorrector
-        include Shirobai::Cop::BundleEligible
         include Shirobai::Cop::RSpec::EmptyLineSeparationSupport
 
         MSG = "Add an empty line after the last `%<let>s`."
@@ -33,10 +32,8 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            offenses = Dispatch.offenses_for(processed_source, config, :rspec_empty_line_after_final_let)
-            return offenses unless offenses.nil?
-          end
+          offenses = Dispatch.offenses_for(processed_source, config, :rspec_empty_line_after_final_let)
+          return offenses unless offenses.nil?
           Shirobai.check_rspec_empty_line_after_final_let(
             processed_source.buffer.source, *Shirobai::RSpec.segment(config)
           )

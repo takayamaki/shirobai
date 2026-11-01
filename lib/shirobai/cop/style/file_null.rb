@@ -16,7 +16,6 @@ module Shirobai
       # bundle-eligible for config purposes; the shared `bundle_eligible?`
       # guard only guards the raw-vs-buffer byte identity (CRLF / BOM).
       class FileNull < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         def self.cop_name = "Style/FileNull"
@@ -43,11 +42,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :file_null)
-          else
-            Shirobai.check_file_null(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :file_null)
         end
       end
     end

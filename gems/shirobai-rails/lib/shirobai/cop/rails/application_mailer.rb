@@ -8,7 +8,6 @@ module Shirobai
       # `EnforceSuperclass` semantics and offense/autocorrect ranges. Gated on
       # `requires_gem('railties', '>= 5.0')` like stock.
       class ApplicationMailer < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
         extend RuboCop::Cop::TargetRailsVersion
 
@@ -39,11 +38,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :rails_application_mailer)
-          else
-            Shirobai.check_rails_application_mailer(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :rails_application_mailer)
         end
       end
     end

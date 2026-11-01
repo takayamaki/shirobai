@@ -23,7 +23,6 @@ module Shirobai
       # construction, including non-ASCII offsets (offense ranges come from
       # `CommentRange`'s `loc.expression` char offsets, never through Rust).
       class MagicCommentFormat < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::ConfigurableEnforcedStyle
         extend RuboCop::Cop::AutoCorrector
 
@@ -89,11 +88,7 @@ module Shirobai
         end
 
         def resolved_first_token_line
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :magic_comment_format)
-          else
-            Shirobai.check_magic_comment_format(processed_source.buffer.source)
-          end
+          Dispatch.offenses_for(processed_source, config, :magic_comment_format)
         end
 
         # Stock's `find_issues`, verbatim.

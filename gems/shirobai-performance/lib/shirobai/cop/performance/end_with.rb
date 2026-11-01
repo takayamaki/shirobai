@@ -16,7 +16,6 @@ module Shirobai
       # `interpret_string_escapes` / `to_string_literal` — so anchor
       # dropping, escape interpretation and quote selection cannot drift.
       class EndWith < RuboCop::Cop::Base
-        include Shirobai::Cop::BundleEligible
         include RuboCop::Cop::RegexpMetacharacter
         extend RuboCop::Cop::AutoCorrector
 
@@ -51,13 +50,7 @@ module Shirobai
         private
 
         def resolved_offenses
-          if bundle_eligible?
-            Dispatch.offenses_for(processed_source, config, :perf_end_with)
-          else
-            Shirobai.check_perf_end_with(
-              processed_source.buffer.source, self.class.bundle_args(config)[0] == 1
-            )
-          end
+          Dispatch.offenses_for(processed_source, config, :perf_end_with)
         end
       end
     end
