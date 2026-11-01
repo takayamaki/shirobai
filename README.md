@@ -121,7 +121,7 @@ I prefer a failed install over a silent difference.
 
 shirobai always parses with prism's Latest grammar.
 prism has no grammar for Ruby before 3.3,
-and the Rust binding shirobai uses (`ruby-prism`) always parses with the latest one.
+and shirobai does not pass the target version to prism yet (even for 3.3 and later).
 Until shirobai can parse for the target version,
 it supports an older target version only as far as
 stock RuboCop behaves there the same as on the latest Ruby.

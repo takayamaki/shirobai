@@ -109,7 +109,7 @@ RuboCop の hard pin は意図的なもの。shirobai は cop の内部挙動を
 
 ### サポートする `AllCops/TargetRubyVersion`
 
-shirobai は常に prism の Latest 文法でパースする。prism には 3.3 より前の Ruby の文法が無く、shirobai が使う Rust バインディング（`ruby-prism`）も常に最新の文法でパースするためである。
+shirobai は常に prism の Latest 文法でパースする。prism には 3.3 より前の Ruby の文法が無く、3.3 以降についても shirobai はまだ target version を prism に渡していないためである。
 target version に合わせてパースできるようになるまでは、古い target version は「stock RuboCop が最新の Ruby と同じ挙動をする範囲」でのみサポートする。
 古い target version では、次の 5 cop が stock と異なる場合がある:
 
