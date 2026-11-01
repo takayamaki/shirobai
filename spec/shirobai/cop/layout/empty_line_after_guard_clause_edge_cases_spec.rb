@@ -183,4 +183,95 @@ RSpec.describe Shirobai::Cop::Layout::EmptyLineAfterGuardClause do
     RUBY
     expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
   end
+
+  # Stock's `if_branch` is the whole branch.  With two or more statements it
+  # is a `begin`, and `begin` is never a guard clause, even when its first
+  # statement is `next` or `return` (mkmf.rb: `val or next` then more code).
+  it "accepts an if whose branch starts with a guard but has more statements" do
+    src = <<~RUBY
+      if a
+        val or next
+        bar
+      end
+      baz
+    RUBY
+    expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
+  end
+
+  it "accepts an unless whose branch starts with `raise` but has more statements" do
+    src = <<~RUBY
+      unless a
+        raise "x"
+        b
+      end
+      c
+    RUBY
+    expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
+  end
+
+  it "flags a guard whose right sibling is an if with a multi-statement branch" do
+    src = <<~RUBY
+      def foo
+        return if a
+        if b
+          return
+          bar
+        end
+        baz
+      end
+    RUBY
+    expect_lint_parity(*klasses, src, cfg)
+    expect_correction_edits_parity(*klasses, src, cfg)
+  end
+
+  # A `begin ... end` with no `rescue`/`ensure` is a `kwbegin` whose children
+  # are the statements themselves.  `kwbegin` is not `begin_type?`, so
+  # `multiple_statements_on_line?` does not apply and stock flags a guard
+  # followed by `;` and more code (time.rb: `break if year; year = now.year`).
+  it "flags `guard; stmt` on one line inside a plain `begin ... end`" do
+    src = <<~RUBY
+      begin
+        break if year; year = 1
+        break if mon; mon = 2
+      end until true
+    RUBY
+    expect_lint_parity(*klasses, src, cfg)
+    expect_correction_edits_parity(*klasses, src, cfg)
+    expect_autocorrect_parity(*klasses, src, cfg)
+  end
+
+  it "accepts `guard; stmt` on one line inside `begin ... rescue ... end`" do
+    src = <<~RUBY
+      begin
+        return if a; x = 1
+        y
+      rescue
+        z
+      end
+    RUBY
+    expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
+  end
+
+  # `guard rescue nil` is `rescue(if, resbody)` in parser, so the guard's
+  # parent is `rescue` and `next_line_rescue_or_ensure?` accepts it
+  # (optparse.rb: `return true if load(...) rescue nil`).
+  it "accepts a modifier guard wrapped in a `rescue` modifier" do
+    src = <<~RUBY
+      def foo
+        return true if load(x) rescue nil
+        bar
+      end
+    RUBY
+    expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
+  end
+
+  it "accepts a guard in the value of a `rescue` modifier" do
+    src = <<~RUBY
+      def foo
+        bar rescue (return if x)
+        baz
+      end
+    RUBY
+    expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
+  end
 end

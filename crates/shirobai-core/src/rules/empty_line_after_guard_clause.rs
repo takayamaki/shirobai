@@ -139,8 +139,7 @@ impl<'a> Visitor<'a> {
         };
 
         // Step 1: `!node.if_branch&.guard_clause?` — skip when no guard.
-        let Some(stmts) = statements else { return };
-        let Some(if_branch) = stmts.body().iter().next() else {
+        let Some(if_branch) = statements.as_ref().and_then(sole_statement) else {
             return;
         };
         if !is_guard_clause(&if_branch) {
@@ -291,6 +290,9 @@ enum ParserKind {
     None,
     /// `begin` (multi-stmt Statements or `kwbegin`).
     Begin,
+    /// A plain `kwbegin` holding two or more statements directly.  Unlike
+    /// `Begin`, it is not `begin_type?`.
+    KwBegin,
     /// `rescue` (outer with else/resbody).
     Rescue,
     /// `ensure`.
@@ -378,6 +380,23 @@ fn resolve_via_parent(parent: &Node<'_>, if_node: &Node<'_>) -> Resolution {
         if let Some(stmts) = b.statements()
             && let Some(r) = resolve_if_inside(&stmts, if_start, outer_kind)
         {
+            // A plain `begin ... end` (no rescue/ensure) is a parser
+            // `kwbegin` whose children are the statements themselves, so
+            // the parent of a multi-statement body is `kwbegin`, which is
+            // not `begin_type?`.
+            let plain_kwbegin =
+                begin_keyword && b.rescue_clause().is_none() && b.ensure_clause().is_none();
+            if plain_kwbegin
+                && let Resolution::ParserParent {
+                    kind: ParserKind::Begin,
+                    right_sibling,
+                } = r
+            {
+                return Resolution::ParserParent {
+                    kind: ParserKind::KwBegin,
+                    right_sibling,
+                };
+            }
             return r;
         }
         // Inside the else_clause (rescue's else): parser parent = rescue.
@@ -481,6 +500,27 @@ fn resolve_via_parent(parent: &Node<'_>, if_node: &Node<'_>) -> Resolution {
             return res;
         }
         return Resolution::Continue;
+    }
+    // RescueModifierNode: parser builds `rescue(expr, resbody(nil, nil,
+    // value), nil)`.  An if that is the expression has parent `rescue`; one
+    // that is the value has parent `resbody`.  Neither has a right sibling.
+    // Without this arm the walk goes up and matches the rescue modifier
+    // itself, because it starts at the same byte as the if.
+    if let Some(rm) = parent.as_rescue_modifier_node() {
+        let if_loc = if_node.location();
+        let same = |n: &Node<'_>| {
+            let l = n.location();
+            l.start_offset() == if_loc.start_offset() && l.end_offset() == if_loc.end_offset()
+        };
+        let kind = if same(&rm.expression()) {
+            ParserKind::Rescue
+        } else {
+            ParserKind::Resbody
+        };
+        return Resolution::ParserParent {
+            kind,
+            right_sibling: None,
+        };
     }
     // WhenNode / InNode: their body statements contain the if.
     if let Some(w) = parent.as_when_node() {
@@ -674,6 +714,18 @@ fn next_sibling_empty_or_guard_clause(right_sib: &Option<Node<'static>>) -> bool
 
 // --- guard-clause matching ---
 
+/// Parser's `if_branch` is the only statement of the branch.  With two or
+/// more statements it is a `begin`, which is never a guard clause, so we
+/// return `None` then.
+fn sole_statement<'a>(stmts: &ruby_prism::StatementsNode<'a>) -> Option<Node<'a>> {
+    let mut iter = stmts.body().iter();
+    let first = iter.next()?;
+    if iter.next().is_some() {
+        return None;
+    }
+    Some(first)
+}
+
 fn is_guard_clause(node: &Node<'_>) -> bool {
     let cur = peel_operator_keyword(node);
     matches_guard_shape(&cur) && is_single_line(&cur)
@@ -726,9 +778,9 @@ fn peel_operator_keyword<'a>(node: &Node<'a>) -> Node<'a> {
 
 fn sibling_is_guard_if(sib: &Node<'_>) -> bool {
     let branch = if let Some(i) = sib.as_if_node() {
-        i.statements().and_then(|s| s.body().iter().next())
+        i.statements().as_ref().and_then(sole_statement)
     } else if let Some(u) = sib.as_unless_node() {
-        u.statements().and_then(|s| s.body().iter().next())
+        u.statements().as_ref().and_then(sole_statement)
     } else {
         return false;
     };
