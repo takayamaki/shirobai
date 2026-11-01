@@ -10,6 +10,14 @@
 //! recursive descent RuboCop uses we walk with the `Visit` trait and maintain
 //! the running level (and the "inside an already-reported subtree" flag) on a
 //! stack, pushing on branch enter and unwinding on branch leave.
+//!
+//! A modifier rescue (`x rescue y`) is `(rescue x (resbody nil nil y))` in
+//! parser, and `:resbody` is a nesting block. Prism has no node for that
+//! `resbody`: it is a `RescueModifierNode` with the rescue value as a direct
+//! child. So the frame of a `RescueModifierNode` remembers its `rescue`
+//! keyword, and the child that starts after the keyword (the rescue value)
+//! first applies the `resbody` level, with the range `rescue y`. The rescued
+//! expression `x` stays at the outer level, as in parser.
 
 use ruby_prism::{Node, Visit};
 
@@ -76,6 +84,9 @@ struct Frame {
     delta: usize,
     /// `true` if this node was the one that activated ignore-suppression.
     opened_ignore: bool,
+    /// For a `RescueModifierNode`: the start of its `rescue` keyword, until
+    /// the rescue value child takes it to apply the `resbody` level.
+    resbody_keyword: Option<usize>,
 }
 
 pub(crate) struct Checker<'a> {
@@ -143,10 +154,59 @@ impl Checker<'_> {
         }
     }
 
+    /// Takes the parent's pending `resbody` keyword when `node` is the rescue
+    /// value of a modifier rescue (the only child after the keyword).
+    fn take_resbody(&mut self, node: &Node<'_>) -> Option<usize> {
+        let frame = self.stack.last_mut()?;
+        let keyword = frame.resbody_keyword?;
+        if node.location().start_offset() > keyword {
+            frame.resbody_keyword = None;
+            Some(keyword)
+        } else {
+            None
+        }
+    }
+
+    /// Records the deepest level and reports `start..end` when the current
+    /// level is over `Max` and no ancestor is reported. Returns `true` when
+    /// it reported (the caller then suppresses its subtree).
+    fn check_level(&mut self, start_offset: usize, end_offset: usize) -> bool {
+        if self.current_level <= self.max {
+            return false;
+        }
+        self.deepest = self.deepest.max(self.current_level);
+        if self.ignore_depth != 0 {
+            return false;
+        }
+        self.out.push(BlockNestingOffense {
+            start_offset,
+            end_offset,
+        });
+        true
+    }
+
+    /// A leaf rescue value (`x rescue nil`): its `resbody` level is checked
+    /// and dropped at once, since a leaf has no descendants.
+    fn enter_leaf(&mut self, node: &Node<'_>) {
+        if let Some(keyword) = self.take_resbody(node) {
+            self.current_level += 1;
+            self.check_level(keyword, node.location().end_offset());
+            self.current_level -= 1;
+        }
+    }
+
     fn enter(&mut self, node: &Node<'_>) {
-        let counted = self.classify(node);
         let mut delta = 0;
         let mut opened_ignore = false;
+        if let Some(keyword) = self.take_resbody(node) {
+            self.current_level += 1;
+            delta = 1;
+            if self.check_level(keyword, node.location().end_offset()) {
+                self.ignore_depth = self.stack.len() + 1;
+                opened_ignore = true;
+            }
+        }
+        let counted = self.classify(node);
         if !matches!(counted, Counted::No) {
             let increments = match counted {
                 Counted::Yes => true,
@@ -155,25 +215,22 @@ impl Checker<'_> {
             };
             if increments {
                 self.current_level += 1;
-                delta = 1;
+                delta += 1;
             }
-            if self.current_level > self.max {
-                self.deepest = self.deepest.max(self.current_level);
-                if self.ignore_depth == 0 {
-                    let loc = node.location();
-                    self.out.push(BlockNestingOffense {
-                        start_offset: loc.start_offset(),
-                        end_offset: loc.end_offset(),
-                    });
-                    // Suppress reporting for this node's descendants.
-                    self.ignore_depth = self.stack.len() + 1;
-                    opened_ignore = true;
-                }
+            let loc = node.location();
+            if self.check_level(loc.start_offset(), loc.end_offset()) {
+                // Suppress reporting for this node's descendants.
+                self.ignore_depth = self.stack.len() + 1;
+                opened_ignore = true;
             }
         }
+        let resbody_keyword = node
+            .as_rescue_modifier_node()
+            .map(|r| r.keyword_loc().start_offset());
         self.stack.push(Frame {
             delta,
             opened_ignore,
+            resbody_keyword,
         });
     }
 
@@ -200,6 +257,10 @@ impl super::dispatch::Rule for Checker<'_> {
         Checker::leave(self);
     }
 
+    fn enter_leaf(&mut self, node: &Node<'_>) {
+        Checker::enter_leaf(self, node);
+    }
+
     fn enter_rescue(&mut self, node: &Node<'_>) {
         Checker::enter(self, node);
     }
@@ -216,6 +277,10 @@ impl<'pr> Visit<'pr> for Checker<'_> {
 
     fn visit_branch_node_leave(&mut self) {
         self.leave();
+    }
+
+    fn visit_leaf_node_enter(&mut self, node: Node<'pr>) {
+        self.enter_leaf(&node);
     }
 
     // `RescueNode` is reached through `BeginNode`'s concretely-typed
@@ -365,6 +430,32 @@ mod tests {
             ]
         );
         assert_eq!(deepest, 3);
+    }
+
+    // A modifier rescue counts its rescue value as a `resbody` level,
+    // reported from the `rescue` keyword; the rescued expression does not.
+    #[test]
+    fn modifier_rescue_counts_rescue_value() {
+        let src = "if a\n  if b\n    x = y rescue nil\n  end\nend\n";
+        let kw = src.find("rescue").unwrap();
+        let (offenses, deepest) = check_block_nesting(src.as_bytes(), 2, false, false);
+        assert_eq!(deepest, 3);
+        assert_eq!(
+            offenses
+                .iter()
+                .map(|o| (o.start_offset, o.end_offset))
+                .collect::<Vec<_>>(),
+            vec![(kw, kw + "rescue nil".len())]
+        );
+
+        let chained = "if a\n  if b\n    y rescue z rescue w\n  end\nend\n";
+        assert_eq!(
+            run(chained, 2, false, false).0,
+            vec![
+                chained.find("rescue z").unwrap(),
+                chained.find("rescue w").unwrap()
+            ]
+        );
     }
 
     // Blocks are ignored unless `CountBlocks` is set.
