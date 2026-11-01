@@ -32,6 +32,7 @@ and check that shirobai gives the same results as stock RuboCop:
 - [Discourse](https://github.com/discourse/discourse)
 - [Redmine](https://github.com/redmine/redmine)
 - [fluentd](https://github.com/fluent/fluentd)
+- the Ruby standard library ([ruby/ruby](https://github.com/ruby/ruby) `lib/`)
 
 I also hope to contribute back to RuboCop when I find behavior that should be tested by spec but isn't.
 
@@ -271,7 +272,8 @@ First, clone the test corpora:
 bin/setup-corpora
 ```
 
-This clones Mastodon, Discourse, Redmine, and fluentd into `.tmp/` at pinned commits.
+This clones Mastodon, Discourse, Redmine, fluentd, and the Ruby standard library
+(`lib/` of ruby/ruby, as a sparse checkout) into `.tmp/` at pinned commits.
 `rubocop_source` is a symlink to `vendor/rubocop` (already tracked in git).
 
 Then run the parity oracle on each corpus:
@@ -281,13 +283,14 @@ benches/parity_diff.sh .tmp/mastodon
 benches/parity_diff.sh .tmp/discourse
 benches/parity_diff.sh .tmp/redmine
 benches/parity_diff.sh .tmp/fluentd
+benches/parity_diff.sh .tmp/stdlib
 benches/parity_diff.sh .tmp/rubocop_source
 ```
 
 Each run launches the real `rubocop` CLI twice
 — once with `Gemfile.stock` (no shirobai), once with `Gemfile.with_shirobai` —
 and diffs per-cop / per-offense (`path:line:column:message`).
-**Zero diff on all 5 corpora is required before merging.**
+**Zero diff on all 6 corpora is required before merging.**
 
 ### Speed benchmark
 

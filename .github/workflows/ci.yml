@@ -189,6 +189,14 @@ jobs:
             repo: fluent/fluentd
             ref: 3b34a7b9a066a347d19e976b238be1ce9ea877fa
             crlf: true
+          # The Ruby standard library (ruby/ruby v4.0.5, lib/ only). Its style
+          # is far from the Rails apps above (modifier rescue, heredocs, `;`,
+          # plain begin..end), and it found differences none of them had.
+          # About 45 s per mode, so it ends well before discourse.
+          - name: stdlib
+            repo: ruby/ruby
+            ref: 64336ffd0ee9e1f4c05891695a3d7b49cb709721
+            sparse: /lib/
           - name: rubocop_source
             repo: ""
             ref: ""
@@ -211,12 +219,22 @@ jobs:
           path: lib/shirobai/
 
       - name: Checkout corpus
-        if: matrix.corpus.repo != ''
+        if: matrix.corpus.repo != '' && !matrix.corpus.sparse
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: ${{ matrix.corpus.repo }}
           ref: ${{ matrix.corpus.ref }}
           path: .tmp/${{ matrix.corpus.crlf && format('{0}_src', matrix.corpus.name) || matrix.corpus.name }}
+
+      - name: Checkout corpus (sparse)
+        if: matrix.corpus.sparse
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ matrix.corpus.repo }}
+          ref: ${{ matrix.corpus.ref }}
+          path: .tmp/${{ matrix.corpus.name }}
+          sparse-checkout: ${{ matrix.corpus.sparse }}
+          sparse-checkout-cone-mode: false
 
       - name: Create rubocop_source symlink
         if: matrix.corpus.name == 'rubocop_source'
@@ -274,7 +292,7 @@ jobs:
       - name: Compare all corpora
         run: |
           failed=0
-          for corpus in mastodon discourse redmine fluentd fluentd_crlf rubocop_source; do
+          for corpus in mastodon discourse redmine fluentd fluentd_crlf stdlib rubocop_source; do
             echo "=== $corpus ==="
             stock="artifacts/parity-${corpus}-stock/offense.json"
             shirobai="artifacts/parity-${corpus}-shirobai/offense.json"
