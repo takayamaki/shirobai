@@ -34,9 +34,11 @@ dst="$(cd "$dst" && pwd)"
 # List the files the same way parity_diff.sh runs rubocop: from the repo root
 # with the corpus path as the argument. Default Exclude patterns anchor to the
 # working directory, so listing from inside the copy would pick other files.
+# `-L` runs no cop, so any Gemfile with the pinned rubocop gives the same
+# list. A BUNDLE_GEMFILE already set (CI's shirobai job) is kept.
 list="$(mktemp)"
 trap 'rm -f "$list"' EXIT
-(cd "$root" && BUNDLE_GEMFILE="$root/Gemfile.stock" bundle exec rubocop \
+(cd "$root" && BUNDLE_GEMFILE="${BUNDLE_GEMFILE:-$root/Gemfile.stock}" bundle exec rubocop \
   --force-default-config --no-server -L "$dst" 2>/dev/null) > "$list"
 
 count=0
