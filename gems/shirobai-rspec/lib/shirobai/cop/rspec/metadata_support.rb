@@ -51,7 +51,7 @@ module Shirobai
           ranges = resolved_anchors
           return if ranges.nil? || ranges.empty?
 
-          source = bundle_eligible? ? processed_source.buffer.source : processed_source.buffer.source
+          source = processed_source.buffer.source
           off = SourceOffsets.for(source)
           keys = ranges.map { |(start, fin)| [off[start], off[fin]] }
           located = Shirobai::RSpec::NodeLocator.locate(processed_source, keys)

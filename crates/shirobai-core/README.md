@@ -49,7 +49,7 @@ Read this before starting a new cop.
 | `RedundantSelf` `add_scope` uses **shared array semantics** | Reproduce with owner-array stack |
 | magnus argument count limit | Pack config as `Vec<i64>` (nums/lists); run regex on Ruby side |
 | **Stock cops change behavior when instances are reused** (state leaks) | Always use **real CLI (fresh per file)** as the oracle |
-| **`raw_source` vs `buffer.source` byte mismatch** (CRLF/BOM normalization) | Only use bundle path when `buffer.source == raw_source` |
+| **`raw_source` vs `buffer.source` byte mismatch** (CRLF normalization: `raw_source` keeps "\r", every stock range indexes the CR-stripped `buffer.source`) | Scan and map offsets from `buffer.source` only (`Dispatch` does). Read `raw_source` only where stock does (e.g. `Layout/EndOfLine`). `spec/shirobai/crlf_offset_parity_spec.rb` and `benches/crlf_corpus.sh` guard it |
 | **Parser `block` node includes lambda literals** but prism splits them into `BlockNode` / `LambdaNode` | Handle LambdaNode the same way |
 | **Prism write-targets bypass read-node typed fields** | Override write-node visitors to reprocess or exclude targets |
 | **Prism CallNode setter `=` is not in `message_loc`** | Use `equal_loc` instead |

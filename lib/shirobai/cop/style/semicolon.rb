@@ -76,7 +76,7 @@ module Shirobai
         # last-token pattern, the preceding token for autocorrect).
         def check_for_line_terminator_or_opener
           buffer = processed_source.buffer
-          source = bundle_eligible? ? processed_source.buffer.source : buffer.source
+          source = processed_source.buffer.source
           off = SourceOffsets.for(source)
           path_a_offenses(source).each do |byte_offset, last_token|
             char = off[byte_offset]

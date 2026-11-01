@@ -39,7 +39,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          source = bundle_eligible? ? processed_source.buffer.source : buffer.source
+          source = processed_source.buffer.source
           off = SourceOffsets.for(source)
           resolved_offenses.each do |sel_start, sel_end, recv_end, outer_end, message, replacement|
             range = Parser::Source::Range.new(buffer, off[sel_start], off[outer_end])

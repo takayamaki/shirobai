@@ -17,11 +17,12 @@ module Shirobai
 
     # Shared `bundle_eligible?` for wrapper cops.
     #
-    # The bundled (shared-walk) path scans `raw_source`; the standalone path
-    # scans the parser-normalized `buffer.source`. The two agree only when they
-    # are byte-identical (CRLF / BOM / `__END__` truncation break that), so a cop
-    # may take the bundle path exactly then; otherwise it falls back so every
-    # offset lines up with parser-gem's index.
+    # A cop may take the bundle path only when `buffer.source == raw_source`;
+    # otherwise (CRLF, a non-UTF-8 magic encoding) it calls its standalone
+    # entry point on `buffer.source`. This guard dates from when the bundled
+    # path scanned `raw_source`. Both paths now scan `buffer.source`
+    # (see `Dispatch`), so the fallback only costs speed on such files; the
+    # offsets line up either way.
     #
     # The verdict is memoized, but the memo is guarded on the `processed_source`
     # identity. RuboCop's real CLI builds a fresh cop per file, yet a reused

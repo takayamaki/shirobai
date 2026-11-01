@@ -5,7 +5,10 @@ module Shirobai
   # (`Shirobai.check_all`), memoized by source. The first participating cop on
   # a file triggers the bundled run; the rest read their slice from the cache.
   #
-  # The cache key is the `raw_source` identity (`equal?`, not `==`), so the
+  # Rust scans `buffer.source`, the CR-stripped string every stock range
+  # indexes (`raw_source` keeps "\r" on CRLF files, so its offsets would drift).
+  #
+  # The cache key is the `buffer.source` identity (`equal?`, not `==`), so the
   # autocorrect loop (which re-investigates a freshly built `ProcessedSource`)
   # naturally recomputes, and a different file never reuses stale results.
   #

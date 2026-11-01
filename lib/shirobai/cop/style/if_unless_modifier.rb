@@ -103,7 +103,7 @@ module Shirobai
         end
 
         def rust_source
-          bundle_eligible? ? processed_source.buffer.source : processed_source.buffer.source
+          processed_source.buffer.source
         end
 
         # Direction 1: multiline if/unless that would fit as a modifier.
