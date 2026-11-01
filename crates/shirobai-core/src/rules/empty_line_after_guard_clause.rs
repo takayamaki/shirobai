@@ -139,8 +139,7 @@ impl<'a> Visitor<'a> {
         };
 
         // Step 1: `!node.if_branch&.guard_clause?` — skip when no guard.
-        let Some(stmts) = statements else { return };
-        let Some(if_branch) = stmts.body().iter().next() else {
+        let Some(if_branch) = statements.as_ref().and_then(sole_statement) else {
             return;
         };
         if !is_guard_clause(&if_branch) {
@@ -674,6 +673,18 @@ fn next_sibling_empty_or_guard_clause(right_sib: &Option<Node<'static>>) -> bool
 
 // --- guard-clause matching ---
 
+/// Parser's `if_branch` is the only statement of the branch.  With two or
+/// more statements it is a `begin`, which is never a guard clause, so we
+/// return `None` then.
+fn sole_statement<'a>(stmts: &ruby_prism::StatementsNode<'a>) -> Option<Node<'a>> {
+    let mut iter = stmts.body().iter();
+    let first = iter.next()?;
+    if iter.next().is_some() {
+        return None;
+    }
+    Some(first)
+}
+
 fn is_guard_clause(node: &Node<'_>) -> bool {
     let cur = peel_operator_keyword(node);
     matches_guard_shape(&cur) && is_single_line(&cur)
@@ -726,9 +737,9 @@ fn peel_operator_keyword<'a>(node: &Node<'a>) -> Node<'a> {
 
 fn sibling_is_guard_if(sib: &Node<'_>) -> bool {
     let branch = if let Some(i) = sib.as_if_node() {
-        i.statements().and_then(|s| s.body().iter().next())
+        i.statements().as_ref().and_then(sole_statement)
     } else if let Some(u) = sib.as_unless_node() {
-        u.statements().and_then(|s| s.body().iter().next())
+        u.statements().as_ref().and_then(sole_statement)
     } else {
         return false;
     };

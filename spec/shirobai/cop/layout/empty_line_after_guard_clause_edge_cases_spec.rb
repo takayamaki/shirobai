@@ -183,4 +183,44 @@ RSpec.describe Shirobai::Cop::Layout::EmptyLineAfterGuardClause do
     RUBY
     expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
   end
+
+  # Stock's `if_branch` is the whole branch.  With two or more statements it
+  # is a `begin`, and `begin` is never a guard clause, even when its first
+  # statement is `next` or `return` (mkmf.rb: `val or next` then more code).
+  it "accepts an if whose branch starts with a guard but has more statements" do
+    src = <<~RUBY
+      if a
+        val or next
+        bar
+      end
+      baz
+    RUBY
+    expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
+  end
+
+  it "accepts an unless whose branch starts with `raise` but has more statements" do
+    src = <<~RUBY
+      unless a
+        raise "x"
+        b
+      end
+      c
+    RUBY
+    expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
+  end
+
+  it "flags a guard whose right sibling is an if with a multi-statement branch" do
+    src = <<~RUBY
+      def foo
+        return if a
+        if b
+          return
+          bar
+        end
+        baz
+      end
+    RUBY
+    expect_lint_parity(*klasses, src, cfg)
+    expect_correction_edits_parity(*klasses, src, cfg)
+  end
 end
