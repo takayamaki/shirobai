@@ -32,7 +32,7 @@ module Shirobai
 
         def on_new_investigation
           offenses = Dispatch.offenses_for(processed_source, config, :debugger)
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           offenses.each do |start_offset, end_offset|
             range = Parser::Source::Range.new(processed_source.buffer, off[start_offset], off[end_offset])
             add_offense(range, message: format(MSG, source: range.source))

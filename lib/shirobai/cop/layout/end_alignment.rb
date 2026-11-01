@@ -47,7 +47,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          source = bundle_eligible? ? processed_source.raw_source : buffer.source
+          source = processed_source.buffer.source
           off = SourceOffsets.for(source)
           style_bit = STYLE_TO_U8.fetch(style)
 

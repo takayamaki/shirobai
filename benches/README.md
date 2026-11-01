@@ -14,6 +14,14 @@ Benchmarks and the parity oracle.
   Runs the real `rubocop` CLI twice (stock vs shirobai) on a corpus
   and diffs per-cop / per-offense output plus autocorrected bytes.
   Zero diff is the only acceptable result before merging.
+- `crlf_corpus.sh` — Makes a CRLF copy of a corpus for the CRLF parity check.
+  The default corpora are all LF, so `parity_diff.sh` on them cannot see
+  offsets that drift by the "\r" that `raw_source` keeps and `buffer.source`
+  drops. It copies the corpus and rewrites every file rubocop inspects
+  (`rubocop -L`, listed from the repo root like `parity_diff.sh` runs) to CRLF.
+  Usage: `crlf_corpus.sh .tmp/fluentd .tmp/fluentd_crlf`, then
+  `parity_diff.sh .tmp/fluentd_crlf`. Zero diff is expected on fluentd and
+  redmine copies, and on the plugin oracles over CRLF copies.
 - `autocorrect_audit.sh` — **The `-a` byte oracle.**
   Copies a corpus twice (`cp -rL`), runs stock and shirobai arms with
   `-a` sequentially (`RUBOCOP_TARGET_RUBY_VERSION` pinned to 3.1 — the

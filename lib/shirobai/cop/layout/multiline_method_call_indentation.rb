@@ -49,7 +49,7 @@ module Shirobai
           buffer = processed_source.buffer
           offenses = Dispatch.offenses_for(processed_source, config, :multiline_method_call)
 
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           offenses.each do |start, fin, column_delta, message, body_s, body_e, end_s, end_e|
             range = Parser::Source::Range.new(buffer, off[start], off[fin])
             add_offense(range, message: message) do |corrector|

@@ -57,7 +57,7 @@ module Shirobai
           # scans `buffer.source` instead so every offset Rust returns lines
           # up with the parser-gem buffer.
           if bundle_eligible?
-            source = processed_source.raw_source
+            source = processed_source.buffer.source
             offenses = Dispatch.offenses_for(processed_source, config, self.class::SLOT)
           else
             source = buffer.source

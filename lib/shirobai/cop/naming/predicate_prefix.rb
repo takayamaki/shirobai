@@ -42,7 +42,7 @@ module Shirobai
         def on_new_investigation
           candidates = Dispatch.offenses_for(processed_source, config, :predicate_prefix)
 
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           candidates.each do |start, fin, method_name, is_def, sorbet_boolean_sig|
             prefixes = predicate_prefixes.reject do |prefix|
               # The Sorbet exemption only applies to `def`/`defs` sites; the

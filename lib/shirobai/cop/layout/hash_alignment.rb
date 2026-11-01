@@ -71,7 +71,7 @@ module Shirobai
           buffer = processed_source.buffer
 
           offenses = Dispatch.offenses_for(processed_source, config, :hash_alignment)
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           # Stock registers a hash's offenses inside one `on_hash` callback. If
           # one offense's corrector raises `Parser::ClobberingError` (adjacent
           # key/separator/value adjustments that collide), it aborts THAT

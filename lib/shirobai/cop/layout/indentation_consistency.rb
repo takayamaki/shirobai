@@ -35,7 +35,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
 
           offenses, groups = offenses_for_source
           offenses = offenses.map { |s, f, d, ac, g| [off[s], off[f], d, ac, g] }

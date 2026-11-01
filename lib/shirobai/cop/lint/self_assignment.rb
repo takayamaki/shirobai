@@ -30,7 +30,7 @@ module Shirobai
           offenses = Dispatch.offenses_for(processed_source, config, :self_assignment)
           return if offenses.empty?
 
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           buffer = processed_source.buffer
           allow_rbs = !!cop_config["AllowRBSInlineAnnotation"]
           anchor_index = allow_rbs ? build_anchor_index : nil

@@ -34,7 +34,7 @@ module Shirobai
           return if offenses.empty?
 
           buffer = processed_source.buffer
-          source = bundle_eligible? ? processed_source.raw_source : buffer.source
+          source = processed_source.buffer.source
           off = SourceOffsets.for(source)
           offenses.each do |(start, fin)|
             add_offense(Parser::Source::Range.new(buffer, off[start], off[fin]))

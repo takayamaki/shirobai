@@ -32,7 +32,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
 
           records_for_source.each do |rhs_start, rhs_end, column_delta|
             range = Parser::Source::Range.new(buffer, off[rhs_start], off[rhs_end])

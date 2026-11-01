@@ -64,7 +64,7 @@ module Shirobai
 
         def resolved_modifier_positions
           buffer = processed_source.buffer
-          source = bundle_eligible? ? processed_source.raw_source : buffer.source
+          source = processed_source.buffer.source
           off = SourceOffsets.for(source)
           raw_positions(source).map { |begin_byte, end_byte| [off[begin_byte], off[end_byte]] }
         end

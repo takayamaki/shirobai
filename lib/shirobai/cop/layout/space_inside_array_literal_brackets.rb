@@ -53,7 +53,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           offenses, node_ops = result_for_source
           drop_suppressed = autocorrect_with_disable_uncorrectable?
           corrected = {}
@@ -92,7 +92,7 @@ module Shirobai
           else
             nums, = self.class.bundle_args(config)
             Shirobai.check_space_inside_array_literal_brackets(
-              processed_source.raw_source, nums[0], nums[1] == 1
+              processed_source.buffer.source, nums[0], nums[1] == 1
             )
           end
         end

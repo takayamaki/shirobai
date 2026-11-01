@@ -5,7 +5,10 @@ module Shirobai
   # (`Shirobai.check_all`), memoized by source. The first participating cop on
   # a file triggers the bundled run; the rest read their slice from the cache.
   #
-  # The cache key is the `raw_source` identity (`equal?`, not `==`), so the
+  # Rust scans `buffer.source`, the CR-stripped string every stock range
+  # indexes (`raw_source` keeps "\r" on CRLF files, so its offsets would drift).
+  #
+  # The cache key is the `buffer.source` identity (`equal?`, not `==`), so the
   # autocorrect loop (which re-investigates a freshly built `ProcessedSource`)
   # naturally recomputes, and a different file never reuses stale results.
   #
@@ -400,7 +403,7 @@ module Shirobai
       # the config, so later files start with that slot on and each key
       # re-runs at most once per config.
       def offenses_for(processed_source, config, cop_key)
-        src = processed_source.raw_source
+        src = processed_source.buffer.source
         if !active_keys(config).include?(cop_key) && CORE_SLOT_INDEX.key?(cop_key)
           force_slot!(config, cop_key)
           @cached_source = nil

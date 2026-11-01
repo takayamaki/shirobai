@@ -48,7 +48,7 @@ module Shirobai
           buffer = processed_source.buffer
 
           offenses = Dispatch.offenses_for(processed_source, config, :first_array_element_indentation)
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           offenses.each do |start, fin, column_delta, message|
             range = Parser::Source::Range.new(buffer, off[start], off[fin])
             # Stock yields the corrector block for every offense (no

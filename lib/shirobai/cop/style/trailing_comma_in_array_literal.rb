@@ -84,7 +84,7 @@ module Shirobai
           style
 
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
 
           resolved_result.each do |start, fin, message_idx, fix|
             range = Parser::Source::Range.new(buffer, off[start], off[fin])
@@ -101,7 +101,7 @@ module Shirobai
             Dispatch.offenses_for(processed_source, config, :trailing_comma_in_array_literal)
           else
             nums = self.class.bundle_args(config).first
-            Shirobai.check_trailing_comma_in_array_literal(processed_source.raw_source, nums)
+            Shirobai.check_trailing_comma_in_array_literal(processed_source.buffer.source, nums)
           end
         end
 

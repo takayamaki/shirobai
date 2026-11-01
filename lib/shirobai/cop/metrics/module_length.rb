@@ -38,7 +38,7 @@ module Shirobai
 
         def on_new_investigation
           candidates = Dispatch.offenses_for(processed_source, config, :module_length)
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           candidates.each do |start, fin, head_end, length|
             validate_count_as_one!
 

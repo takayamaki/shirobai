@@ -41,7 +41,7 @@ module Shirobai
 
         def on_new_investigation
           candidates = Dispatch.offenses_for(processed_source, config, :method_length)
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           candidates.each do |start, fin, head_end, length, name, filterable|
             next if filterable && (allowed_method?(name) || matches_allowed_pattern?(name))
 

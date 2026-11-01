@@ -69,7 +69,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          off = SourceOffsets.for(bundle_eligible? ? processed_source.raw_source : buffer.source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           # Stock's `@parenthesized_nodes`: node ranges whose parentheses an
           # earlier corrector block of this investigation already added.
           @parenthesized = Set.new

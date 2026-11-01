@@ -46,7 +46,7 @@ module Shirobai
           max = cop_config["Max"]
 
           analysis = Dispatch.offenses_for(processed_source, config, :abc_size)
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           analysis.each do |start, fin, head_end, name, assignment, branch, condition|
             next if allowed_method?(name) || matches_allowed_pattern?(name)
 

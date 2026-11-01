@@ -29,7 +29,7 @@ module Shirobai
         def on_new_investigation
           buffer = processed_source.buffer
           offenses = Dispatch.offenses_for(processed_source, config, :hash_transform_keys)
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           offenses.each do |start, fin, message, edits|
             range = Parser::Source::Range.new(buffer, off[start], off[fin])
             add_offense(range, message: message) do |corrector|

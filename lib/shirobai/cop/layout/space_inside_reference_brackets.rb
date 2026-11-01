@@ -54,7 +54,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          source = bundle_eligible? ? processed_source.raw_source : buffer.source
+          source = processed_source.buffer.source
           off = SourceOffsets.for(source)
           offenses, node_ops = result_for_source
           drop_suppressed = autocorrect_with_disable_uncorrectable?

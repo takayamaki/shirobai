@@ -181,6 +181,14 @@ jobs:
           - name: fluentd
             repo: fluent/fluentd
             ref: 3b34a7b9a066a347d19e976b238be1ce9ea877fa
+          # fluentd with every inspected file rewritten to CRLF. The other
+          # corpora are all LF, so they cannot see offsets that drift by the
+          # "\r" that raw_source keeps and buffer.source drops. fluentd is the
+          # smallest corpus, so this job ends well before discourse.
+          - name: fluentd_crlf
+            repo: fluent/fluentd
+            ref: 3b34a7b9a066a347d19e976b238be1ce9ea877fa
+            crlf: true
           - name: rubocop_source
             repo: ""
             ref: ""
@@ -208,7 +216,7 @@ jobs:
         with:
           repository: ${{ matrix.corpus.repo }}
           ref: ${{ matrix.corpus.ref }}
-          path: .tmp/${{ matrix.corpus.name }}
+          path: .tmp/${{ matrix.corpus.crlf && format('{0}_src', matrix.corpus.name) || matrix.corpus.name }}
 
       - name: Create rubocop_source symlink
         if: matrix.corpus.name == 'rubocop_source'
@@ -217,6 +225,12 @@ jobs:
       - name: Install Gemfile (stock)
         if: matrix.mode == 'stock'
         run: BUNDLE_GEMFILE=Gemfile.stock bundle install
+
+      - name: Make the CRLF copy
+        if: matrix.corpus.crlf
+        env:
+          BUNDLE_GEMFILE: ${{ matrix.mode == 'stock' && 'Gemfile.stock' || 'Gemfile.with_shirobai' }}
+        run: benches/crlf_corpus.sh ".tmp/${{ matrix.corpus.name }}_src" ".tmp/${{ matrix.corpus.name }}"
 
       - name: Run rubocop (stock)
         if: matrix.mode == 'stock'
@@ -260,7 +274,7 @@ jobs:
       - name: Compare all corpora
         run: |
           failed=0
-          for corpus in mastodon discourse redmine fluentd rubocop_source; do
+          for corpus in mastodon discourse redmine fluentd fluentd_crlf rubocop_source; do
             echo "=== $corpus ==="
             stock="artifacts/parity-${corpus}-stock/offense.json"
             shirobai="artifacts/parity-${corpus}-shirobai/offense.json"

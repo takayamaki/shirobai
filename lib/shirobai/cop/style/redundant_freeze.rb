@@ -44,7 +44,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
 
           fetch_offenses.each do |off_start, off_end, dot_start, dot_end, sel_start, sel_end|
             range = Parser::Source::Range.new(buffer, off[off_start], off[off_end])
@@ -64,7 +64,7 @@ module Shirobai
           else
             nums = self.class.bundle_args(config).first
             Shirobai.check_redundant_freeze(
-              processed_source.raw_source, nums[0] == 1, nums[1] == 1
+              processed_source.buffer.source, nums[0] == 1, nums[1] == 1
             )
           end
         end

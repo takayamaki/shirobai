@@ -48,7 +48,7 @@ module Shirobai
             correct_style_detected unless matches_allowed_pattern?(wrap(value, kind))
           end
           buffer = processed_source.buffer
-          source = bundle_eligible? ? processed_source.raw_source : buffer.source
+          source = processed_source.buffer.source
           off = SourceOffsets.for(source)
           offenses.each do |(start, fin, kind, value, valid_alt)|
             next if matches_allowed_pattern?(wrap(value, kind))

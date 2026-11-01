@@ -111,7 +111,7 @@ module Shirobai
         # 1-byte range flips those merge outcomes and the `-a` trees drift.
         def install_breakables(breakables)
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           @breakable_range_by_line_index = {}
           @breakable_string_delimiters = {}
           @extra_string_breaks = {}
@@ -196,7 +196,7 @@ module Shirobai
           return [breakable_range] unless extra
 
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           [breakable_range, *extra.map { |pos| Parser::Source::Range.new(buffer, off[pos], off[pos] + 1) }]
         end
 

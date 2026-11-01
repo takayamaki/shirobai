@@ -39,7 +39,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          source = bundle_eligible? ? processed_source.raw_source : buffer.source
+          source = processed_source.buffer.source
           off = SourceOffsets.for(source)
 
           resolved_result(source).each do |is_constant, start, fin|

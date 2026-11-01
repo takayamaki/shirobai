@@ -14,7 +14,7 @@ Ruby layer of shirobai.
   via `registry.enlist(klass)`. This is the central require list;
   add new cops here.
 - `dispatch.rb` — Per-file coordinator.
-  Memoizes `Shirobai.check_all(src, token)` by (raw_source identity, config identity)
+  Memoizes `Shirobai.check_all(src, token)` by (`buffer.source` identity, config identity)
   so the first cop triggers one Rust call and the rest pull from the cache.
   `Dispatch::SLOTS` is the single source of cop-to-slot mapping:
   `[origin, rule]` pairs into the per-origin result

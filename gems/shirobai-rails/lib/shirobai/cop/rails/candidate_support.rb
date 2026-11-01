@@ -25,7 +25,7 @@ module Shirobai
           ranges = resolved_candidates
           return if ranges.nil? || ranges.empty?
 
-          source = bundle_eligible? ? processed_source.raw_source : processed_source.buffer.source
+          source = processed_source.buffer.source
           off = SourceOffsets.for(source)
           keys = ranges.map { |(start, fin)| [off[start], off[fin]] }
           located = Shirobai::NodeLocator.locate(processed_source, keys)

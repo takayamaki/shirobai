@@ -59,7 +59,7 @@ module Shirobai
           _ = style
 
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           offenses = offenses_for_source
 
           offenses.each do |start, fin, msg_code, send_start, send_end, correctable|
@@ -94,7 +94,7 @@ module Shirobai
           else
             nums, = self.class.bundle_args(config)
             Shirobai.check_multiline_method_call_brace_layout(
-              processed_source.raw_source, nums[0]
+              processed_source.buffer.source, nums[0]
             )
           end
         end

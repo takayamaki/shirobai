@@ -54,7 +54,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           fetch_offenses.each do |kind, start_offset, end_offset, param_start, param_end,
                                   inner_send_start, inner_send_end,
                                   ac_open_start, ac_open_end, ac_close_pos|
@@ -90,7 +90,7 @@ module Shirobai
             allowed = self.class.bundle_args(config)[0]
             allowed_inner_sources = build_allowed_inner_sources
             Shirobai.check_ambiguous_block_association(
-              processed_source.raw_source, allowed, allowed_inner_sources
+              processed_source.buffer.source, allowed, allowed_inner_sources
             )
           end
         end
@@ -112,8 +112,8 @@ module Shirobai
           # `inner_send` source bytes off every candidate offense. Any
           # matching pattern adds that source to the skip list. The second
           # call with the filtered list then drops them in Rust.
-          raw = Shirobai.check_ambiguous_block_association(processed_source.raw_source, [], [])
-          src = processed_source.raw_source
+          raw = Shirobai.check_ambiguous_block_association(processed_source.buffer.source, [], [])
+          src = processed_source.buffer.source
           buffer = processed_source.buffer
           off = SourceOffsets.for(src)
           collected = raw.filter_map do |kind, s, e, _ps, _pe, iss, ise, _aos, _aoe, _acp|

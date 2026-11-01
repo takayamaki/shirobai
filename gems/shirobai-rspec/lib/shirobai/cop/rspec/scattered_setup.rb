@@ -42,7 +42,7 @@ module Shirobai
           ranges = resolved_ranges
           return if ranges.empty?
 
-          source = bundle_eligible? ? processed_source.raw_source : processed_source.buffer.source
+          source = processed_source.buffer.source
           off = SourceOffsets.for(source)
           located = locate_blocks(ranges, off)
 
