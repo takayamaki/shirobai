@@ -111,12 +111,46 @@ RSpec.describe "CRLF source offset parity with stock RuboCop" do
     end
   end
 
-  describe "a file that mixes CRLF and LF line endings" do
-    it "matches stock offenses and autocorrect output for every implemented cop"
+  # Every other line ends in CRLF, so the "\r" count before an offset is not
+  # a simple function of its line number.
+  def to_mixed(source)
+    source.lines.each_with_index.map do |line, index|
+      index.even? ? line.sub(/\r?\n\z/, "\r\n") : line
+    end.join
   end
 
+  describe "a file that mixes CRLF and LF line endings" do
+    let(:source) { to_mixed(stdlib_source("fileutils.rb")) }
+
+    it "matches stock offenses and autocorrect output for every implemented cop" do
+      expect(source).to include("\r\n").and match(/[^\r]\n/)
+      expect(diverging_cops(source, config)).to eq([])
+    end
+  end
+
+  # Layout/EndOfLine reads `raw_source` on purpose (stock does too): the "\r"
+  # it looks for is gone from `buffer.source`.
   describe "cops that read the raw line endings" do
-    it "matches stock Layout/EndOfLine with EnforcedStyle: crlf on a mixed file"
-    it "matches stock Layout/EndOfLine with EnforcedStyle: lf on a CRLF file"
+    def end_of_line_config(style)
+      RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new({ "Layout/EndOfLine" => { "EnforcedStyle" => style } }, "(test)"),
+        "(test)"
+      )
+    end
+
+    def expect_end_of_line_parity(source, style)
+      cfg = end_of_line_config(style)
+      stock = outcome(RuboCop::Cop::Layout::EndOfLine, source, cfg)
+      expect(outcome(Shirobai::Cop::Layout::EndOfLine, source, cfg)).to eq(stock)
+      expect(stock.first).not_to be_empty, "fixture produced no stock offense; fix the source"
+    end
+
+    it "matches stock Layout/EndOfLine with EnforcedStyle: crlf on a mixed file" do
+      expect_end_of_line_parity(to_mixed(stdlib_source("resolv.rb")), "crlf")
+    end
+
+    it "matches stock Layout/EndOfLine with EnforcedStyle: lf on a CRLF file" do
+      expect_end_of_line_parity(to_crlf(stdlib_source("resolv.rb")), "lf")
+    end
   end
 end
