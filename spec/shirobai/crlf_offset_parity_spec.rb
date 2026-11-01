@@ -99,8 +99,16 @@ RSpec.describe "CRLF source offset parity with stock RuboCop" do
   end
 
   describe "a CRLF file with multibyte characters (Ruby stdlib fileutils.rb)" do
-    it "is non-ASCII and has CRLF line endings (precondition for the sweep)"
-    it "matches stock offenses and autocorrect output for every implemented cop"
+    let(:source) { to_crlf(stdlib_source("fileutils.rb")) }
+
+    it "is non-ASCII and has CRLF line endings (precondition for the sweep)" do
+      expect(source.ascii_only?).to be(false)
+      expect(source.count("\r")).to eq(source.count("\n"))
+    end
+
+    it "matches stock offenses and autocorrect output for every implemented cop" do
+      expect(diverging_cops(source, config)).to eq([])
+    end
   end
 
   describe "a file that mixes CRLF and LF line endings" do
