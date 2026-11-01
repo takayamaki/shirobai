@@ -47,11 +47,14 @@ use super::line_index::LineIndex;
 /// Packed config: `max_line_length` mirrors stock's
 /// `AutocorrectLogic#max_line_length` (`nil` when `Layout/LineLength` is
 /// disabled -> `None`); `tab_width` mirrors `LineLengthHelp#tab_indentation_width`
-/// (always an integer after the config fallbacks).
+/// (always an integer after the config fallbacks); `space_inside_parens` is
+/// `StatementModifier#space_inside_parens?` (`Layout/SpaceInsideParens` enabled
+/// with `EnforcedStyle` `space` or `compact`).
 #[derive(Clone, Copy)]
 pub struct Config {
     pub max_line_length: Option<i64>,
     pub tab_width: i64,
+    pub space_inside_parens: bool,
 }
 
 /// One corrector operation the wrapper applies verbatim.
@@ -485,8 +488,13 @@ impl<'a> Visitor<'a> {
             s.extend_from_slice(code_after);
             s
         };
-        let len_no = self.line_length(&assemble(&expr));
-        let len_with = self.line_length(&assemble(&expr_with_comment));
+        // 1.92.2 `modifier_fits_on_single_line?` (rubocop#16153):
+        // a parenthesized modifier form will get a space inside each paren
+        // from `Layout/SpaceInsideParens` (`space` / `compact`), so it needs
+        // two more columns to fit.
+        let pad = if parenthesize && self.cfg.space_inside_parens { 2 } else { 0 };
+        let len_no = self.line_length(&assemble(&expr)) + pad;
+        let len_with = self.line_length(&assemble(&expr_with_comment)) + pad;
         let fits_no_comment = self.cfg.max_line_length.is_none_or(|m| len_no <= m);
         let fits_with_comment = self.cfg.max_line_length.is_none_or(|m| len_with <= m);
         // 1.90 `modifier_fits_on_single_line?` compares the assembled line
@@ -1685,7 +1693,7 @@ mod tests {
     fn run(src: &str) -> Vec<IfUnlessModifierCandidate> {
         check_if_unless_modifier(
             src.as_bytes(),
-            Config { max_line_length: Some(120), tab_width: 2 },
+            Config { max_line_length: Some(120), tab_width: 2, space_inside_parens: false },
         )
     }
 
@@ -1758,5 +1766,32 @@ mod tests {
         let c = run(&format!("x = {half} || {half}\n"));
         assert_eq!(c.len(), 2);
         assert!(c.iter().all(|c| !c.another_modifier_same_line));
+    }
+
+    // 1.92.2 (rubocop#16153): a parenthesized modifier form needs two more
+    // columns when `Layout/SpaceInsideParens` will pad the parens.
+    #[test]
+    fn space_inside_parens_adds_two_to_parenthesized_length() {
+        // The modifier line is `  (bar_baz if qux)`: 18 columns (the code
+        // before is the `if` line's indentation).
+        let src = "foo ||=\n  if qux\n    bar_baz\n  end\n";
+        let fits = |max, sip| {
+            let c = check_if_unless_modifier(
+                src.as_bytes(),
+                Config { max_line_length: Some(max), tab_width: 2, space_inside_parens: sip },
+            );
+            c.first().is_some_and(|c| c.fits_no_comment)
+        };
+        assert!(fits(18, false));
+        assert!(!fits(17, false));
+        assert!(!fits(19, true));
+        assert!(fits(20, true));
+        // No parentheses: no padding.
+        let plain = "if qux\n  bar_baz\nend\n";
+        let c = check_if_unless_modifier(
+            plain.as_bytes(),
+            Config { max_line_length: Some(14), tab_width: 2, space_inside_parens: true },
+        );
+        assert!(c[0].fits_no_comment);
     }
 }

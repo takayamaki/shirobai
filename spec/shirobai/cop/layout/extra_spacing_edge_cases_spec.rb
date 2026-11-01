@@ -162,4 +162,89 @@ RSpec.describe Shirobai::Cop::Layout::ExtraSpacing do
     expect_lint_parity(*klasses, source, force_config)
     expect_autocorrect_parity(*klasses, source, force_config)
   end
+
+  context "with ForceEqualSignAlignment and Layout/LineLength (1.92.2)" do
+    # rubocop#16128: `check_assignment` skips the offense when padding any
+    # token of the block would push its line over `Layout/LineLength` `Max`.
+    def line_length_config(line_length, extra = {})
+      RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new(
+          {
+            "Layout/ExtraSpacing" => { "Enabled" => true, "ForceEqualSignAlignment" => true },
+            "Layout/LineLength" => line_length
+          }.merge(extra),
+          "(edge)"
+        ),
+        "(edge)"
+      )
+    end
+
+    it "does not skip when Layout/LineLength is disabled" do
+      src = "a = 1\n#{'b' * 150} = 2\n"
+      cfg = line_length_config("Enabled" => false)
+      expect_lint_parity(*klasses, src, cfg)
+      expect_correction_edits_parity(*klasses, src, cfg)
+      expect_autocorrect_parity(*klasses, src, cfg)
+    end
+
+    it "skips at the default Max of 120" do
+      src = "a = #{'x' * 110}\n#{'b' * 15} = 2\n"
+      cfg = line_length_config("Enabled" => true)
+      expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
+      expect(lint_offenses(klasses.first, src, cfg)).to be_empty
+    end
+
+    it "flags when the padded lines stay within a small Max" do
+      src = "a = 1\nbbb = 2\n"
+      cfg = line_length_config("Enabled" => true, "Max" => 10)
+      expect_lint_parity(*klasses, src, cfg)
+      expect_correction_edits_parity(*klasses, src, cfg)
+      expect(expect_autocorrect_parity(*klasses, src, cfg)).to eq("a   = 1\nbbb = 2\n")
+    end
+
+    it "skips when one padded line would exceed a small Max" do
+      src = "a = 1234567\nbbb = 2\n"
+      cfg = line_length_config("Enabled" => true, "Max" => 12)
+      expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
+      expect(lint_offenses(klasses.first, src, cfg)).to be_empty
+    end
+
+    it "flags when the long line needs no padding" do
+      src = "a = 1\nbbbbbb = 1234567890\n"
+      cfg = line_length_config("Enabled" => true, "Max" => 12)
+      expect_lint_parity(*klasses, src, cfg)
+      expect_correction_edits_parity(*klasses, src, cfg)
+      expect_autocorrect_parity(*klasses, src, cfg)
+    end
+
+    it "counts chars, not bytes, on a non-ASCII line" do
+      # 12 chars (22 bytes) + 4 padding = 16 <= 20, so stock flags.
+      src = "a = \"あいうえお\"\nbbbbb = 1\n"
+      cfg = line_length_config("Enabled" => true, "Max" => 20)
+      expect_lint_parity(*klasses, src, cfg)
+      expect_correction_edits_parity(*klasses, src, cfg)
+      expect_autocorrect_parity(*klasses, src, cfg)
+    end
+
+    it "counts tab indentation like LineLength does" do
+      # "\ta = 1" is 6 chars + 1 for the tab (width 2), + 3 padding = 10 > 9.
+      src = "\ta = 1\n\tbbbb = 2\n"
+      cfg = line_length_config("Enabled" => true, "Max" => 9)
+      expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
+      expect(lint_offenses(klasses.first, src, cfg)).to be_empty
+      cfg10 = line_length_config("Enabled" => true, "Max" => 10)
+      expect_lint_parity(*klasses, src, cfg10)
+      expect_correction_edits_parity(*klasses, src, cfg10)
+    end
+
+    it "lets a later offense correct the block when the first offense line is disabled" do
+      # A directive-disabled offense never runs its corrector block, so stock's
+      # `@corrected` stays empty and the next offense carries the edits.
+      src = "a = 1\nbbbb = 2 # rubocop:disable Layout/ExtraSpacing\ncc = 3\n"
+      cfg = line_length_config("Enabled" => false)
+      expect_lint_parity(*klasses, src, cfg)
+      expect_correction_edits_parity(*klasses, src, cfg)
+      expect_autocorrect_parity(*klasses, src, cfg)
+    end
+  end
 end

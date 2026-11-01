@@ -14,7 +14,8 @@
 //!   keyword range is the construct's own keyword, except `start_of_line` which
 //!   is the keyword line's content range.
 //! - `check_asgn_alignment(outer, inner)` — for a conditional on the RHS of an
-//!   assignment (or `case`/`sclass` as an argument): `keyword` and
+//!   assignment (or `case` as an argument, or a `class` / `module` / `sclass`
+//!   that is the direct value of an assignment): `keyword` and
 //!   `start_of_line` are the inner construct's, but `variable` aligns with the
 //!   assignment's LHS (`outer.begin .. inner.keyword.end`, unless there is a
 //!   line break before the keyword, in which case it falls back to the
@@ -99,6 +100,8 @@ pub(crate) fn build_rule(source: &[u8], config: Config) -> Visitor<'_> {
         handled: HashSet::new(),
         ancestors: Vec::new(),
         send_arguments: HashSet::new(),
+        scope_asgn_parents: Vec::new(),
+        owner_frames: Vec::new(),
     }
 }
 
@@ -116,6 +119,40 @@ pub(crate) struct Visitor<'a> {
     /// Start offsets of nodes that are an argument of some `CallNode`
     /// (populated when that call is entered), standing in for `node.argument?`.
     send_arguments: HashSet<usize>,
+    /// `(rhs_start, outer_start)` for each `class` / `module` / `sclass`
+    /// that is the direct value of an assignment (`node.parent&.assignment?`),
+    /// recorded when the assignment is entered.
+    scope_asgn_parents: Vec<(usize, usize)>,
+    /// One entry per open ancestor (parallel to `ancestors`): how the node
+    /// takes part in `assignment_or_operator_method`. Only filled under the
+    /// `variable` style, the only style that reads it.
+    owner_frames: Vec<Option<OwnerFrame>>,
+}
+
+/// An ancestor that `assignment_or_operator_method(node)` may return, with the
+/// test that decides it for a given `node`.
+struct OwnerFrame {
+    /// The ancestor's start offset (the alignment column owner).
+    outer_start: usize,
+    kind: OwnerKind,
+    /// `(start, end)` of the leading node the test compares against.
+    key: Option<(usize, usize)>,
+    /// The call's `do`/`{}` block. In parser the block wraps the send, so a
+    /// node inside the block does not have the send as an ancestor.
+    block: Option<(usize, usize)>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OwnerKind {
+    /// `assignment_or_similar?` (assignments, setter calls, `recv << x`):
+    /// matches when `leading_node(extract_rhs(ancestor))` is the node.
+    Assignment,
+    /// An operator-method `send`: matches when `leading_node(ancestor)` is
+    /// NOT the node.
+    Operator,
+    /// Any other `send`: matches when `leading_node(ancestor.last_argument)`
+    /// is the node.
+    Send,
 }
 
 /// A resolved alignment range: a source range whose `column` / `line` the
@@ -387,6 +424,14 @@ impl<'a> Visitor<'a> {
         }
     }
 
+    /// Whether this node is a `class` / `module` / `sclass` (`on_sclass` and
+    /// its aliases).
+    fn is_scope(node: &Node<'_>) -> bool {
+        node.as_class_node().is_some()
+            || node.as_module_node().is_some()
+            || node.as_singleton_class_node().is_some()
+    }
+
     /// Whether this construct node is a `case` / `case_match`. (Only these take
     /// the argument-as-asgn path through their own callback.)
     fn is_case(node: &Node<'_>) -> bool {
@@ -435,7 +480,93 @@ fn unwrap_begin_or_and<'pr>(mut node: Node<'pr>) -> Option<Node<'pr>> {
     }
 }
 
+/// `leading_node(rhs)` as a `(start, end)` range: the first part of the call
+/// chain, unwrapped through begin / or / and.
+fn leading_range(node: Node<'_>) -> Option<(usize, usize)> {
+    let n = unwrap_begin_or_and(first_part_of_call_chain(node)?)?;
+    Some(loc(&n.location()))
+}
+
+/// The parser-gem operator methods (`MethodIdentifierPredicates::OPERATOR_METHODS`).
+fn is_operator_method(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"|" | b"^" | b"&" | b"<=>" | b"==" | b"===" | b"=~" | b">" | b">=" | b"<" | b"<="
+            | b"<<" | b">>" | b"+" | b"-" | b"*" | b"/" | b"%" | b"**" | b"~" | b"+@"
+            | b"-@" | b"!@" | b"~@" | b"[]" | b"[]=" | b"!" | b"!=" | b"!~" | b"`"
+    )
+}
+
 impl<'a> Visitor<'a> {
+    /// Classify `node` for `assignment_or_operator_method` (see
+    /// [`OwnerFrame`]).
+    fn owner_frame(&self, node: &Node<'_>) -> Option<OwnerFrame> {
+        let outer_start = node.location().start_offset();
+        if let Some(rhs) = self.assignment_rhs(node) {
+            return Some(OwnerFrame {
+                outer_start,
+                kind: OwnerKind::Assignment,
+                key: leading_range(rhs),
+                block: None,
+            });
+        }
+        let call = node.as_call_node()?;
+        // parser `last_argument`: a `&blk` block pass is the last argument.
+        let block_pass = call.block().is_some_and(|b| b.as_block_argument_node().is_some());
+        let last_argument = if block_pass {
+            None
+        } else {
+            Self::call_last_argument(&call)
+        };
+        let block = call
+            .block()
+            .filter(|b| b.as_block_node().is_some())
+            .map(|b| loc(&b.location()));
+        let name = call.name().as_slice();
+        let setter = call.equal_loc().is_some();
+        let kind = if call.is_safe_navigation() {
+            // csend: `assignment?` only as a setter; never `send_type?`.
+            if !setter {
+                return None;
+            }
+            OwnerKind::Assignment
+        } else if setter || (name == b"<<" && call.receiver().is_some()) {
+            OwnerKind::Assignment
+        } else if is_operator_method(name) {
+            OwnerKind::Operator
+        } else {
+            OwnerKind::Send
+        };
+        let key = if kind == OwnerKind::Operator {
+            leading_range(call.as_node())
+        } else {
+            last_argument.and_then(leading_range)
+        };
+        Some(OwnerFrame {
+            outer_start,
+            kind,
+            key,
+            block,
+        })
+    }
+
+    /// `assignment_or_operator_method(node)`: the nearest ancestor that owns
+    /// the `variable` style alignment of `node` (`(start, end)`).
+    fn assignment_or_operator_method(&self, node: (usize, usize)) -> Option<usize> {
+        // `enter_node` runs before the node pushes its own frame, so every
+        // frame scanned here is an ancestor.
+        self.owner_frames.iter().rev().flatten().find_map(|f| {
+            if f.block.is_some_and(|(s, e)| s <= node.0 && node.1 <= e) {
+                return None;
+            }
+            let hit = match f.kind {
+                OwnerKind::Assignment | OwnerKind::Send => f.key == Some(node),
+                OwnerKind::Operator => f.key != Some(node),
+            };
+            hit.then_some(f.outer_start)
+        })
+    }
+
     /// `CheckAssignment#check_assignment`: with `rhs` the assignment's RHS,
     /// follow the call chain, unwrap begin/or/and, and (when a non-ternary
     /// conditional remains) run the asgn alignment for `outer_start`.
@@ -605,13 +736,18 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    /// `alignment_node` for the `check_other` path (no enclosing assignment).
-    fn other_alignment_node(&self, c: &Construct) -> usize {
+    /// `alignment_node` for the `check_other` path.
+    fn other_alignment_node(&self, c: &Construct, node: (usize, usize)) -> usize {
         match self.style {
             STYLE_START_OF_LINE => self.start_line_range(c.kw_start).start,
-            // For `variable` with no assignment, `alignment_node_for_variable_style`
-            // falls back to the node itself; the node's column equals the keyword
-            // column for these constructs.
+            // `alignment_node_for_variable_style`: the nearest owning ancestor
+            // (`assignment_or_operator_method`) unless there is a line break
+            // before the node, else the node itself, whose column equals the
+            // keyword column for these constructs.
+            STYLE_VARIABLE => match self.assignment_or_operator_method(node) {
+                Some(owner) if self.line_of(node.0) <= self.line_of(owner) => owner,
+                _ => c.kw_start,
+            },
             _ => c.kw_start,
         }
     }
@@ -624,8 +760,29 @@ impl<'a> Visitor<'a> {
         // 1. Assignment / send nodes: the downward `check_assignment` path.
         if let Some(rhs) = self.assignment_rhs(node) {
             let outer_start = node.location().start_offset();
+            if Self::is_scope(&rhs) {
+                self.scope_asgn_parents
+                    .push((rhs.location().start_offset(), outer_start));
+            }
             self.check_assignment(outer_start, rhs);
         } else if let Some(call) = node.as_call_node() {
+            // A setter call is `assignment?` too (`MethodDispatchNode` aliases
+            // it to `setter_method?`), so any direct child scope of it takes
+            // the asgn path in `on_sclass`.
+            if call.equal_loc().is_some() {
+                let outer_start = node.location().start_offset();
+                let receiver = call.receiver();
+                let args = call.arguments().map(|a| a.arguments());
+                let children = receiver
+                    .into_iter()
+                    .chain(args.iter().flat_map(|a| a.iter()));
+                for child in children {
+                    if Self::is_scope(&child) {
+                        self.scope_asgn_parents
+                            .push((child.location().start_offset(), outer_start));
+                    }
+                }
+            }
             // `on_send`: only when the call has a last argument to treat as RHS.
             if let Some(rhs) = Self::call_last_argument(&call) {
                 let outer_start = node.location().start_offset();
@@ -635,16 +792,29 @@ impl<'a> Visitor<'a> {
 
         // 2. The construct's own callback (`on_if` / `on_case` / `on_class` /
         //    ...). `case` / `case_match` as a send argument take the asgn path
-        //    against the enclosing send; `sclass` whose parent is an assignment
-        //    likewise (handled via the assignment_rhs path above, so here only
-        //    its `check_other` fallback runs when not yet handled).
+        //    against the enclosing send. `class` / `module` / `sclass` whose
+        //    parent is an assignment take it against that assignment (1.92.2,
+        //    rubocop#16142: `on_class` / `on_module` became aliases of
+        //    `on_sclass`).
         if let Some(c) = self.construct(node) {
+            let start = node.location().start_offset();
+            let scope_parent = if Self::is_scope(node) {
+                self.scope_asgn_parents
+                    .iter()
+                    .find(|(rhs_start, _)| *rhs_start == start)
+                    .map(|&(_, outer_start)| outer_start)
+            } else {
+                None
+            };
             if Self::is_case(node) && self.is_send_argument(node) {
                 let outer_start = *self.ancestors.last().unwrap();
                 let align_node = self.case_argument_alignment_node(outer_start, node, &c);
                 self.check_asgn(outer_start, &c, align_node);
+            } else if let Some(outer_start) = scope_parent {
+                let align_node = self.variable_alignment_node(outer_start, node, &c);
+                self.check_asgn(outer_start, &c, align_node);
             } else {
-                let align_node = self.other_alignment_node(&c);
+                let align_node = self.other_alignment_node(&c, loc(&node.location()));
                 self.check_other(&c, align_node);
             }
         }
@@ -695,10 +865,17 @@ impl super::dispatch::Rule for Visitor<'_> {
         }
         self.enter_node(node);
         self.ancestors.push(node.location().start_offset());
+        let frame = if self.style == STYLE_VARIABLE {
+            self.owner_frame(node)
+        } else {
+            None
+        };
+        self.owner_frames.push(frame);
     }
 
     fn leave(&mut self) {
         self.ancestors.pop();
+        self.owner_frames.pop();
     }
 
     // Constructs (`if` / `case` / `class` / ...) are all branch nodes, so the

@@ -299,6 +299,77 @@ RSpec.describe Shirobai::Cop::Layout::LineLength do
       expect_autocorrect_parity(*klasses, src, config)
     end
   end
+  # 1.92.2 `after_heredoc_opener?` (rubocop#16139): a break point that sits
+  # after a heredoc opener on the same line is dropped (breaking there would
+  # put code on the heredoc body's first line). Every claim kind is covered:
+  # node, semicolon, block, lambda, string; and claims BEFORE the opener
+  # still apply.
+  context "with code after a heredoc opener (rubocop#16139)" do
+    let(:split_config) do
+      config_with(default_config, "Layout/LineLength", "Max" => 40, "SplitStrings" => true)
+    end
+
+    {
+      "drops a block claim after the opener" =>
+        "do_something(<<~X, items.map { |item| item.to_s })\n  text\nX\n",
+      "drops a lambda claim after the opener" =>
+        "do_something(<<~X, -> { items.map(&:to_s).compact })\n  text\nX\n",
+      "drops a semicolon claim after the opener" =>
+        "str = <<~X; do_something_else(foo, bar, baz)\n  text\nX\n",
+      "keeps a semicolon claim before the opener" =>
+        "foo = 1; str = do_something(<<~X, bar, baz, qux)\n  text\nX\n",
+      "keeps a block claim before the opener" =>
+        "items.map { |item| item.to_s }.join(<<~X, aaaaaaa)\n  text\nX\n",
+      "drops a node claim after the opener" =>
+        "do_something(<<~X) + do_something_else(foo, bar, baz)\n  text\nX\n",
+      "breaks an array before the heredoc element" =>
+        "[foo, bar, baz, <<~X, items.map { |item| item }]\n  text\nX\n",
+      "drops a hash pair claim after the opener" =>
+        "foo(a: <<~X, b: items.map { |i| i }, c: 1234567)\n  text\nX\n",
+      "drops a string split after the opener" =>
+        "do_something(<<~X) + 'foo bar baz qux quux corge'\n  text\nX\n",
+      "drops a multibyte string split after a squiggly opener" =>
+        "do_something(<<~X) + 'あいう えおか きくけ こさし すせそ たちつ'\n  text\nX\n",
+      "keeps a multibyte string split before the opener" =>
+        "x = 'あいう えおか きくけ こさし すせそ たちつ てと' + foo(<<~X)\n  text\nX\n",
+      "drops an interpolated string split after the opener" =>
+        "do_something(<<~X) + \"foo bar baz \#{qux} quux corge\"\n  text\nX\n",
+      "drops a claim after a dash opener" =>
+        "do_something(<<-X, items.map { |item| item.to_s })\n  text\n  X\n",
+      "drops a claim after a bare opener" =>
+        "do_something(<<X, items.map { |item| item.to_s })\ntext\nX\n",
+      "drops a claim after a backtick opener" =>
+        "do_something(<<~`X`, items.map { |item| item.to_s })\n  ls\nX\n",
+      "drops a claim after an opener inside an interpolation" =>
+        "x = \"\#{<<~X}\" + items.map { |item| item.to_s }.join\n  text\nX\n",
+      "uses the leftmost of two openers on the line" =>
+        "foo(aaaaaaaaaa, <<~A, <<~B, items.map { |i| i })\n  a\nA\n  b\nB\n",
+      "claims a block whose receiver holds a heredoc on an earlier line" =>
+        "<<~X\n  text\nX\n  .lines.map { |line| line.strip.upcase.squeeze.chomp }\n"
+    }.each do |title, src|
+      it title do
+        expect_lint_parity(*klasses, src, split_config)
+        expect_autocorrect_parity(*klasses, src, split_config, fresh_cop_per_pass: true)
+      end
+
+      it "#{title} (CRLF)" do
+        crlf = src.gsub("\n", "\r\n")
+        expect_lint_parity(*klasses, crlf, split_config)
+        expect_autocorrect_parity(*klasses, crlf, split_config, fresh_cop_per_pass: true)
+      end
+    end
+
+    it "builds the same edits for the array broken before the heredoc element" do
+      src = "[foo, bar, baz, <<~X, items.map { |item| item }]\n  text\nX\n"
+      expect_correction_edits_parity(*klasses, src, split_config)
+    end
+
+    it "builds the same edits for a semicolon claim before the opener" do
+      src = "foo = 1; str = do_something(<<~X, bar, baz, qux)\n  text\nX\n"
+      expect_correction_edits_parity(*klasses, src, split_config)
+    end
+  end
+
   def config_with(base, cop_name, overrides)
     hash = base.to_h.dup
     hash[cop_name] = (hash[cop_name] || {}).merge(overrides)

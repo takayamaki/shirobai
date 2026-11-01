@@ -104,4 +104,53 @@ RSpec.describe Shirobai::Cop::Layout::HashAlignment do
       expect_autocorrect_parity(*klasses, source_192, cfg)
     end
   end
+
+  # 1.92.2 (rubocop#16134 / rubocop#16175): the value styles (table and
+  # separator) cannot check a hash where a pair starts on the line of the
+  # previous child (usually a `**kwsplat`), and they compute no delta for a
+  # pair that does not begin its line. With several styles, deltas are still
+  # computed for a hash one style cannot check, so every mix is pinned here,
+  # down to the edit list.
+  sources_1922 = {
+    "pairs after kwsplats" => "x = { **a, b:  1,\n      **c, dd: 2 }\n",
+    "rocket pairs after kwsplats" => "x = { **a, :b  => 1,\n      **c, :dd => 2 }\n",
+    "a pair after a pair" => "h = {\n  a:   1,\n  bb:  2,\n  ccc: 3,\n  e: 5, f: 6\n}\n",
+    "a kwsplat after a pair" => "h = {\n  a:  1,\n  bbb: 2, **c,\n  d: 3\n}\n",
+    "call arguments" => "foo(**a, b:  1,\n    **c, dd: 2)\n",
+    "non-ASCII keys" => "h = {\n  あ:   1,\n  いいい: 2,\n  e: 5, f: 6\n}\n"
+  }
+  styles_1922 = [
+    %w[key key], %w[table table], %w[separator separator],
+    [%w[key table], %w[key table]], [%w[table key], %w[table key]],
+    [%w[separator key], %w[separator key]], [%w[key separator], %w[key separator]]
+  ]
+
+  sources_1922.each do |name, source|
+    styles_1922.each do |colon, rocket|
+      it "matches stock with #{name} (colon: #{colon}, rocket: #{rocket})" do
+        cfg = ha_config(colon, rocket)
+        expect_lint_parity(*klasses, source, cfg, expect_offenses: false)
+        expect(correction_edits(klasses.last, source, cfg)).to eq(correction_edits(klasses.first, source, cfg))
+        expect_autocorrect_parity(*klasses, source, cfg)
+      end
+    end
+  end
+
+  it "moves only the kwsplat when pairs follow kwsplats on the same line (key and table)" do
+    cfg = ha_config(%w[key table], %w[key table])
+    source = sources_1922["pairs after kwsplats"]
+    expect_lint_parity(*klasses, source, cfg)
+    expect_correction_edits_parity(*klasses, source, cfg)
+    expect(expect_autocorrect_parity(*klasses, source, cfg))
+      .to eq("x = { **a, b:  1,\n           **c, dd: 2 }\n")
+  end
+
+  it "corrects a misaligned pair that has another pair after it (table and key, non-ASCII)" do
+    # `max_key_width` counts the chars of a key, not its bytes.
+    cfg = ha_config(%w[table key], %w[table key])
+    source = "h = {\n  あ:   1,\n  いい:  2,\n  ううう: 3,\n  e: 5, f: 6\n}\n"
+    expect_lint_parity(*klasses, source, cfg)
+    expect_correction_edits_parity(*klasses, source, cfg)
+    expect_autocorrect_parity(*klasses, source, cfg)
+  end
 end

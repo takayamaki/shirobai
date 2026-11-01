@@ -210,10 +210,11 @@ impl Visitor<'_> {
     }
 
     /// `put_comma`: insert a comma after the last item's last-line content,
-    /// unless that item is a block-pass.
+    /// unless that item is a block-pass or forwarded args `...`
+    /// (`last_item.type?(:block_pass, :forwarded_args)`).
     fn put_comma(&mut self, args: &[Node<'_>]) {
         let last = args.last().unwrap();
-        if matches!(last, Node::BlockArgumentNode { .. }) {
+        if matches!(last, Node::BlockArgumentNode { .. } | Node::ForwardingArgumentsNode { .. }) {
             return;
         }
         let (start, end) = (last.location().start_offset(), last.location().end_offset());
@@ -432,6 +433,15 @@ mod tests {
     fn block_pass_not_put() {
         // consistent_comma but last item is `&block` -> skipped.
         assert!(run("m(\n  a,\n  &block\n)\n", STYLE_CONSISTENT_COMMA).is_empty());
+    }
+
+    #[test]
+    fn forwarded_args_not_put() {
+        // `...` last: `put_comma` returns early (`type?(:block_pass, :forwarded_args)`).
+        let src = "def foo(...)\n  bar(\n    baz,\n    ...\n  )\nend\n";
+        assert!(run(src, STYLE_COMMA).is_empty());
+        assert!(run(src, STYLE_CONSISTENT_COMMA).is_empty());
+        assert!(run(src, STYLE_DIFF_COMMA).is_empty());
     }
 
     #[test]

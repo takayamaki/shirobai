@@ -347,4 +347,68 @@ RSpec.describe Shirobai::Cop::Style::IfUnlessModifier do
       expect_lint_parity(*klasses, src, config, expect_offenses: false)
     end
   end
+  # 1.92.2 `modifier_fits_on_single_line?` (rubocop#16153): a parenthesized
+  # modifier form gets a space inside each paren from
+  # `Layout/SpaceInsideParens` (`space` / `compact`), so it needs two more
+  # columns. The modifier line `  (bar_baz if qux)` is 18 columns.
+  describe "parenthesized modifier form and Layout/SpaceInsideParens (rubocop#16153)" do
+    source = "foo ||=\n  if qux\n    bar_baz\n  end\n"
+
+    def config_for(max, space_inside_parens)
+      RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new(
+          { "Layout/LineLength" => { "Max" => max },
+            "Layout/SpaceInsideParens" => space_inside_parens }, "(test)"
+        ),
+        "(test)"
+      )
+    end
+
+    {
+      "space" => { "Enabled" => true, "EnforcedStyle" => "space" },
+      "compact" => { "Enabled" => true, "EnforcedStyle" => "compact" }
+    }.each do |name, sip|
+      context "with `#{name}`" do
+        it "does not flag at Max 19 (18 + 2 columns)" do
+          expect_lint_parity(*klasses, source, config_for(19, sip), expect_offenses: false)
+        end
+
+        it "flags at Max 20" do
+          expect_lint_parity(*klasses, source, config_for(20, sip))
+          expect_autocorrect_parity(*klasses, source, config_for(20, sip))
+          expect_correction_edits_parity(*klasses, source, config_for(20, sip))
+        end
+
+        it "does not flag at Max 19 in a CRLF file (standalone path)" do
+          expect_lint_parity(*klasses, source.gsub("\n", "\r\n"), config_for(19, sip),
+                             expect_offenses: false)
+        end
+
+        it "flags at Max 20 in a CRLF file (standalone path)" do
+          expect_lint_parity(*klasses, source.gsub("\n", "\r\n"), config_for(20, sip))
+        end
+
+        it "adds nothing when the modifier form is not parenthesized" do
+          plain = "if qux\n  bar_baz\nend\n" # `bar_baz if qux` is 14 columns
+          expect_lint_parity(*klasses, plain, config_for(14, sip))
+        end
+      end
+    end
+
+    {
+      "no_space" => { "Enabled" => true, "EnforcedStyle" => "no_space" },
+      "space but disabled" => { "Enabled" => false, "EnforcedStyle" => "space" }
+    }.each do |name, sip|
+      context "with `#{name}`" do
+        it "flags at Max 18" do
+          expect_lint_parity(*klasses, source, config_for(18, sip))
+          expect_autocorrect_parity(*klasses, source, config_for(18, sip))
+        end
+
+        it "does not flag at Max 17" do
+          expect_lint_parity(*klasses, source, config_for(17, sip), expect_offenses: false)
+        end
+      end
+    end
+  end
 end

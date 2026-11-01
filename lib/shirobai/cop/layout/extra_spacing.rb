@@ -17,8 +17,11 @@ module Shirobai
       # (`corrector.remove(range)` — the usual "delete extra spacing" fix) or `1`
       # (`ForceEqualSignAlignment`: apply each `[edit_start, edit_end, text]` of
       # `edits` with `corrector.replace` — a zero-width range inserts, an empty
-      # `text` deletes; Rust has already applied the `@corrected` dedup so each
-      # token's edit appears under exactly one offense).
+      # `text` deletes). Rust returns the edits of every token in the block;
+      # the wrapper applies stock's `@corrected` dedup (keyed by the token
+      # begin, which is each edit's end) inside the corrector block, and
+      # skips the offense when aligning would push a line over
+      # `Layout/LineLength` `Max` (1.92.2 `exceeds_max_line_length?`).
       #
       # Config inputs: `AllowForAlignment` (default true) /
       # `AllowBeforeTrailingComments` (default false) / `ForceEqualSignAlignment`
@@ -28,6 +31,7 @@ module Shirobai
       # falls back to a standalone lex of `buffer.source`. (CRLF/buffer.source
       # trap, `aee0e8e`.)
       class ExtraSpacing < RuboCop::Cop::Base
+        include RuboCop::Cop::LineLengthHelp
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
 
@@ -61,6 +65,7 @@ module Shirobai
           buffer = processed_source.buffer
           source_for_offsets = bundle_eligible? ? processed_source.raw_source : buffer.source
           off = SourceOffsets.for(source_for_offsets)
+          @corrected = Set.new
 
           resolved_result.each do |start_pos, end_pos, message, action, edits|
             # `ignored_range?(ast, range.begin_pos)`: applied here (not in Rust)
@@ -74,21 +79,46 @@ module Shirobai
             next if action == 0 &&
                     ignored_ranges(source_for_offsets).any? { |s, e| (s...e).cover?(start_pos) }
 
+            next if action == 1 && exceeds_max_line_length?(buffer, off, edits)
+
             range = Parser::Source::Range.new(buffer, off[start_pos], off[end_pos])
             add_offense(range, message: message) do |corrector|
               if action == 0
                 corrector.remove(range)
               else
-                edits.each do |edit_start, edit_end, text|
-                  edit_range = Parser::Source::Range.new(buffer, off[edit_start], off[edit_end])
-                  corrector.replace(edit_range, text)
-                end
+                align_equal_signs(corrector, buffer, off, edits)
               end
             end
           end
         end
 
         private
+
+        # `align_equal_sign` per token: `return unless @corrected.add?(token)`.
+        # An edit ends at its token's begin (`insert_before(token.pos)` is
+        # zero-width there, `remove_preceding(token.pos, n)` ends there).
+        def align_equal_signs(corrector, buffer, off, edits)
+          edits.each do |edit_start, edit_end, text|
+            next unless @corrected.add?(edit_end)
+
+            edit_range = Parser::Source::Range.new(buffer, off[edit_start], off[edit_end])
+            corrector.replace(edit_range, text)
+          end
+        end
+
+        # 1.92.2 `exceeds_max_line_length?(tokens, align_to)`. A token with
+        # positive padding is exactly a token with an insert edit, and the
+        # edit's text is the padding. `max_line_length` is nil when
+        # `Layout/LineLength` is disabled.
+        def exceeds_max_line_length?(buffer, off, edits)
+          max = max_line_length
+          max && edits.any? do |edit_start, edit_end, text|
+            next false unless edit_start == edit_end && !text.empty?
+
+            source_line = Parser::Source::Range.new(buffer, off[edit_end], off[edit_end]).source_line
+            line_length(source_line) + text.length > max
+          end
+        end
 
         # `@ignored_ranges ||= …` — stock memoizes the multi-line hash key↔value
         # spans on the cop instance, so a reused instance (the autocorrect

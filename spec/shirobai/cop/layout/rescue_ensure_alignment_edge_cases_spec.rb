@@ -111,3 +111,51 @@ RSpec.describe Shirobai::Cop::Layout::RescueEnsureAlignment do
     expect_autocorrect_parity(*klasses, source, cfg)
   end
 end
+
+# 1.92.2 (rubocop#16183): `alignment_source` takes `node.lhs.source_range`
+# for `op_asgn` / `or_asgn` / `and_asgn` like `masgn`. Before, an index or
+# attribute target fell to the receiver branch and crashed on
+# `Parser::Source::Map::Send#name`. The message text is built from this
+# source, so every operator-assignment flavor is pinned with both
+# `BeginEndAlignment` settings.
+RSpec.describe Shirobai::Cop::Layout::RescueEnsureAlignment do
+  include EdgeCaseParity
+
+  klasses = [
+    RuboCop::Cop::Layout::RescueEnsureAlignment,
+    Shirobai::Cop::Layout::RescueEnsureAlignment
+  ]
+
+  def begin_end_config(begin_end)
+    RuboCop::ConfigLoader.merge_with_default(
+      RuboCop::Config.new({ "Layout/BeginEndAlignment" => begin_end }, "(test)"),
+      "(test)"
+    )
+  end
+
+  sources = {
+    "index or-assignment" => "h[:k] ||= foo do\n  bar\n  rescue E\n  baz\nend\n",
+    "index and-assignment" => "h[:k] &&= foo do\n  rescue\nend\n",
+    "index operator assignment" => "h[:k] += foo do\n    ensure\nend\n",
+    "attribute or-assignment" => "obj.attr ||= foo do\n  ensure\nend\n",
+    "safe-navigation attribute assignment" => "obj&.attr ||= foo do\n  rescue\nend\n",
+    "local operator assignment" => "x += foo do\n  rescue\nend\n",
+    "instance variable or-assignment" => "@a ||= foo do\n  rescue\nend\n",
+    "constant path or-assignment" => "Foo::BAR ||= foo do\n  rescue\nend\n",
+    "begin block on an index or-assignment" => "h[:k] ||= begin\n    foo\n  rescue\n    bar\n  end\n",
+    "multi-line index target" => "h[\n  :k\n] ||= foo do\n  rescue\nend\n",
+    "non-ASCII target" => "変数[:キー] ||= foo do\n  rescue\nend\n"
+  }
+
+  sources.each do |name, source|
+    [{ "Enabled" => false }, { "Enabled" => true, "EnforcedStyleAlignWith" => "start_of_line" },
+     { "Enabled" => true, "EnforcedStyleAlignWith" => "begin" }].each do |begin_end|
+      it "matches stock for a #{name} (BeginEndAlignment #{begin_end})" do
+        cfg = begin_end_config(begin_end)
+        expect_lint_parity(*klasses, source, cfg)
+        expect_correction_edits_parity(*klasses, source, cfg)
+        expect_autocorrect_parity(*klasses, source, cfg)
+      end
+    end
+  end
+end

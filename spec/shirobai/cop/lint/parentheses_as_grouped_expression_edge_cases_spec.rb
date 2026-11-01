@@ -179,4 +179,47 @@ RSpec.describe Shirobai::Cop::Lint::ParenthesesAsGroupedExpression do
       expect(lint_offenses(klasses.first, "a( (b) )\n", config)).to be_empty
     end
   end
+  # 1.92.2 `command_call_operand?` (rubocop#16143): removing the space would
+  # make the parentheses the outer call's argument list, and the inner
+  # command call would bind differently. Note `(!!foo 'baz')` and
+  # `(x = !foo 'baz')` are syntax errors, so a prefix bang only counts at
+  # the top of the parentheses.
+  describe "command call operands (rubocop#16143)" do
+    [
+      "obj.do_something (x[1] = foo 'baz')\n",
+      "obj.do_something (x += foo 'baz')\n",
+      "obj.do_something (x &&= foo 'baz')\n",
+      "obj.do_something (X ||= foo 'baz')\n",
+      "obj.do_something (x.y ||= foo 'baz')\n",
+      "obj.do_something (a, b = foo 'baz')\n",
+      "obj.do_something (x = a&.foo 'baz')\n",
+      "obj.do_something (x = foo &blk)\n",
+      "obj.do_something (x = foo 'baz', 1)\n",
+      "obj.do_something (!foo 'baz' do end)\n",
+      "def m\n  obj.do_something (x = super 'baz')\nend\n",
+      "def m\n  obj.do_something (x = yield 'baz')\nend\n"
+    ].each do |source|
+      it "does not flag #{source.inspect}" do
+        expect_lint_parity(*klasses, source, config, expect_offenses: false)
+      end
+    end
+
+    [
+      "obj.do_something (foo 'baz')\n",
+      "obj.do_something (x = foo(1))\n",
+      "obj.do_something (x = foo)\n",
+      "obj.do_something (x = a + b)\n",
+      "obj.do_something (x = -> {})\n",
+      "obj.do_something (x = (foo 'baz'))\n",
+      "obj.do_something (x = !foo)\n",
+      "def m\n  obj.do_something (x = super)\nend\n",
+      "def m\n  obj.do_something (x = yield(1))\nend\n"
+    ].each do |source|
+      it "still flags #{source.inspect}" do
+        expect_lint_parity(*klasses, source, config)
+        expect_autocorrect_parity(*klasses, source, config)
+        expect_correction_edits_parity(*klasses, source, config)
+      end
+    end
+  end
 end

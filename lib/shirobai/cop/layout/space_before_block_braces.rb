@@ -31,6 +31,7 @@ module Shirobai
       class SpaceBeforeBlockBraces < RuboCop::Cop::Base
         include RuboCop::Cop::ConfigurableEnforcedStyle
         include RuboCop::Cop::RangeHelp
+        include Shirobai::Cop::BundleEligible
         extend RuboCop::Cop::AutoCorrector
 
         MISSING_MSG = "Space missing to the left of {."
@@ -66,7 +67,8 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          source = bundle_eligible? ? processed_source.raw_source : buffer.source
+          off = SourceOffsets.for(source)
           offenses, summary = result_for_source
           a_correct, b_match_first, b_offense, b_match_after, saw_empty = summary
 
@@ -109,9 +111,24 @@ module Shirobai
 
         def autocorrect(corrector, range)
           case range.source
+          when /\n/ then remove_line_continuation(corrector, range)
           when /\s/ then corrector.remove(range)
           else corrector.insert_before(range, " ")
           end
+        end
+
+        # Mirrors stock (rubocop#16002, rubocop#16175): a gap with a newline
+        # is a `\` continuation, removed together with the spaces, tabs and
+        # backslashes before it. When a heredoc body sits between the `\`
+        # and the brace, the char before the gap is not a backslash, and the
+        # offense is left uncorrected.
+        def remove_line_continuation(corrector, range)
+          source = processed_source.buffer.source
+          return unless source[range.begin_pos - 1] == "\\"
+
+          begin_pos = range.begin_pos
+          begin_pos -= 1 while source[begin_pos - 1].match?(/[ \t\\]/)
+          corrector.remove(range_between(begin_pos, range.end_pos))
         end
 
         def style_for_empty_braces
@@ -133,16 +150,9 @@ module Shirobai
           else
             nums, = self.class.bundle_args(config)
             Shirobai.check_space_before_block_braces(
-              processed_source.raw_source, nums[0], nums[1], nums[2] == 1
+              processed_source.buffer.source, nums[0], nums[1], nums[2] == 1
             )
           end
-        end
-
-        # No per-investigation state and no config that can't be packed, so
-        # this cop is always bundle eligible. Kept for symmetry / a future
-        # fallback.
-        def bundle_eligible?
-          true
         end
       end
     end

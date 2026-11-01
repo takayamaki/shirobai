@@ -88,6 +88,7 @@ pub fn compute_breakables_with(
         // not re-enter the parse cache while it is borrowed).
         let literals = collect_literal_ranges(node);
         let comments = comment_byte_ranges_with(source, &literals);
+        let heredoc_openers = collect_heredoc_openers(source, &line_index, node);
         let comment_lines: std::collections::BTreeSet<usize> = comments
             .iter()
             .map(|&(s, _)| line_index.line_of(s))
@@ -107,6 +108,7 @@ pub fn compute_breakables_with(
             comments,
             comment_lines,
             extra_breaks: std::collections::BTreeMap::new(),
+            heredoc_openers,
         };
         // Semicolons are claimed first (upstream does this in
         // `on_new_investigation`, before the node walk), so a NODE claim never
@@ -189,6 +191,11 @@ struct BreakableVisitor<'a> {
     /// Extra break offsets after the first one, for a string split into
     /// several pieces in one pass.
     extra_breaks: std::collections::BTreeMap<usize, Vec<usize>>,
+    /// `heredoc_openers` (1.92.2): per 1-based line, the smallest start
+    /// offset of a heredoc opener (`<<~X`) on it. `after_heredoc_opener?`
+    /// only asks whether some opener on the range's line begins before it, so
+    /// the leftmost one decides.
+    heredoc_openers: std::collections::BTreeMap<usize, usize>,
 }
 
 impl BreakableVisitor<'_> {
@@ -218,7 +225,20 @@ impl BreakableVisitor<'_> {
         }
     }
 
+    /// `after_heredoc_opener?(range)` (1.92.2, rubocop#16139): a heredoc opener
+    /// sits on the range's line and begins before it. Breaking there would
+    /// move code after the opener onto the heredoc body's first line.
+    fn after_heredoc_opener(&self, begin: usize) -> bool {
+        let line = self.line_index.line_of(begin);
+        self.heredoc_openers.get(&line).is_some_and(|&opener| opener < begin)
+    }
+
+    /// A node claim (`check_for_breakable_node`, the `rescue` list included):
+    /// `return if existing || after_heredoc_opener?(range)`.
     fn claim(&mut self, line_index: usize, insert_offset: usize, end_offset: usize) {
+        if self.after_heredoc_opener(insert_offset) {
+            return;
+        }
         self.ranges
             .entry(line_index)
             .or_insert((insert_offset, end_offset));
@@ -234,6 +254,10 @@ impl BreakableVisitor<'_> {
     fn claim_block(&mut self, line_index: usize, insert_offset: usize) {
         // 1.92: `return if breakable_string_delimiters[line_index]`.
         if self.delimiters.contains_key(&line_index) {
+            return;
+        }
+        // 1.92.2: `return if after_heredoc_opener?(range)`.
+        if self.after_heredoc_opener(insert_offset) {
             return;
         }
         self.ranges
@@ -287,6 +311,10 @@ impl BreakableVisitor<'_> {
             }
             let line_index = self.line_index.line_of(semi) - 1;
             if !self.is_candidate(line_index) {
+                continue;
+            }
+            // 1.92.2: `next if range.nil? || after_heredoc_opener?(range)`.
+            if self.after_heredoc_opener(end_pos) {
                 continue;
             }
             // Overwrite (semicolons win and overwrite earlier semicolons).
@@ -628,6 +656,62 @@ fn is_heredoc(source: &[u8], node: &Node<'_>) -> bool {
     open.is_some_and(|o| source[o.start_offset()..o.end_offset()].starts_with(b"<<"))
 }
 
+/// `heredoc_openers`: `ast.each_node(:any_str).select(&:heredoc?)`, keyed by
+/// the opener's 1-based line with the smallest start offset on that line.
+fn collect_heredoc_openers(
+    source: &[u8],
+    li: &LineIndex,
+    node: &Node<'_>,
+) -> std::collections::BTreeMap<usize, usize> {
+    struct Collector<'a> {
+        source: &'a [u8],
+        starts: Vec<usize>,
+    }
+    impl Collector<'_> {
+        fn note(&mut self, open: Option<ruby_prism::Location<'_>>) {
+            if let Some(o) = open
+                && self.source[o.start_offset()..o.end_offset()].starts_with(b"<<")
+            {
+                self.starts.push(o.start_offset());
+            }
+        }
+    }
+    impl<'pr> Visit<'pr> for Collector<'_> {
+        fn visit_string_node(&mut self, node: &ruby_prism::StringNode<'pr>) {
+            self.note(node.opening_loc());
+        }
+        fn visit_x_string_node(&mut self, node: &ruby_prism::XStringNode<'pr>) {
+            self.note(Some(node.opening_loc()));
+        }
+        fn visit_interpolated_string_node(
+            &mut self,
+            node: &ruby_prism::InterpolatedStringNode<'pr>,
+        ) {
+            self.note(node.opening_loc());
+            ruby_prism::visit_interpolated_string_node(self, node);
+        }
+        fn visit_interpolated_x_string_node(
+            &mut self,
+            node: &ruby_prism::InterpolatedXStringNode<'pr>,
+        ) {
+            self.note(Some(node.opening_loc()));
+            ruby_prism::visit_interpolated_x_string_node(self, node);
+        }
+    }
+    if !source.windows(2).any(|w| w == b"<<") {
+        return std::collections::BTreeMap::new();
+    }
+    let mut c = Collector { source, starts: Vec::new() };
+    c.visit(node);
+    let mut out = std::collections::BTreeMap::new();
+    for start in c.starts {
+        out.entry(li.line_of(start))
+            .and_modify(|s: &mut usize| *s = (*s).min(start))
+            .or_insert(start);
+    }
+    out
+}
+
 /// Whether `node`'s first argument is a heredoc (call only).
 fn first_argument_is_heredoc(source: &[u8], call: &ruby_prism::CallNode<'_>) -> bool {
     call.arguments()
@@ -817,7 +901,6 @@ impl<'pr> BreakableVisitor<'_> {
         {
             self.check_for_breakable_block(
                 node.location().start_offset(),
-                call.receiver().as_ref(),
                 &block,
                 false,
             );
@@ -831,12 +914,12 @@ impl<'pr> BreakableVisitor<'_> {
         if let Some(sup) = node.as_super_node()
             && let Some(block) = sup.block().and_then(|b| b.as_block_node())
         {
-            self.check_for_breakable_block(node.location().start_offset(), None, &block, false);
+            self.check_for_breakable_block(node.location().start_offset(), &block, false);
         }
         if let Some(sup) = node.as_forwarding_super_node()
             && let Some(block) = sup.block()
         {
-            self.check_for_breakable_block(node.location().start_offset(), None, &block, false);
+            self.check_for_breakable_block(node.location().start_offset(), &block, false);
         }
         if collection_elements(self.source, node).is_some() {
             self.check_for_breakable_node(node);
@@ -848,7 +931,6 @@ impl<'pr> BreakableVisitor<'_> {
     fn check_for_breakable_block(
         &mut self,
         block_expr_start: usize,
-        receiver: Option<&Node<'pr>>,
         block: &ruby_prism::BlockNode<'pr>,
         is_lambda: bool,
     ) {
@@ -870,12 +952,10 @@ impl<'pr> BreakableVisitor<'_> {
         if !self.is_candidate(line_index) {
             return;
         }
-        if let Some(r) = receiver
-            && receiver_contains_heredoc(self.source, r)
-        {
-            return;
-        }
-
+        // 1.92.2 dropped the `receiver_contains_heredoc?` guard: the claim is
+        // skipped when its one-char range sits after a heredoc opener on the
+        // same line instead (checked in `claim_block`, after the delimiter
+        // guard, in stock's order).
         let begin_pos = self.breakable_block_range_begin(block, is_lambda);
         self.claim_block(line_index, begin_pos + 1);
     }
@@ -1042,7 +1122,8 @@ impl<'pr> BreakableVisitor<'_> {
         {
             return false;
         }
-        true
+        // 1.92.2: `!after_heredoc_opener?(node.source_range)`.
+        !self.after_heredoc_opener(node.location().start_offset())
     }
 
     /// `string_delimiter` — the opening quote (`'`/`"`), or `None`.
@@ -1127,6 +1208,10 @@ impl<'pr> BreakableVisitor<'_> {
             .last()
             .is_some_and(|f| f.parent_info.forbids_string_split)
         {
+            return false;
+        }
+        // 1.92.2: `breakable_string?` also asks `!after_heredoc_opener?`.
+        if self.after_heredoc_opener(node.location().start_offset()) {
             return false;
         }
         // !child_nodes.one?
@@ -1542,52 +1627,6 @@ fn chained_to_heredoc(source: &[u8], call: &ruby_prism::CallNode<'_>) -> bool {
     false
 }
 
-/// `receiver_contains_heredoc?`
-fn receiver_contains_heredoc(source: &[u8], receiver: &Node<'_>) -> bool {
-    if is_heredoc(source, receiver) {
-        return true;
-    }
-    let mut found = false;
-    let mut v = HeredocFinder {
-        source,
-        found: &mut found,
-    };
-    v.visit(receiver);
-    found
-}
-
-struct HeredocFinder<'a, 'b> {
-    source: &'a [u8],
-    found: &'b mut bool,
-}
-
-impl<'pr> Visit<'pr> for HeredocFinder<'_, '_> {
-    fn visit_branch_node_enter(&mut self, node: Node<'pr>) {
-        if is_heredoc(self.source, &node) {
-            *self.found = true;
-        }
-    }
-
-    // Heredoc string nodes are leaves and are not reliably surfaced through the
-    // generic `visit_branch_node_enter` hook when reached via a container's
-    // recursion, so check them explicitly too.
-    fn visit_string_node(&mut self, node: &ruby_prism::StringNode<'pr>) {
-        if node
-            .opening_loc()
-            .is_some_and(|o| self.source[o.start_offset()..o.end_offset()].starts_with(b"<<"))
-        {
-            *self.found = true;
-        }
-    }
-
-    fn visit_x_string_node(&mut self, node: &ruby_prism::XStringNode<'pr>) {
-        let o = node.opening_loc();
-        if self.source[o.start_offset()..o.end_offset()].starts_with(b"<<") {
-            *self.found = true;
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Comment / semicolon scanning
 // ---------------------------------------------------------------------------
@@ -1968,5 +2007,34 @@ mod tests {
         assert_eq!(start("ab\\x4"), Some(2));
         assert_eq!(start("ab\\x41"), Some(2));
         assert_eq!(start("ab\\0001"), None);
+    }
+
+    // 1.92.2 `after_heredoc_opener?` (rubocop#16139): no claim of any kind
+    // after a heredoc opener on the same line.
+    #[test]
+    fn no_claim_after_heredoc_opener() {
+        for src in [
+            "do_something(<<~X, items.map { |item| item.to_s })\n  text\nX\n",
+            "do_something(<<~X, -> { items.map(&:to_s).compact })\n  text\nX\n",
+            "str = <<~X; do_something_else(foo, bar, baz)\n  text\nX\n",
+            "do_something(<<~X) + do_something_else(foo, bar, baz)\n  text\nX\n",
+            "do_something(<<-X) + 'foo bar baz qux quux corge'\n  text\nX\n",
+            "do_something(<<X) + \"foo bar baz #{qux} quux corge\"\n  text\nX\n",
+            "do_something(<<~`X`, items.map { |item| item.to_s })\n  ls\nX\n",
+        ] {
+            assert!(run(src, 40, true).is_empty(), "{src:?}");
+        }
+    }
+
+    #[test]
+    fn claims_before_heredoc_opener_survive() {
+        let src = "[foo, bar, baz, <<~X, items.map { |item| item }]\n  text\nX\n";
+        let r = run(src, 40, false);
+        assert_eq!(r.len(), 1);
+        assert_eq!(&src[r[0].1..r[0].1 + 4], "<<~X", "break before the heredoc element");
+        let src = "foo = 1; str = do_something(<<~X, bar, baz, qux)\n  text\nX\n";
+        let r = run(src, 40, false);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].1, 8, "break right after the semicolon");
     }
 }

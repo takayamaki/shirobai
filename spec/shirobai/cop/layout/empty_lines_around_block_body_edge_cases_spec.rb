@@ -67,3 +67,37 @@ RSpec.describe Shirobai::Cop::Layout::EmptyLinesAroundBlockBody do
     end
   end
 end
+
+# The `empty_lines` insert arm of `EmptyLineCorrector` (rubocop#16138, 1.92.2):
+# stock now replaces the newline before the offense line with `"\n\n"`
+# instead of inserting a `"\n"` before it. The final bytes are the same, so
+# only the edit list (`Offense#corrections`) tells the two apart.
+RSpec.describe Shirobai::Cop::Layout::EmptyLinesAroundBlockBody, "empty_lines insert edits" do
+  include EdgeCaseParity
+
+  klasses = [
+    RuboCop::Cop::Layout::EmptyLinesAroundBlockBody,
+    Shirobai::Cop::Layout::EmptyLinesAroundBlockBody
+  ]
+
+  let(:config) do
+    RuboCop::ConfigLoader.merge_with_default(
+      RuboCop::Config.new({ "Layout/EmptyLinesAroundBlockBody" => { "EnforcedStyle" => "empty_lines" } }, "(test)"),
+      "(test)"
+    )
+  end
+
+  it "builds the same edits as stock for a missing blank line at both ends" do
+    source = "foo do\n  bar\nend\n"
+    expect_lint_parity(*klasses, source, config)
+    expect_correction_edits_parity(*klasses, source, config)
+    expect_autocorrect_parity(*klasses, source, config)
+  end
+
+  it "builds the same edits as stock after a non-ASCII line and with CRLF" do
+    source = "foo do\r\n  \"ほげ\"\r\n  bar\r\nend\r\n"
+    expect_lint_parity(*klasses, source, config)
+    expect_correction_edits_parity(*klasses, source, config)
+    expect_autocorrect_parity(*klasses, source, config)
+  end
+end

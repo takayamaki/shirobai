@@ -228,7 +228,7 @@ module Shirobai
 
     # Core wrapper `cop_name` => the core `SLOTS` keys its wrapper reads
     # through `offenses_for`. This is how the per-slot enable mask
-    # (`BundleConfig::enabled_slots`, core nums 134 / 135) is built: a core
+    # (`BundleConfig::enabled_slots`, core nums 135 / 136) is built: a core
     # slot is computed only when a cop that reads it is enabled (or forced,
     # see `offenses_for`). One cop can own several slots (Layout/LineLength),
     # and several cops can share one slot (the two complexity cops). Cops
@@ -491,7 +491,7 @@ module Shirobai
         @last_active_config = nil
       end
 
-      # The `enabled_slots` mask (core nums 134 / 135) as two signed 64-bit
+      # The `enabled_slots` mask (core nums 135 / 136) as two signed 64-bit
       # values: low word = slots 0..63, high word = slots 64..127.
       def slot_mask_nums(config, forced)
         mask = 0
@@ -680,7 +680,7 @@ module Shirobai
           *tcal[0], # TrailingCommaInArrayLiteral style (1 num)
           *sihlb[0], # SpaceInsideHashLiteralBraces style / empty no_space (2 nums)
           *sialb[0], # SpaceInsideArrayLiteralBrackets style / empty space (2 nums)
-          *ium, # IfUnlessModifier max_line_length (-1 = disabled) / tab_width (2 nums)
+          ium[0], ium[1], # IfUnlessModifier max_line_length (-1 = disabled) / tab_width (2 nums)
           *sbbb[0], # SpaceBeforeBlockBraces style / empty style / bd conflict flag (3 nums)
           *sbcm[0], # SpaceBeforeComma lcurly_space (1 num)
           *sacm[0], # SpaceAfterComma rcurly_no_space (1 num)
@@ -704,7 +704,8 @@ module Shirobai
           *sisi[0], # SpaceInsideStringInterpolation style (1 num, index 131)
           *aid[0], # AsciiIdentifiers 0=disabled / 1=enabled,AsciiConstants off / 2=enabled,on (1 num, index 132)
           *rea[0], # RescueEnsureAlignment 0=disabled / 1=enabled (1 num, index 133)
-          *slot_mask_nums(config, forced) # enabled_slots low / high 64 bits (2 nums, indices 134 / 135)
+          ium[2], # IfUnlessModifier space_inside_parens (1 num, index 134)
+          *slot_mask_nums(config, forced) # enabled_slots low / high 64 bits (2 nums, indices 135 / 136)
         ]
         force_cop_gates!(nums, config, forced)
         lists = [dbg[0], dbg[1], bl[2], bl[3], vn[2], snc[0], rs[0], pp[0], pp[1], hem[0],
