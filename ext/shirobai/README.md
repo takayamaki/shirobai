@@ -19,6 +19,10 @@ magnus bridge (cdylib) that exposes `shirobai-core` to Ruby.
 - `Cargo.toml` here is the extension crate that `rake compile` builds.
   The workspace root `Cargo.toml` sets fat LTO + codegen-units=1.
 - Keep tuple mappers thin — logic belongs in `shirobai-core`, not here.
+- Export a per-cop `Shirobai.check_*` only when Ruby code calls it.
+  Most cops read their slot from `check_all` and need no export.
+  When the last caller of an export goes away, remove the export too.
+  Keep the core `check_*` in `shirobai-core`: `cargo test` uses it.
 - magnus has an argument count limit.
   Config is packed as `Vec<i64>` (nums/lists).
   Regex matching stays on the Ruby side.

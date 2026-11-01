@@ -17,7 +17,7 @@ module Shirobai
         def self.badge = RuboCop::Cop::Badge.parse("Lint/Debugger")
 
         # Packed args for the bundled run: `[debugger_methods, debugger_requires]`,
-        # the exact values `Shirobai.check_debugger` receives.
+        # the exact values the Rust debugger rule receives.
         def self.bundle_args(config)
           cop_config = config.for_badge(badge)
           [flatten_config(cop_config, "DebuggerMethods"), flatten_config(cop_config, "DebuggerRequires")]

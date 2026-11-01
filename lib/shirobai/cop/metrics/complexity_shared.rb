@@ -21,7 +21,7 @@ module Shirobai
 
         class << self
           # Packed args for the bundled run: `[max_cyclomatic, max_perceived]`,
-          # the prefilter thresholds `Shirobai.check_complexity` receives.
+          # the prefilter thresholds the Rust complexity rule receives.
           def bundle_args(config)
             [prefilter_max(config, CYCLOMATIC_BADGE), prefilter_max(config, PERCEIVED_BADGE)]
           end
