@@ -64,7 +64,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
 
           offenses_for_source.each do |start, fin, code|
             range = Parser::Source::Range.new(buffer, off[start], off[fin])
@@ -89,7 +89,7 @@ module Shirobai
           else
             nums, = self.class.bundle_args(config)
             Shirobai.check_space_inside_block_braces(
-              processed_source.raw_source, nums[0], nums[1], nums[2] == 1
+              processed_source.buffer.source, nums[0], nums[1], nums[2] == 1
             )
           end
         end

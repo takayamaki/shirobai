@@ -46,7 +46,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           style_bit = STYLE_TO_U8.fetch(style)
 
           records_for_source.each do |end_start, end_end, matching, message, align_column|

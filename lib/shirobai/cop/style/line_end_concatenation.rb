@@ -26,7 +26,7 @@ module Shirobai
           buffer = processed_source.buffer
 
           offenses = Dispatch.offenses_for(processed_source, config, :line_end_concatenation)
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           offenses.each do |op_start, op_end, operator, replace_start, replace_end|
             range = Parser::Source::Range.new(buffer, off[op_start], off[op_end])
             message = format(MSG, operator: operator)

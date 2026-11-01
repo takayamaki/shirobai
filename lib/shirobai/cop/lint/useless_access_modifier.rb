@@ -47,7 +47,7 @@ module Shirobai
           offenses = Dispatch.offenses_for(processed_source, config, :useless_access_modifier)
           return if offenses.empty?
 
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           offenses.each do |start, fin, current|
             range = Parser::Source::Range.new(buffer, off[start], off[fin])
             add_offense(range, message: format(MSG, current: current)) do |corrector|

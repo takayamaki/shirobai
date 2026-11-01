@@ -66,7 +66,7 @@ module Shirobai
           buffer = processed_source.buffer
 
           offenses = Dispatch.offenses_for(processed_source, config, :first_argument_indentation)
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           # Stock hands `AlignmentCorrector` the argument NODE; its
           # `inside_string_ranges` taboo then protects multi-line string
           # interiors from the shift. Locate the parser node for each

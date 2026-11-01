@@ -44,7 +44,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
 
           records_for_source.each do |start, fin, paren_open_start, paren_open_end,
                                        paren_close_start, paren_close_end, message|

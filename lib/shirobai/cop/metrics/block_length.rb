@@ -57,10 +57,10 @@ module Shirobai
               Dispatch.offenses_for(processed_source, config, :block_length)
             else
               Shirobai.check_block_length(
-                processed_source.raw_source, max_length, count_comments?, count_as_one, [], false
+                processed_source.buffer.source, max_length, count_comments?, count_as_one, [], false
               )
             end
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           candidates.each do |start, fin, head_end, length, method_name, receiver|
             unless fast
               next if allowed_method?(method_name) || matches_allowed_pattern?(method_name)

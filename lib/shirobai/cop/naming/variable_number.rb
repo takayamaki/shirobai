@@ -44,7 +44,7 @@ module Shirobai
           offenses, had_correct = Dispatch.offenses_for(processed_source, config, :variable_number)
 
           saw_correct = had_correct
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           offenses.each do |start, fin, id_type, name, alt|
             # A name the Rust side flagged may still be exempt by AllowedPatterns,
             # in which case it counts as a correct use of the configured style.

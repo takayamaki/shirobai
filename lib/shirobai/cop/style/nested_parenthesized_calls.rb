@@ -54,7 +54,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           offenses = fetch_offenses
           offenses.each do |start_offset, end_offset, ac_open_start, ac_open_end, ac_close_pos|
             range = Parser::Source::Range.new(buffer, off[start_offset], off[end_offset])
@@ -79,7 +79,7 @@ module Shirobai
             Dispatch.offenses_for(processed_source, config, :nested_parenthesized_calls)
           else
             allowed = self.class.bundle_args(config)[0]
-            Shirobai.check_nested_parenthesized_calls(processed_source.raw_source, allowed)
+            Shirobai.check_nested_parenthesized_calls(processed_source.buffer.source, allowed)
           end
         end
       end

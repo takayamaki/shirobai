@@ -50,7 +50,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
 
           offenses_for_source.each do |start, fin, column_delta, message, autocorrect, cs, ce|
             # Mirror `other_offense_in_same_range?`: the cop instance accumulates
@@ -90,7 +90,7 @@ module Shirobai
           @offense_ranges ||= []
           return Dispatch.offenses_for(processed_source, config, :indentation_width) if bundle_eligible?
 
-          source = processed_source.raw_source
+          source = processed_source.buffer.source
           Shirobai.check_indentation_width(
             source, bundle_args, allowed_line_numbers(source), @offense_ranges
           )

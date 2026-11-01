@@ -71,7 +71,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
 
           resolved_result.each do |start_offset, end_offset, begin_start, begin_end,
                                    end_start, end_end, type_index|
@@ -100,7 +100,7 @@ module Shirobai
             Dispatch.offenses_for(processed_source, config, :percent_literal_delimiters)
           else
             pairs = self.class.bundle_args(config).first
-            Shirobai.check_percent_literal_delimiters(processed_source.raw_source, pairs)
+            Shirobai.check_percent_literal_delimiters(processed_source.buffer.source, pairs)
           end
         end
 

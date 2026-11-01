@@ -60,7 +60,7 @@ module Shirobai
           # there); converting against `raw_source` shares the single-slot
           # `SourceOffsets` cache with the other bundled cops. On the CRLF/BOM
           # fallback the check scanned `buffer.source`, so convert against that.
-          off = SourceOffsets.for(bundle_eligible? ? processed_source.raw_source : buffer.source)
+          off = SourceOffsets.for(bundle_eligible? ? processed_source.buffer.source : buffer.source)
 
           resolved_result.each do |report_start, report_end, ac_start, ac_end, replacement, blank_lines|
             report_range = Parser::Source::Range.new(buffer, off[report_start], off[report_end])

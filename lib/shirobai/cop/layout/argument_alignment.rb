@@ -52,7 +52,7 @@ module Shirobai
           message = fixed_indentation? ? FIXED_INDENT_MSG : ALIGN_PARAMS_MSG
 
           offenses = Dispatch.offenses_for(processed_source, config, :argument_alignment)
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           # Stock hands `AlignmentCorrector` the argument NODE; its
           # `inside_string_ranges` taboo then protects multi-line string
           # interiors from the shift. Locate the parser node for each

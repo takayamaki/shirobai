@@ -53,7 +53,7 @@ module Shirobai
           # (raw_source on the bundle path, buffer.source on the fallback);
           # both are byte-identical to the bytes Rust used to compute the
           # ranges, so plain byte indexing is safe.
-          source = bundle_eligible? ? processed_source.raw_source : processed_source.buffer.source
+          source = bundle_eligible? ? processed_source.buffer.source : processed_source.buffer.source
           last = nil
           candidates.reverse_each do |start, fin, line|
             text = source.byteslice(start, fin - start)

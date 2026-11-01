@@ -12,9 +12,90 @@ require "spec_helper"
 # see this, so these examples run the stock cop and the shirobai cop side by
 # side over CRLF copies of real files.
 RSpec.describe "CRLF source offset parity with stock RuboCop" do
-  describe "an ASCII-only CRLF file (Ruby stdlib optparse.rb)" do
-    it "is ASCII-only and has CRLF line endings (precondition for the sweep)"
-    it "matches stock offenses and autocorrect output for every implemented cop"
+  let(:config) { RuboCop::ConfigLoader.default_configuration }
+
+  def stdlib_source(name)
+    File.read(File.join(RbConfig::CONFIG["rubylibdir"], name))
+  end
+
+  def to_crlf(source)
+    source.gsub(/\r?\n/, "\r\n")
+  end
+
+  # Runs `klass` over `source` in autocorrect mode with the vendor-spec
+  # iteration semantics (same cop instance across passes, loop until the
+  # corrector is empty or a fixpoint). Returns the first-pass offense
+  # snapshots and the final source.
+  def autocorrect_run(klass, source, config)
+    cop = klass.new(config)
+    cop.instance_variable_get(:@options)[:autocorrect] = true
+    src = source
+    first_offenses = nil
+    11.times do |iteration|
+      processed = RuboCop::ProcessedSource.new(src, RuboCop::TargetRuby::DEFAULT_VERSION)
+      processed.config = config
+      processed.registry = RuboCop::Cop::Registry.global
+      team = RuboCop::Cop::Team.new([cop], config, raise_error: true)
+      report = team.investigate(processed)
+      offenses = report.offenses.map do |o|
+        [o.location.begin_pos, o.location.end_pos, o.message, o.status, o.correctable?]
+      end.sort
+      first_offenses ||= offenses
+      corrector = report.correctors.first
+      break if corrector.nil? || corrector.empty?
+
+      rewritten = corrector.rewrite
+      break if rewritten == src
+      raise "autocorrect loop did not converge" if iteration == 10
+
+      src = rewritten
+    end
+    [first_offenses, src]
+  end
+
+  def implemented_cops
+    Shirobai::Cop.constants(false).sort.flat_map do |department|
+      mod = Shirobai::Cop.const_get(department)
+      next [] unless mod.is_a?(Module)
+
+      mod.constants(false).sort.filter_map do |name|
+        klass = mod.const_get(name)
+        klass if klass.is_a?(Class) && klass < RuboCop::Cop::Base
+      end
+    end
+  end
+
+  # Like `autocorrect_run`, but an exception becomes part of the result, so
+  # one crashing cop does not hide the rest of the sweep.
+  def outcome(klass, source, config)
+    autocorrect_run(klass, source, config)
+  rescue StandardError => e
+    [:raised, e.class]
+  end
+
+  # The names of the implemented cops whose first-pass offenses or final
+  # autocorrected source differ from stock on `source`.
+  def diverging_cops(source, config)
+    implemented_cops.filter_map do |klass|
+      department, name = klass.cop_name.split("/")
+      stock_klass = RuboCop::Cop.const_get(department).const_get(name)
+      next if outcome(stock_klass, source, config) == outcome(klass, source, config)
+
+      klass.cop_name
+    end
+  end
+
+  describe "an ASCII-only CRLF file (Ruby stdlib resolv.rb)" do
+    let(:source) { to_crlf(stdlib_source("resolv.rb")) }
+
+    it "is ASCII-only and has CRLF line endings (precondition for the sweep)" do
+      expect(source.ascii_only?).to be(true)
+      expect(source.count("\r")).to eq(source.count("\n"))
+    end
+
+    it "matches stock offenses and autocorrect output for every implemented cop" do
+      expect(diverging_cops(source, config)).to eq([])
+    end
   end
 
   describe "a CRLF file with multibyte characters (Ruby stdlib fileutils.rb)" do

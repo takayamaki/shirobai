@@ -83,7 +83,7 @@ module Shirobai
           return replay_events if has_conditional
 
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           send_ignores.each { |s, e| @ignored_ranges << [s, e] }
           offenses.each do |ts, te, bs, be, message, ops|
             range = Parser::Source::Range.new(buffer, off[ts], off[te])
@@ -104,7 +104,7 @@ module Shirobai
           else
             nums, lists = bundle_args
             Shirobai.check_block_delimiters(
-              processed_source.raw_source, nums, lists, @ignored_ranges
+              processed_source.buffer.source, nums, lists, @ignored_ranges
             )
           end
         end
@@ -123,10 +123,10 @@ module Shirobai
         def replay_events
           nums, lists = bundle_args
           events = Shirobai.check_block_delimiters_events(
-            processed_source.raw_source, nums, lists
+            processed_source.buffer.source, nums, lists
           )
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           events.each do |ignore, bs, be, ts, te, name, message, ops|
             if ignore
               @ignored_ranges << [bs, be]

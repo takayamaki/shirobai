@@ -31,7 +31,7 @@ module Shirobai
           buffer = processed_source.buffer
 
           source = buffer.source
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           Dispatch.offenses_for(processed_source, config, :dot_position)
                   .each do |dot_start, dot_end, remove_start, remove_end, insert_pos|
             dot = Parser::Source::Range.new(buffer, off[dot_start], off[dot_end])

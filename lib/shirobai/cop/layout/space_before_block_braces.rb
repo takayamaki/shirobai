@@ -67,7 +67,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          source = bundle_eligible? ? processed_source.raw_source : buffer.source
+          source = bundle_eligible? ? processed_source.buffer.source : buffer.source
           off = SourceOffsets.for(source)
           offenses, summary = result_for_source
           a_correct, b_match_first, b_offense, b_match_after, saw_empty = summary

@@ -63,7 +63,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          source_for_offsets = bundle_eligible? ? processed_source.raw_source : buffer.source
+          source_for_offsets = bundle_eligible? ? processed_source.buffer.source : buffer.source
           off = SourceOffsets.for(source_for_offsets)
           @corrected = Set.new
 

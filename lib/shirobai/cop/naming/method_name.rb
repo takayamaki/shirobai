@@ -60,11 +60,11 @@ module Shirobai
             if fast
               Dispatch.offenses_for(processed_source, config, :method_name)
             else
-              Shirobai.check_method_name(processed_source.raw_source, style_u8, false)
+              Shirobai.check_method_name(processed_source.buffer.source, style_u8, false)
             end
           correct_style_detected if fast && had_valid
 
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           candidates.each do |start, fin, name, valid, alt, fb_start, fb_end, fb_name|
             next if matches_allowed_pattern?(name)
 

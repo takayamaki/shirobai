@@ -46,7 +46,7 @@ module Shirobai
           candidates = Dispatch.offenses_for(processed_source, config, :empty_line_after_guard_clause)
           return if candidates.empty?
 
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           candidates.each do |offense_start, offense_end, anchor_first_byte, anchor_last_line|
             # `next_line_empty_or_allowed_directive_comment?(anchor_last_line)`:
             # blank below, OR (directive comment immediately below AND blank

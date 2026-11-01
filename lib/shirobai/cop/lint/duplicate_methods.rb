@@ -72,7 +72,7 @@ module Shirobai
 
           buffer = processed_source.buffer
           path = smart_path(buffer.name)
-          off = SourceOffsets.for(bundle_eligible? ? processed_source.raw_source : buffer.source)
+          off = SourceOffsets.for(bundle_eligible? ? processed_source.buffer.source : buffer.source)
 
           # `flags` bits: 0-1 rescue/ensure scope / 4 intentional-redefinition
           # event / 8 the key carries a scope id / 16 inside a def.

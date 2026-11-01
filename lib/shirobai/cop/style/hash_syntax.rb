@@ -73,7 +73,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           records = resolved_result
 
           records.each do |is_offense, start, fin, message_idx, detect, ops|
@@ -112,7 +112,7 @@ module Shirobai
             Dispatch.offenses_for(processed_source, config, :hash_syntax)
           else
             nums = self.class.bundle_args(config).first
-            Shirobai.check_hash_syntax(processed_source.raw_source, nums)
+            Shirobai.check_hash_syntax(processed_source.buffer.source, nums)
           end
         end
 

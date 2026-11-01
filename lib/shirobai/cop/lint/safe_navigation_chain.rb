@@ -31,7 +31,7 @@ module Shirobai
           buffer = processed_source.buffer
 
           offenses = Dispatch.offenses_for(processed_source, config, :safe_navigation_chain)
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           offenses.each do |start, fin, replacement, wrap_start, wrap_end|
             range = Parser::Source::Range.new(buffer, off[start], off[fin])
             add_offense(range) do |corrector|

@@ -45,7 +45,7 @@ module Shirobai
           # `buffer.source`); on the CRLF/BOM fallback the standalone path
           # scans `buffer.source` instead so every offset Rust returns lines
           # up with the parser-gem buffer.
-          source = bundle_eligible? ? processed_source.raw_source : buffer.source
+          source = bundle_eligible? ? processed_source.buffer.source : buffer.source
           off = SourceOffsets.for(source)
           resolved_offenses.each do |start, fin|
             range = Parser::Source::Range.new(buffer, off[start], off[fin])

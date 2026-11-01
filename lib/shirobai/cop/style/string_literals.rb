@@ -67,7 +67,7 @@ module Shirobai
           style
 
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
 
           resolved_result.each do |is_offense, start, fin, message_idx, detect, fix, content|
             unless is_offense
@@ -99,7 +99,7 @@ module Shirobai
             Dispatch.offenses_for(processed_source, config, :string_literals)
           else
             nums = self.class.bundle_args(config).first
-            Shirobai.check_string_literals(processed_source.raw_source, nums)
+            Shirobai.check_string_literals(processed_source.buffer.source, nums)
           end
         end
 

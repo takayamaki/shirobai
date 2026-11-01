@@ -47,7 +47,7 @@ module Shirobai
           message = fixed_indentation? ? FIXED_INDENT_MSG : ALIGN_ELEMENTS_MSG
 
           offenses = Dispatch.offenses_for(processed_source, config, :array_alignment)
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           offenses.each do |start, fin, column_delta, autocorrect|
             range = Parser::Source::Range.new(buffer, off[start], off[fin])
             # Always pass a block so the offense is correctable, matching stock:

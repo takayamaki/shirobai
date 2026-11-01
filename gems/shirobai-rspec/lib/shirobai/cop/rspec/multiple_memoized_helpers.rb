@@ -44,7 +44,7 @@ module Shirobai
 
           max = cop_config["Max"]
           buffer = processed_source.buffer
-          source = bundle_eligible? ? processed_source.raw_source : buffer.source
+          source = bundle_eligible? ? processed_source.buffer.source : buffer.source
           off = SourceOffsets.for(source)
           located = locate_dynamic_names(groups, off)
 

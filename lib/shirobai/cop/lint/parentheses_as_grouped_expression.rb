@@ -32,7 +32,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          off = SourceOffsets.for(processed_source.raw_source)
+          off = SourceOffsets.for(processed_source.buffer.source)
           fetch_offenses.each do |space_start, space_end, arg_start, arg_end|
             range = Parser::Source::Range.new(buffer, off[space_start], off[space_end])
             arg_range = Parser::Source::Range.new(buffer, off[arg_start], off[arg_end])

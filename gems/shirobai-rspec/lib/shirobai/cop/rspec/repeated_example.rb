@@ -35,7 +35,7 @@ module Shirobai
           groups = resolved_groups
           return if groups.empty?
 
-          source = bundle_eligible? ? processed_source.raw_source : processed_source.buffer.source
+          source = bundle_eligible? ? processed_source.buffer.source : processed_source.buffer.source
           off = SourceOffsets.for(source)
           located = locate_blocks(groups, off)
 

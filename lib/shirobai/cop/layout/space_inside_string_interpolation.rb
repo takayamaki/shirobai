@@ -45,7 +45,7 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          off = SourceOffsets.for(bundle_eligible? ? processed_source.raw_source : buffer.source)
+          off = SourceOffsets.for(bundle_eligible? ? processed_source.buffer.source : buffer.source)
 
           offenses_for_source.each do |start, fin, command, edits|
             range = Parser::Source::Range.new(buffer, off[start], off[fin])

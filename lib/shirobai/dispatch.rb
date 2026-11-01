@@ -400,7 +400,7 @@ module Shirobai
       # the config, so later files start with that slot on and each key
       # re-runs at most once per config.
       def offenses_for(processed_source, config, cop_key)
-        src = processed_source.raw_source
+        src = processed_source.buffer.source
         if !active_keys(config).include?(cop_key) && CORE_SLOT_INDEX.key?(cop_key)
           force_slot!(config, cop_key)
           @cached_source = nil
