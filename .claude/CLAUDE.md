@@ -50,7 +50,11 @@ and "only happens in test code" are not reasons to ship.
    - Read the stock implementation (in `vendor/rubocop`) and its vendor spec.
    - Probe the stock cop on real code to find quirks. Do not guess.
    - Build the Rust rule + Ruby wrapper + wiring (the 4+1 checklist):
-     - Per-cop entry point (for fallback)
+     - Per-cop Ruby entry point (`Shirobai.check_*` in `ext/shirobai`):
+       only when the wrapper calls it — a config the shared walk does not
+       take (`bundle_eligible?` false), or a plugin origin with a per-file
+       gate (the nil fallback). A wrapper that only reads its slot needs none.
+       The core `check_*` in `shirobai-core` is always needed (`cargo test` uses it).
      - `bundle_args` (single source of config)
      - Slot in `BundleConfig` / `check_all_bundle`
      - Entry in `Dispatch::SLOTS` (the single source of cop-to-slot mapping)

@@ -2060,7 +2060,7 @@ fn check_all(ruby: &Ruby, source: RString, token: usize) -> Result<RArray, Error
         ary.push(map_space_before_block_braces(r.space_before_block_braces))?;
         ary.push(map_if_unless_modifier(r.if_unless_modifier))?;
         // The punctuation-spacing family: each slot is `[[start, end], ...]`
-        // byte ranges (see `check_space_before_comma` and friends).
+        // byte ranges (see `shirobai_core::rules::punctuation_spacing`).
         let ps = r.punctuation_spacing;
         ary.push(ps.space_before_comma)?;
         ary.push(ps.space_after_comma)?;
@@ -2337,25 +2337,6 @@ fn map_if_unless_modifier(
             )
         })
         .collect()
-}
-
-/// Standalone `Style/IfUnlessModifier` (fallback when the bundle path is not
-/// usable, e.g. CRLF/BOM sources scanned via `buffer.source`). `nums` is
-/// `[max_line_length (-1 = Layout/LineLength disabled), tab_width,
-/// space_inside_parens]`.
-#[allow(clippy::type_complexity)]
-fn check_if_unless_modifier(
-    source: RString,
-    nums: Vec<i64>,
-) -> Vec<IfUnlessModifierTuple> {
-    let cfg = shirobai_core::rules::if_unless_modifier::Config {
-        max_line_length: if nums[0] < 0 { None } else { Some(nums[0]) },
-        tab_width: nums[1],
-        space_inside_parens: nums[2] != 0,
-    };
-    map_if_unless_modifier(
-        shirobai_core::rules::if_unless_modifier::check_if_unless_modifier(bytes(&source), cfg),
-    )
 }
 
 /// Ruby entry point for `Lint/Debugger`. Takes the source, the flattened
@@ -2740,79 +2721,6 @@ fn check_array_alignment(
     ))
 }
 
-/// Ruby entry point for `Style/ArgumentsForwarding`. Takes the source, the
-/// target ruby (`* 10` rounded), the two boolean flags, the explicit-block
-/// flag, and the three redundant-name lists.
-/// Returns `[[start, end, message, [[op_kind, start, end, text], ...]], ...]`.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn check_arguments_forwarding(
-    source: RString,
-    target_ruby: i64,
-    allow_only_rest: bool,
-    use_anonymous: bool,
-    explicit_block: bool,
-    redundant_rest: Vec<String>,
-    redundant_kwrest: Vec<String>,
-    redundant_block: Vec<String>,
-) -> Vec<(usize, usize, u8, Vec<(u8, usize, usize, String)>)> {
-    map_arguments_forwarding(
-        shirobai_core::rules::arguments_forwarding::check_arguments_forwarding(
-            bytes(&source),
-            &shirobai_core::rules::arguments_forwarding::Config {
-                target_ruby,
-                allow_only_rest_arguments: allow_only_rest,
-                use_anonymous_forwarding: use_anonymous,
-                explicit_block_name: explicit_block,
-                redundant_rest,
-                redundant_kwrest,
-                redundant_block,
-            },
-        ),
-    )
-}
-
-/// Ruby entry point for `Layout/SpaceAroundOperators` (fallback path; the bundle
-/// is the usual path). The five flags pack the cop config; the shape is
-/// documented on `map_space_around_operators`.
-#[allow(clippy::too_many_arguments)]
-fn check_space_around_operators(
-    source: RString,
-    exponent_style: u8,
-    rational_style: u8,
-    allow_for_alignment: bool,
-    hash_table_style: bool,
-    force_equal_sign_alignment: bool,
-) -> Vec<(usize, usize, usize, usize, u8, String, String)> {
-    use shirobai_core::rules::space_around_operators as sao;
-    let cfg = sao::Config {
-        exponent_style,
-        rational_style,
-        allow_for_alignment,
-        hash_table_style,
-        force_equal_sign_alignment,
-    };
-    map_space_around_operators(sao::check_space_around_operators(bytes(&source), cfg))
-}
-
-/// Ruby entry point for `Layout/ExtraSpacing` (fallback path; the bundle is the
-/// usual path). Flags are `AllowForAlignment` / `AllowBeforeTrailingComments` /
-/// `ForceEqualSignAlignment`; the shape is documented on `map_extra_spacing`.
-#[allow(clippy::type_complexity)]
-fn check_extra_spacing(
-    source: RString,
-    allow_for_alignment: bool,
-    allow_before_trailing_comments: bool,
-    force_equal_sign_alignment: bool,
-) -> Vec<(usize, usize, String, u8, Vec<(usize, usize, String)>)> {
-    use shirobai_core::rules::extra_spacing as es;
-    let cfg = es::Config {
-        allow_for_alignment,
-        allow_before_trailing_comments,
-        force_equal_sign_alignment,
-    };
-    map_extra_spacing(es::check_extra_spacing(bytes(&source), cfg))
-}
-
 /// Ruby entry point for `Layout/ExtraSpacing`'s `ignored_ranges` (the multi-line
 /// hash key↔value spans). Returns `[[start, end], ...]`. Stock memoizes these on
 /// the cop instance; the Ruby wrapper does the same and applies the
@@ -3101,21 +3009,6 @@ fn check_trailing_comma_in_array_literal(
     )
 }
 
-/// Ruby entry point for `Layout/TrailingEmptyLines`. Takes the source and the
-/// packed config nums (`[style]`: 0 final_newline, 1 final_blank_line). Returns
-/// a 0-or-1-element Vec (see `map_trailing_empty_lines`).
-fn check_trailing_empty_lines(
-    source: RString,
-    nums: Vec<i64>,
-) -> Vec<(usize, usize, usize, usize, String, i64)> {
-    let cfg = shirobai_core::rules::trailing_empty_lines::Config {
-        style: nums[0] as u8,
-    };
-    map_trailing_empty_lines(
-        shirobai_core::rules::trailing_empty_lines::check_trailing_empty_lines(bytes(&source), &cfg),
-    )
-}
-
 /// Ruby entry point for `Style/HashEachMethods`. Takes the source and the
 /// `AllowedReceivers` list (matched by receiver source name, like the
 /// `AllowedReceivers` mixin). Returns one entry per offense: `[[start, end,
@@ -3133,12 +3026,6 @@ fn check_hash_each_methods(
             &allowed_receivers,
         ),
     )
-}
-
-/// Ruby entry point for `Style/FileNull`. Config-less.
-/// Returns `[[start, end, message], ...]`.
-fn check_file_null(source: RString) -> Vec<(usize, usize, String)> {
-    map_file_null(shirobai_core::rules::file_null::check_file_null(bytes(&source)))
 }
 
 /// Ruby entry point for `Style/HashTransformKeys`. Config-less.
@@ -3190,44 +3077,6 @@ fn check_useless_access_modifier(
             &method_creating,
             active_support_extensions,
         ),
-    )
-}
-
-/// Ruby entry point for the `EmptyLinesAroundBody` family (standalone
-/// fallback; the wrappers normally read the bundled run). Takes the source
-/// and the `EnforcedStyle` ordinals of the three configurable members
-/// (class / module / block). Returns the six cops' offense arrays in slot
-/// order (method, class, module, block, begin, exception keywords), each
-/// `[[start, end, insert, message], ...]` (see `map_empty_lines`).
-#[allow(clippy::type_complexity)]
-fn check_empty_lines_around_body(
-    source: RString,
-    class_style: u8,
-    module_style: u8,
-    block_style: u8,
-) -> (
-    Vec<(usize, usize, bool, String, bool)>,
-    Vec<(usize, usize, bool, String, bool)>,
-    Vec<(usize, usize, bool, String, bool)>,
-    Vec<(usize, usize, bool, String, bool)>,
-    Vec<(usize, usize, bool, String, bool)>,
-    Vec<(usize, usize, bool, String, bool)>,
-) {
-    let r = shirobai_core::rules::empty_lines_around_body::check_empty_lines_around_body(
-        bytes(&source),
-        shirobai_core::rules::empty_lines_around_body::Config {
-            class_style,
-            module_style,
-            block_style,
-        },
-    );
-    (
-        map_empty_lines(r.method_body),
-        map_empty_lines(r.class_body),
-        map_empty_lines(r.module_body),
-        map_empty_lines(r.block_body),
-        map_empty_lines(r.begin_body),
-        map_empty_lines(r.exception_keywords),
     )
 }
 
@@ -3351,37 +3200,6 @@ fn check_empty_line_after_guard_clause(
     .collect()
 }
 
-/// Ruby entry point for `Layout/EmptyComment` (standalone fallback). Takes
-/// the source and the two config flags (`AllowBorderComment` /
-/// `AllowMarginComment`). Returns the shape documented on `map_empty_comment`.
-fn check_empty_comment(
-    source: RString,
-    allow_border_comment: bool,
-    allow_margin_comment: bool,
-) -> Vec<(usize, usize, usize, usize)> {
-    let cfg = shirobai_core::rules::empty_comment::Config {
-        allow_border_comment,
-        allow_margin_comment,
-    };
-    map_empty_comment(shirobai_core::rules::empty_comment::check_empty_comment(
-        bytes(&source),
-        cfg,
-    ))
-}
-
-/// Ruby entry point for `Layout/EmptyLineAfterMagicComment` (standalone
-/// fallback, config-less). Returns the shape documented on
-/// `map_empty_line_after_magic_comment`.
-fn check_empty_line_after_magic_comment(
-    source: RString,
-) -> Vec<(usize, usize, usize)> {
-    map_empty_line_after_magic_comment(
-        shirobai_core::rules::empty_line_after_magic_comment::check_empty_line_after_magic_comment(
-            bytes(&source),
-        ),
-    )
-}
-
 /// `Lint/DuplicateMethods`: `[[flags, name, key, sexp_start, sexp_end,
 /// scope_line, scope_begin, off_start, off_end, line], ...]` — one tuple per
 /// stock `found_method` / `track_intentional_redefinition` call, in callback order.
@@ -3422,122 +3240,6 @@ fn map_duplicate_methods(
         .collect()
 }
 
-/// Ruby entry point for `Lint/DuplicateMagicComment` (standalone fallback,
-/// config-less). Returns the 1-based lines of duplicate magic comments
-/// (encoding bucket first, then frozen-string-literal).
-fn check_duplicate_magic_comment(source: RString) -> Vec<usize> {
-    shirobai_core::rules::duplicate_magic_comment::check_duplicate_magic_comment(bytes(&source))
-}
-
-/// Ruby entry point for `Lint/OrderedMagicComments` (standalone fallback,
-/// config-less). Returns the 0-or-1 `(encoding_line, other_line)` pair.
-fn check_ordered_magic_comments(source: RString) -> Vec<(usize, usize)> {
-    map_ordered_magic_comments(
-        shirobai_core::rules::ordered_magic_comments::check_ordered_magic_comments(bytes(&source)),
-    )
-}
-
-/// Ruby entry point for `Style/FrozenStringLiteralComment` (standalone
-/// fallback). `style`: 0 always, 1 never, 2 always_true. Returns at most one
-/// packed offense `(kind, start, fin, line, insert_line, is_emacs)`; byte
-/// offsets are converted by the wrapper.
-fn check_frozen_string_literal_comment(
-    source: RString,
-    style: u8,
-) -> Vec<(i64, i64, i64, i64, i64, i64)> {
-    shirobai_core::rules::frozen_string_literal_comment::check_frozen_string_literal_comment(
-        bytes(&source),
-        style,
-    )
-}
-
-/// Ruby entry point for `Lint/DuplicateMethods` (standalone fallback).
-/// `active_support` mirrors `AllCops/ActiveSupportExtensionsEnabled`;
-/// `delegating` is the `DelegatingMethods` list (1.89). Returns the shape
-/// documented on `map_duplicate_methods`.
-fn check_duplicate_methods(
-    source: RString,
-    active_support: bool,
-    delegating: Vec<String>,
-) -> Vec<DupMethodTuple> {
-    map_duplicate_methods(shirobai_core::rules::duplicate_methods::check_duplicate_methods(
-        bytes(&source),
-        &shirobai_core::rules::duplicate_methods::Config {
-            active_support_extensions_enabled: active_support,
-            delegating_methods: delegating,
-        },
-    ))
-}
-
-/// Ruby entry point for `Layout/EmptyLines` (standalone fallback,
-/// config-less). Returns the shape documented on `map_empty_lines`.
-fn check_empty_lines(source: RString) -> Vec<(usize, usize)> {
-    map_empty_lines_offenses(shirobai_core::rules::empty_lines::check_empty_lines(
-        bytes(&source),
-    ))
-}
-
-/// Ruby entry point for `Layout/LeadingEmptyLines` (no config). Returns a
-/// 0-or-1-element Vec (see `map_leading_empty_lines`).
-fn check_leading_empty_lines(source: RString) -> Vec<(usize, usize, usize, usize)> {
-    map_leading_empty_lines(
-        shirobai_core::rules::leading_empty_lines::check_leading_empty_lines(bytes(&source)),
-    )
-}
-
-/// Ruby entry point for `Layout/InitialIndentation` (standalone fallback, no
-/// config). Returns true iff the first non-comment token is indented (the
-/// wrapper then runs stock's exact offense construction).
-fn check_initial_indentation(source: RString) -> bool {
-    shirobai_core::rules::initial_indentation::check_initial_indentation(bytes(&source))
-}
-
-/// Ruby entry point for `Layout/EndOfLine` (standalone fallback, no config).
-/// Returns stock's `last_line`; the wrapper runs stock's own scan body.
-fn check_end_of_line(source: RString) -> usize {
-    shirobai_core::rules::end_of_line::check_end_of_line(bytes(&source))
-}
-
-/// Ruby entry point for `Style/MagicCommentFormat` (standalone fallback, no
-/// config). Returns stock's `leading_comment_lines` boundary (the first
-/// non-comment token line, or `0` for none); the wrapper runs stock's own
-/// `magic_comments` + offense/correction logic with that range injected.
-fn check_magic_comment_format(source: RString) -> usize {
-    shirobai_core::rules::magic_comment_format::check_magic_comment_format(bytes(&source))
-}
-
-/// Ruby entry point for `Naming/AsciiIdentifiers` (standalone fallback).
-/// `ascii_constants`: whether `tCONSTANT` tokens are checked too. Returns one
-/// `(is_constant, start, end)` per offense (the first non-ASCII byte run);
-/// byte offsets are converted to chars by the wrapper.
-fn check_ascii_identifiers(source: RString, ascii_constants: bool) -> Vec<(bool, usize, usize)> {
-    shirobai_core::rules::ascii_identifiers::check_ascii_identifiers(bytes(&source), ascii_constants)
-}
-
-/// Ruby entry point for `Layout/RescueEnsureAlignment` (standalone fallback,
-/// used on CRLF/BOM files where `buffer.source != raw_source`). Returns the
-/// `(begin, end)` byte range of every modifier-`rescue` keyword; the wrapper
-/// converts them to char offsets and builds the `@modifier_locations` set.
-fn check_rescue_ensure_alignment(source: RString) -> Vec<(usize, usize)> {
-    shirobai_core::rules::rescue_ensure_alignment::check_rescue_ensure_alignment(bytes(&source))
-}
-
-/// Ruby entry point for `Style/DirectiveScope` (standalone fallback, no
-/// config). Returns `(comment_index, line)` for every comment containing
-/// `rubocop`; the wrapper runs stock's per-comment body on those only.
-fn check_directive_scope(source: RString) -> Vec<(usize, usize)> {
-    shirobai_core::rules::directive_scope::check_directive_scope(bytes(&source))
-}
-
-/// Ruby entry point for `Lint/MisplacedMagicComment` (standalone fallback, no
-/// config). Returns `[shebang_or_nil, [[comment_index, line, after_code], ...]]`;
-/// the wrapper runs stock's `check_comment` on the candidates.
-fn check_misplaced_magic_comment(
-    source: RString,
-) -> shirobai_core::rules::misplaced_magic_comment::MisplacedMagicScan {
-    shirobai_core::rules::misplaced_magic_comment::check_misplaced_magic_comment(bytes(&source))
-}
-
 /// `Style/EmptyLiteral`'s `frozen_string_literals_enabled?` (String.new path),
 /// computed from the leading comment scan without materializing the parser-gem
 /// token stream. `sfbd`: `AllCops/StringLiteralsFrozenByDefault` is literally
@@ -3550,37 +3252,6 @@ fn check_frozen_string_literals_enabled(source: RString, sfbd: bool) -> bool {
 /// `# frozen_string_literal: false`), token-free.
 fn check_frozen_string_literals_disabled(source: RString) -> bool {
     shirobai_core::rules::duplicate_magic_comment::frozen_string_literals_disabled(bytes(&source))
-}
-
-/// Ruby entry point for `Layout/SpaceInsideStringInterpolation` (standalone
-/// fallback). `style`: 0 = no_space, 1 = space. See
-/// `map_space_inside_string_interpolation` for the returned shape.
-fn check_space_inside_string_interpolation(
-    source: RString,
-    style: u8,
-) -> Vec<SpaceInsideInterpTuple> {
-    map_space_inside_string_interpolation(
-        shirobai_core::rules::space_inside_string_interpolation::check_space_inside_string_interpolation(
-            bytes(&source),
-            shirobai_core::rules::space_inside_string_interpolation::Config { style },
-        ),
-    )
-}
-
-/// Ruby entry point for `Layout/SpaceAroundEqualsInParameterDefault`
-/// (standalone fallback). `style`: 0 = space, 1 = no_space. Returns one
-/// `[start, end]` byte range per offense.
-fn check_space_around_equals_in_parameter_default(
-    source: RString,
-    style: u8,
-) -> Vec<(usize, usize)> {
-    let cfg = shirobai_core::rules::space_around_equals_in_parameter_default::Config { style };
-    map_space_around_equals_in_parameter_default(
-        shirobai_core::rules::space_around_equals_in_parameter_default::check_space_around_equals_in_parameter_default(
-            bytes(&source),
-            cfg,
-        ),
-    )
 }
 
 /// Ruby entry point for `Layout/EmptyLinesAroundArguments` (no config). Returns
@@ -3661,71 +3332,6 @@ fn check_space_inside_hash_literal_braces(
     ))
 }
 
-/// Ruby entry point for `Layout/SpaceBeforeComma` (the bundle is the usual
-/// path). `lcurly_space` is `Layout/SpaceInsideBlockBraces`'s
-/// `EnforcedStyle == 'space'`. Each offense is the `(start, end)` byte range
-/// of the whitespace run before the comma (the corrector removes it).
-fn check_space_before_comma(source: RString, lcurly_space: bool) -> Vec<(usize, usize)> {
-    use shirobai_core::rules::punctuation_spacing as ps;
-    let cfg = ps::Config {
-        before_comma_lcurly_space: lcurly_space,
-        ..Default::default()
-    };
-    ps::check_punctuation_spacing(bytes(&source), cfg).space_before_comma
-}
-
-/// Ruby entry point for `Layout/SpaceAfterComma` (the bundle is the usual
-/// path). `rcurly_no_space` is `Layout/SpaceInsideHashLiteralBraces`'s
-/// `EnforcedStyle == 'no_space'`. Each offense is the `(start, end)` byte
-/// range of the comma itself (the corrector replaces it with `", "`).
-fn check_space_after_comma(source: RString, rcurly_no_space: bool) -> Vec<(usize, usize)> {
-    use shirobai_core::rules::punctuation_spacing as ps;
-    let cfg = ps::Config {
-        after_comma_rcurly_no_space: rcurly_no_space,
-        ..Default::default()
-    };
-    ps::check_punctuation_spacing(bytes(&source), cfg).space_after_comma
-}
-
-/// Ruby entry point for `Layout/SpaceBeforeSemicolon` (the bundle is the
-/// usual path). Same shape as `check_space_before_comma`.
-fn check_space_before_semicolon(source: RString, lcurly_space: bool) -> Vec<(usize, usize)> {
-    use shirobai_core::rules::punctuation_spacing as ps;
-    let cfg = ps::Config {
-        before_semi_lcurly_space: lcurly_space,
-        ..Default::default()
-    };
-    ps::check_punctuation_spacing(bytes(&source), cfg).space_before_semicolon
-}
-
-/// Ruby entry point for `Layout/SpaceAfterSemicolon` (the bundle is the
-/// usual path). `rcurly_no_space` is `Layout/SpaceInsideBlockBraces`'s
-/// `EnforcedStyle == 'no_space'`. Same shape as `check_space_after_comma`.
-fn check_space_after_semicolon(source: RString, rcurly_no_space: bool) -> Vec<(usize, usize)> {
-    use shirobai_core::rules::punctuation_spacing as ps;
-    let cfg = ps::Config {
-        after_semi_rcurly_no_space: rcurly_no_space,
-        ..Default::default()
-    };
-    ps::check_punctuation_spacing(bytes(&source), cfg).space_after_semicolon
-}
-
-/// Ruby entry point for `Layout/SpaceAfterColon` (the bundle is the usual
-/// path). Each offense is the `(start, end)` byte range of the colon (the
-/// corrector appends a space after it).
-fn check_space_after_colon(source: RString) -> Vec<(usize, usize)> {
-    use shirobai_core::rules::punctuation_spacing as ps;
-    ps::check_punctuation_spacing(bytes(&source), ps::Config::default()).space_after_colon
-}
-
-/// Ruby entry point for `Layout/SpaceBeforeComment` (the bundle is the usual
-/// path). Each offense is the `(start, end)` byte range of the comment (the
-/// corrector prepends a space before it).
-fn check_space_before_comment(source: RString) -> Vec<(usize, usize)> {
-    use shirobai_core::rules::punctuation_spacing as ps;
-    ps::check_punctuation_spacing(bytes(&source), ps::Config::default()).space_before_comment
-}
-
 /// `Layout/SpaceInsideParens`: each offense is `[start, end, code]` with
 /// code 0 = "Space inside parentheses detected." (remove the range) and
 /// 1 = "No space inside parentheses detected." (insert a space before it).
@@ -3735,20 +3341,6 @@ fn map_space_inside_parens(
     v.into_iter()
         .map(|o| (o.start_offset, o.end_offset, o.message.code()))
         .collect()
-}
-
-/// Ruby entry point for `Layout/SpaceInsideParens` (the bundle is the usual
-/// path). `style` is 0 = no_space, 1 = space, 2 = compact.
-fn check_space_inside_parens(source: RString, style: u8) -> Vec<(usize, usize, u8)> {
-    use shirobai_core::rules::space_inside_parens as sip;
-    let cfg = sip::Config {
-        style: match style {
-            1 => sip::Style::Space,
-            2 => sip::Style::Compact,
-            _ => sip::Style::NoSpace,
-        },
-    };
-    map_space_inside_parens(sip::check_space_inside_parens(bytes(&source), cfg))
 }
 
 /// `Layout/SpaceInsideReferenceBrackets`: `[offenses, node_ops]` in the same
@@ -3780,45 +3372,6 @@ fn map_space_inside_reference_brackets(
     )
 }
 
-/// Ruby entry point for `Layout/SpaceInsideReferenceBrackets` (the bundle is
-/// the usual path). `style` is 0 = no_space, 1 = space; `space_empty` is
-/// `EnforcedStyleForEmptyBrackets == 'space'`.
-#[allow(clippy::type_complexity)]
-fn check_space_inside_reference_brackets(
-    source: RString,
-    style: u8,
-    space_empty: bool,
-) -> (
-    Vec<(usize, usize, u8, usize, bool)>,
-    Vec<Vec<(u8, usize, usize)>>,
-) {
-    use shirobai_core::rules::space_inside_reference_brackets as sirb;
-    let cfg = sirb::Config {
-        style: if style != 0 {
-            sirb::Style::Space
-        } else {
-            sirb::Style::NoSpace
-        },
-        space_empty,
-    };
-    map_space_inside_reference_brackets(sirb::check_space_inside_reference_brackets(
-        bytes(&source),
-        cfg,
-    ))
-}
-
-/// Ruby entry point for `Layout/SpaceBeforeFirstArg` (the bundle is the
-/// usual path). Each offense is the `(start, end)` byte range of the
-/// whitespace run before the first argument (the corrector replaces it with
-/// one space).
-fn check_space_before_first_arg(source: RString, allow_for_alignment: bool) -> Vec<(usize, usize)> {
-    use shirobai_core::rules::space_before_first_arg as sbfa;
-    let cfg = sbfa::Config {
-        allow_for_alignment,
-    };
-    sbfa::check_space_before_first_arg(bytes(&source), cfg)
-}
-
 /// Ruby entry point for `Layout/SpaceInsideArrayLiteralBrackets` (the bundle
 /// is the usual path). `style` is 0 = no_space, 1 = space, 2 = compact;
 /// `space_empty` is `EnforcedStyleForEmptyBrackets == 'space'`. Returns the
@@ -3842,49 +3395,6 @@ fn check_space_inside_array_literal_brackets(
         space_empty,
     };
     map_space_inside_array_literal_brackets(sialb::check_space_inside_array_literal_brackets(
-        bytes(&source),
-        cfg,
-    ))
-}
-
-/// Ruby entry point for `Layout/SpaceBeforeBlockBraces` (the bundle is the
-/// usual path). `style` is 0 = space, 1 = no_space; `empty_style` is the
-/// resolved `EnforcedStyleForEmptyBraces` (0 space, 1 no_space, 2 invalid);
-/// `bd_line_count_based` is `Style/BlockDelimiters`' conflict flag. Returns
-/// the shape documented on `map_space_before_block_braces`.
-#[allow(clippy::type_complexity)]
-fn check_space_before_block_braces(
-    source: RString,
-    style: u8,
-    empty_style: u8,
-    bd_line_count_based: bool,
-) -> (
-    Vec<(usize, usize, bool, bool)>,
-    (bool, bool, bool, bool, bool),
-) {
-    use shirobai_core::rules::space_before_block_braces as sbbb;
-    let cfg = sbbb::Config {
-        style: if style != 0 {
-            sbbb::Style::NoSpace
-        } else {
-            sbbb::Style::Space
-        },
-        empty_style: match empty_style {
-            1 => sbbb::EmptyStyle::NoSpace,
-            2 => sbbb::EmptyStyle::Invalid,
-            _ => sbbb::EmptyStyle::Space,
-        },
-        bd_line_count_based,
-    };
-    map_space_before_block_braces(sbbb::check_space_before_block_braces(bytes(&source), cfg))
-}
-
-/// Ruby entry point for `Layout/EndAlignment`. `style` is the
-/// `EnforcedStyleAlignWith` selector (0 = keyword, 1 = variable,
-/// 2 = start_of_line). Returns the shape documented on `map_end_alignment`.
-fn check_end_alignment(source: RString, style: u8) -> Vec<(usize, usize, Vec<u8>, String, usize)> {
-    let cfg = shirobai_core::rules::end_alignment::Config { style };
-    map_end_alignment(shirobai_core::rules::end_alignment::check_end_alignment(
         bytes(&source),
         cfg,
     ))
@@ -4030,12 +3540,6 @@ fn check_colon_method_call(source: RString) -> Vec<(usize, usize)> {
     )
 }
 
-/// Ruby entry point for `Style/Semicolon` detection path (a). Config-less.
-/// Returns `[[offset, last_token], ...]`.
-fn check_semicolon(source: RString) -> Vec<(usize, bool)> {
-    map_semicolon(shirobai_core::rules::semicolon::check_semicolon(bytes(&source)))
-}
-
 /// Ruby entry point for `Style/RedundantFreeze`. `target_ruby_30_plus` is
 /// `AllCops/TargetRubyVersion >= 3.0`; `sfbd` is whether
 /// `AllCops/StringLiteralsFrozenByDefault` is literally `true`. Returns the
@@ -4052,88 +3556,6 @@ fn check_redundant_freeze(
             sfbd,
         ),
     )
-}
-
-/// Ruby entry point for `Performance/Detect` (shirobai-performance).
-/// `preferred` is `Style/CollectionMethods` `PreferredMethods['detect']`
-/// resolved on the Ruby side (`detect` when unset). Returns the
-/// `map_perf_detect` tuple shape.
-fn check_perf_detect(
-    source: RString,
-    preferred: String,
-) -> Vec<(usize, usize, usize, usize, String, String)> {
-    map_perf_detect(shirobai_core::rules::perf_detect::check_perf_detect(
-        bytes(&source),
-        &preferred,
-    ))
-}
-
-/// Ruby entry point for `Performance/StringInclude` (shirobai-performance).
-/// Config-less. Returns the `map_perf_string_include` tuple shape.
-fn check_perf_string_include(
-    source: RString,
-) -> Vec<(usize, usize, u8, usize, usize, String, String)> {
-    map_perf_string_include(
-        shirobai_core::rules::perf_string_include::check_perf_string_include(bytes(&source)),
-    )
-}
-
-/// Ruby entry point for `Performance/EndWith` (shirobai-performance).
-/// `safe_multiline` is the cop's `SafeMultiline`. Returns the
-/// `map_perf_end_with` tuple shape.
-fn check_perf_end_with(
-    source: RString,
-    safe_multiline: bool,
-) -> Vec<(usize, usize, usize, usize, String, String)> {
-    map_perf_end_with(shirobai_core::rules::perf_end_with::check_perf_end_with(
-        bytes(&source),
-        safe_multiline,
-    ))
-}
-
-/// Ruby entry point for `Performance/StartWith` (shirobai-performance).
-/// `safe_multiline` is the cop's `SafeMultiline`. Returns the
-/// `map_perf_start_with` tuple shape.
-fn check_perf_start_with(
-    source: RString,
-    safe_multiline: bool,
-) -> Vec<(usize, usize, usize, usize, String, String)> {
-    map_perf_start_with(shirobai_core::rules::perf_start_with::check_perf_start_with(
-        bytes(&source),
-        safe_multiline,
-    ))
-}
-
-/// Ruby entry point for `Performance/TimesMap` (shirobai-performance).
-/// Config-less. Returns the `map_perf_times_map` tuple shape.
-fn check_perf_times_map(
-    source: RString,
-) -> Vec<(usize, usize, usize, usize, String, String)> {
-    map_perf_times_map(shirobai_core::rules::perf_times_map::check_perf_times_map(
-        bytes(&source),
-    ))
-}
-
-/// Ruby entry points for the four Application* cops (shirobai-rails), the
-/// per-cop fallback path for non-bundle-eligible files. Config-less; each
-/// returns `[[start, end], ...]` — the offense highlight and autocorrect
-/// replace range (the message and superclass replacement are wrapper
-/// constants). The rail origin has no per-file gate, so these mirror the
-/// bundle's slots exactly.
-fn check_rails_application_record(source: RString) -> Vec<(usize, usize)> {
-    shirobai_core::rules::rails_app::check_rails_app(bytes(&source)).application_record
-}
-
-fn check_rails_application_controller(source: RString) -> Vec<(usize, usize)> {
-    shirobai_core::rules::rails_app::check_rails_app(bytes(&source)).application_controller
-}
-
-fn check_rails_application_mailer(source: RString) -> Vec<(usize, usize)> {
-    shirobai_core::rules::rails_app::check_rails_app(bytes(&source)).application_mailer
-}
-
-fn check_rails_application_job(source: RString) -> Vec<(usize, usize)> {
-    shirobai_core::rules::rails_app::check_rails_app(bytes(&source)).application_job
 }
 
 /// `Rails/UnknownEnv`: `[[start, end, name], ...]`. `[start, end)` is the
@@ -4169,44 +3591,6 @@ fn map_rails_dynamic_find_by(
         .collect()
 }
 
-/// Ruby entry point for `Rails/UnknownEnv` (per-cop fallback). Takes the
-/// `Environments` list and the `supports_local` flag.
-fn check_rails_unknown_env(
-    source: RString,
-    environments: Vec<String>,
-    supports_local: bool,
-) -> Vec<(usize, usize, String)> {
-    map_rails_unknown_env(
-        shirobai_core::rules::rails_unknown_env::check_rails_unknown_env(
-            bytes(&source),
-            environments,
-            supports_local,
-        ),
-    )
-}
-
-/// Ruby entry point for `Rails/DynamicFindBy` (per-cop fallback). Takes the
-/// three suppression lists.
-#[allow(clippy::type_complexity)]
-fn check_rails_dynamic_find_by(
-    source: RString,
-    allowed_methods: Vec<String>,
-    allowed_receivers: Vec<String>,
-    whitelist: Vec<String>,
-) -> Vec<(usize, usize, String, usize, usize, Vec<(usize, String)>)> {
-    let config = shirobai_core::rules::rails_dynamic_find_by::Config {
-        allowed_methods,
-        allowed_receivers,
-        whitelist,
-    };
-    map_rails_dynamic_find_by(
-        shirobai_core::rules::rails_dynamic_find_by::check_rails_dynamic_find_by(
-            bytes(&source),
-            config,
-        ),
-    )
-}
-
 /// `Rails/Pluck`: `[[sel_start, block_end, key_src_start, key_src_end], ...]`.
 /// `[sel_start, block_end)` is the offense highlight and replace range; the
 /// replacement is `pluck(<source[key_src_start..key_src_end]>)`.
@@ -4216,13 +3600,6 @@ fn map_rails_pluck(
     v.into_iter()
         .map(|o| (o.sel_start, o.block_end, o.key_src_start, o.key_src_end))
         .collect()
-}
-
-/// Ruby entry point for `Rails/Pluck` (per-cop fallback). No config needed.
-fn check_rails_pluck(source: RString) -> Vec<(usize, usize, usize, usize)> {
-    map_rails_pluck(shirobai_core::rules::rails_pluck::check_rails_pluck(
-        bytes(&source),
-    ))
 }
 
 /// Standalone candidate prefilter for `Rails/HttpPositionalArguments`
@@ -4502,18 +3879,6 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         function!(check_array_alignment, 3),
     )?;
     module.define_module_function(
-        "check_arguments_forwarding",
-        function!(check_arguments_forwarding, 8),
-    )?;
-    module.define_module_function(
-        "check_space_around_operators",
-        function!(check_space_around_operators, 6),
-    )?;
-    module.define_module_function(
-        "check_extra_spacing",
-        function!(check_extra_spacing, 4),
-    )?;
-    module.define_module_function(
         "extra_spacing_ignored_ranges",
         function!(extra_spacing_ignored_ranges, 1),
     )?;
@@ -4543,81 +3908,12 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         function!(check_empty_line_after_guard_clause, 1),
     )?;
     module.define_module_function(
-        "check_if_unless_modifier",
-        function!(check_if_unless_modifier, 2),
-    )?;
-    module.define_module_function(
-        "check_empty_comment",
-        function!(check_empty_comment, 3),
-    )?;
-    module.define_module_function(
-        "check_empty_line_after_magic_comment",
-        function!(check_empty_line_after_magic_comment, 1),
-    )?;
-    module.define_module_function(
-        "check_duplicate_magic_comment",
-        function!(check_duplicate_magic_comment, 1),
-    )?;
-    module.define_module_function(
-        "check_ordered_magic_comments",
-        function!(check_ordered_magic_comments, 1),
-    )?;
-    module.define_module_function(
-        "check_initial_indentation",
-        function!(check_initial_indentation, 1),
-    )?;
-    module.define_module_function("check_end_of_line", function!(check_end_of_line, 1))?;
-    module.define_module_function(
-        "check_magic_comment_format",
-        function!(check_magic_comment_format, 1),
-    )?;
-    module.define_module_function(
-        "check_ascii_identifiers",
-        function!(check_ascii_identifiers, 2),
-    )?;
-    module.define_module_function(
-        "check_rescue_ensure_alignment",
-        function!(check_rescue_ensure_alignment, 1),
-    )?;
-    module.define_module_function(
-        "check_directive_scope",
-        function!(check_directive_scope, 1),
-    )?;
-    module.define_module_function(
-        "check_misplaced_magic_comment",
-        function!(check_misplaced_magic_comment, 1),
-    )?;
-    module.define_module_function(
         "check_frozen_string_literals_enabled",
         function!(check_frozen_string_literals_enabled, 2),
     )?;
     module.define_module_function(
         "check_frozen_string_literals_disabled",
         function!(check_frozen_string_literals_disabled, 1),
-    )?;
-    module.define_module_function(
-        "check_space_inside_string_interpolation",
-        function!(check_space_inside_string_interpolation, 2),
-    )?;
-    module.define_module_function(
-        "check_space_around_equals_in_parameter_default",
-        function!(check_space_around_equals_in_parameter_default, 2),
-    )?;
-    module.define_module_function(
-        "check_frozen_string_literal_comment",
-        function!(check_frozen_string_literal_comment, 2),
-    )?;
-    module.define_module_function(
-        "check_duplicate_methods",
-        function!(check_duplicate_methods, 3),
-    )?;
-    module.define_module_function(
-        "check_empty_lines",
-        function!(check_empty_lines, 1),
-    )?;
-    module.define_module_function(
-        "check_leading_empty_lines",
-        function!(check_leading_empty_lines, 1),
     )?;
     module.define_module_function(
         "check_space_around_method_call_operator",
@@ -4636,50 +3932,9 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         function!(check_space_inside_hash_literal_braces, 3),
     )?;
     module.define_module_function(
-        "check_space_before_comma",
-        function!(check_space_before_comma, 2),
-    )?;
-    module.define_module_function(
-        "check_space_after_comma",
-        function!(check_space_after_comma, 2),
-    )?;
-    module.define_module_function(
-        "check_space_before_semicolon",
-        function!(check_space_before_semicolon, 2),
-    )?;
-    module.define_module_function(
-        "check_space_after_semicolon",
-        function!(check_space_after_semicolon, 2),
-    )?;
-    module.define_module_function(
-        "check_space_after_colon",
-        function!(check_space_after_colon, 1),
-    )?;
-    module.define_module_function(
-        "check_space_before_comment",
-        function!(check_space_before_comment, 1),
-    )?;
-    module.define_module_function(
-        "check_space_inside_parens",
-        function!(check_space_inside_parens, 2),
-    )?;
-    module.define_module_function(
-        "check_space_inside_reference_brackets",
-        function!(check_space_inside_reference_brackets, 3),
-    )?;
-    module.define_module_function(
-        "check_space_before_first_arg",
-        function!(check_space_before_first_arg, 2),
-    )?;
-    module.define_module_function(
         "check_space_inside_array_literal_brackets",
         function!(check_space_inside_array_literal_brackets, 3),
     )?;
-    module.define_module_function(
-        "check_space_before_block_braces",
-        function!(check_space_before_block_braces, 4),
-    )?;
-    module.define_module_function("check_end_alignment", function!(check_end_alignment, 2))?;
     module.define_module_function(
         "check_def_end_alignment",
         function!(check_def_end_alignment, 2),
@@ -4725,58 +3980,12 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         function!(check_assignment_indentation, 2),
     )?;
     module.define_module_function(
-        "check_semicolon",
-        function!(check_semicolon, 1),
-    )?;
-    module.define_module_function(
         "check_colon_method_call",
         function!(check_colon_method_call, 1),
     )?;
     module.define_module_function(
         "check_redundant_freeze",
         function!(check_redundant_freeze, 3),
-    )?;
-    module.define_module_function("check_perf_detect", function!(check_perf_detect, 2))?;
-    module.define_module_function(
-        "check_perf_string_include",
-        function!(check_perf_string_include, 1),
-    )?;
-    module.define_module_function("check_perf_end_with", function!(check_perf_end_with, 2))?;
-    module.define_module_function(
-        "check_perf_start_with",
-        function!(check_perf_start_with, 2),
-    )?;
-    module.define_module_function(
-        "check_perf_times_map",
-        function!(check_perf_times_map, 1),
-    )?;
-    module.define_module_function(
-        "check_rails_application_record",
-        function!(check_rails_application_record, 1),
-    )?;
-    module.define_module_function(
-        "check_rails_application_controller",
-        function!(check_rails_application_controller, 1),
-    )?;
-    module.define_module_function(
-        "check_rails_application_mailer",
-        function!(check_rails_application_mailer, 1),
-    )?;
-    module.define_module_function(
-        "check_rails_application_job",
-        function!(check_rails_application_job, 1),
-    )?;
-    module.define_module_function(
-        "check_rails_unknown_env",
-        function!(check_rails_unknown_env, 3),
-    )?;
-    module.define_module_function(
-        "check_rails_dynamic_find_by",
-        function!(check_rails_dynamic_find_by, 4),
-    )?;
-    module.define_module_function(
-        "check_rails_pluck",
-        function!(check_rails_pluck, 1),
     )?;
     module.define_module_function(
         "check_rails_http_positional_arguments",
@@ -4907,10 +4116,6 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         "check_hash_each_methods",
         function!(check_hash_each_methods, 2),
     )?;
-    module.define_module_function(
-        "check_file_null",
-        function!(check_file_null, 1),
-    )?;
     module.define_module_function("check_hash_syntax", function!(check_hash_syntax, 2))?;
     module.define_module_function(
         "check_hash_transform_keys",
@@ -4936,15 +4141,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         "check_trailing_comma_in_array_literal",
         function!(check_trailing_comma_in_array_literal, 2),
     )?;
-    module.define_module_function(
-        "check_trailing_empty_lines",
-        function!(check_trailing_empty_lines, 2),
-    )?;
     module.define_module_function("check_void", function!(check_void, 2))?;
-    module.define_module_function(
-        "check_empty_lines_around_body",
-        function!(check_empty_lines_around_body, 4),
-    )?;
     module.define_module_function(
         "check_useless_access_modifier",
         function!(check_useless_access_modifier, 4),
