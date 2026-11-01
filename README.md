@@ -120,7 +120,7 @@ I prefer a failed install over a silent difference.
 ### Known limitation: `AllCops/TargetRubyVersion`
 
 shirobai always parses with prism's Latest grammar.
-In practice, only four cops are affected:
+In practice, only five cops are affected:
 
 - **Layout/SpaceAroundKeyword** when detecting the Ruby 2.7
   `expr in pat` one-line pattern match.
@@ -133,6 +133,10 @@ In practice, only four cops are affected:
   tokenizes it as `tIDENTIFIER` before 3.0 and as `tFID` on newer grammars;
   prism follows the newer grammar). A plain `def foo!` is unaffected. Real code
   has no non-ASCII `!` / `?` method names, so this is theoretical.
+- **Style/IfUnlessModifier** when the condition is `=~` with an
+  INTERPOLATED regexp on the left whose interpolations are all static strings
+  (`if /a#{"b"}/ =~ s`). Before 3.3 parser-gem treats it like a plain regexp
+  literal (a `match_with_lvasgn`, so no offense); 3.3+ grammars and prism do not.
 
 All other implemented cops work the same regardless of TargetRubyVersion.
 If you need strict target-version behavior for these cops,

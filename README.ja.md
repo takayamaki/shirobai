@@ -109,7 +109,7 @@ RuboCop の hard pin は意図的なもの。shirobai は cop の内部挙動を
 
 ### 既知の制約: `AllCops/TargetRubyVersion`
 
-shirobai は常に prism の Latest 文法でパースする。実際に影響が出るのは次の 4 cop のみ:
+shirobai は常に prism の Latest 文法でパースする。実際に影響が出るのは次の 5 cop のみ:
 
 - **Layout/SpaceAroundKeyword** — Ruby 2.7 の `expr in pat`（ワンラインパターンマッチ）を検出するケース
 - **Lint/DuplicateMagicComment** — インデントされた `__END__` 行があるファイル
@@ -120,6 +120,9 @@ shirobai は常に prism の Latest 文法でパースする。実際に影響�
   `!` か `?` で終わる非 ASCII メソッド名があるケース（parser gem は 3.0 より前は
   `tIDENTIFIER`、以降の文法では `tFID` としてトークン化し、prism は新しい文法に従う）。
   素の `def foo!` は影響なし。実コードに非 ASCII の `!` / `?` メソッド名は無いので理論上の話
+- **Style/IfUnlessModifier** — 条件が `=~` で、左辺が埋め込みをすべて静的な文字列にした
+  正規表現リテラル（`if /a#{"b"}/ =~ s`）のケース。3.3 より前の parser gem は通常の
+  正規表現リテラルと同じ `match_with_lvasgn` として扱う（offense なし）が、3.3+ の文法と prism はそう扱わない
 
 他の実装済み cop は TargetRubyVersion に依存せず同じ挙動になる。
 これらの cop で厳密に target version を効かせたいときは、

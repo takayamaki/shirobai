@@ -150,6 +150,18 @@ heredoc body — a shape that never occurs in the LF-only verification corpora
 spec. Same family as the README `TargetRubyVersion` notes: disable shirobai's
 replacement for byte-exact behavior on that pathological input.
 
+### Known limitation: `Style/IfUnlessModifier` static-interpolation regexp match
+
+parser-gem builds `match_with_lvasgn` (not `send`) for every dot-less `=~` whose
+receiver is a static regexp literal, named captures or not, and stock skips the
+to-modifier direction for such a condition (`named_capture_in_condition?`).
+shirobai follows the 3.3+ rule that prism's translator uses: only a plain
+`RegularExpressionNode` receiver counts. For targets before 3.3, whitequark also
+counts an interpolated regexp whose interpolations are all static strings
+(`/a#{"b"}/`, `/a#{}/`), so stock does not flag `if /a#{"b"}/ =~ s ... end`
+there and shirobai does. Same family as the README `TargetRubyVersion` notes;
+no verification corpus has this shape.
+
 ### Note: `Style/EmptyLiteral` (frozen-scan-only Rust)
 
 `Style/EmptyLiteral` is almost entirely AST work — the const-receiver
