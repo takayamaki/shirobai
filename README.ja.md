@@ -34,7 +34,7 @@ shirobaiは日本語話者なら当然わかるでしょう、白バイです。
 
 ## 現状
 
-- **106 cop** を Rust 実装済み（Lint / Layout / Metrics / Naming / Style）。
+- **108 cop** を Rust 実装済み（Lint / Layout / Metrics / Naming / Style）。
 - **プラグイン cop gem**（共有 native extension 経由でさらに 37 cop、
   cargo build の追加なし）: `gems/shirobai-rspec` が rubocop-rspec の 21 cop を、
   `gems/shirobai-rails` が rubocop-rails の 11 cop を、
@@ -107,9 +107,11 @@ RuboCop の hard pin は意図的なもの。shirobai は cop の内部挙動を
 って divergence を出すよりインストール時に失敗してほしいので、bump は手動・
 意識的に行う。
 
-### 既知の制約: `AllCops/TargetRubyVersion`
+### サポートする `AllCops/TargetRubyVersion`
 
-shirobai は常に prism の Latest 文法でパースする。実際に影響が出るのは次の 5 cop のみ:
+shirobai は常に prism の Latest 文法でパースする。prism には 3.3 より前の Ruby の文法が無く、shirobai が使う Rust バインディング（`ruby-prism`）も常に最新の文法でパースするためである。
+target version に合わせてパースできるようになるまでは、古い target version は「stock RuboCop が最新の Ruby と同じ挙動をする範囲」でのみサポートする。
+古い target version では、次の 5 cop が stock と異なる場合がある:
 
 - **Layout/SpaceAroundKeyword** — Ruby 2.7 の `expr in pat`（ワンラインパターンマッチ）を検出するケース
 - **Lint/DuplicateMagicComment** — インデントされた `__END__` 行があるファイル

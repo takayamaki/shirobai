@@ -43,7 +43,7 @@ The image is simple: RuboCop hops on a shiro-bai and gets faster.
 
 ## Current status
 
-- **106 cops** reimplemented in Rust (Lint / Layout / Metrics / Naming / Style).
+- **108 cops** reimplemented in Rust (Lint / Layout / Metrics / Naming / Style).
 - **Plugin-cop gems** (37 more cops through the same shared native
   extension, no second cargo build): `gems/shirobai-rspec` replaces 21
   rubocop-rspec cops, `gems/shirobai-rails` replaces 11 rubocop-rails cops,
@@ -117,10 +117,15 @@ The hard pin on RuboCop is on purpose.
 shirobai copies cop behavior at the byte level, so even a minor RuboCop update can break compatibility.
 I prefer a failed install over a silent difference.
 
-### Known limitation: `AllCops/TargetRubyVersion`
+### Supported `AllCops/TargetRubyVersion`
 
 shirobai always parses with prism's Latest grammar.
-In practice, only five cops are affected:
+prism has no grammar for Ruby before 3.3,
+and the Rust binding shirobai uses (`ruby-prism`) always parses with the latest one.
+Until shirobai can parse for the target version,
+it supports an older target version only as far as
+stock RuboCop behaves there the same as on the latest Ruby.
+With an older target, these five cops can differ from stock:
 
 - **Layout/SpaceAroundKeyword** when detecting the Ruby 2.7
   `expr in pat` one-line pattern match.
