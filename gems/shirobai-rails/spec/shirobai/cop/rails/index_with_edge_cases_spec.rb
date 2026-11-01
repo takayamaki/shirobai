@@ -87,7 +87,7 @@ RSpec.describe "Rails/IndexWith edge cases" do
     end
   end
 
-  describe "CRLF source (standalone fallback)" do
+  describe "CRLF source" do
     it "keeps offsets aligned for map.to_h" do
       expect_autocorrect_parity(*cops, "x.map { |el| [el, foo(el)] }.to_h\r\n", config)
     end

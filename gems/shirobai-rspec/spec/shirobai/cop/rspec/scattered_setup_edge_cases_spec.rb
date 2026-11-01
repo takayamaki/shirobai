@@ -14,7 +14,7 @@ require "spec_helper"
 # - Different scopes don't conflict (`:each` vs `:all`)
 # - AC: body merge — verify the merged source matches stock byte for byte
 # - Heredoc body in hook — AC respects `final_end_location`
-# - CRLF fallback
+# - CRLF source
 RSpec.describe Shirobai::Cop::RSpec::ScatteredSetup do
   include EdgeCaseParity
 
@@ -204,7 +204,7 @@ RSpec.describe Shirobai::Cop::RSpec::ScatteredSetup do
     end
   end
 
-  describe "CRLF sources (bundle-ineligible fallback)" do
+  describe "CRLF sources" do
     it "matches stock offense positions on a CRLF source" do
       expect_parity(
         "describe Foo do\r\n  before { bar }\r\n  before { baz }\r\nend\r\n"

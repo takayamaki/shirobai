@@ -63,11 +63,9 @@ module Shirobai
 
         private
 
-        # Bundle path only when raw_source and the parser buffer agree byte
-        # for byte (CRLF/BOM break that — see Shirobai::Cop::BundleEligible);
-        # a gated-off file (nil from Dispatch) also falls back. The fallback
-        # scans `buffer.source` so every offset lines up with parser-gem's
-        # index.
+        # The shared walk scans `buffer.source`. A gated-off file (nil from
+        # Dispatch) falls back to the standalone entry, which scans
+        # `buffer.source` too, so every offset lines up with parser-gem's index.
         def resolved_groups
           groups = Dispatch.offenses_for(processed_source, config, :rspec_multiple_memoized_helpers)
           return groups unless groups.nil?

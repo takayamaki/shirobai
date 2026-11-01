@@ -18,14 +18,11 @@ module Shirobai
       # derived, so an unrecognized style raises the same error stock would.
       #
       # Stock reads `processed_source.buffer.source`, which the parser normalizes
-      # (CRLF `\r\n` -> `\n`, BOM stripping). The bundle, like every cop, runs on
-      # `raw_source`; when the parser normalized the source those two differ and
-      # the trailing-whitespace byte positions would not line up. So this cop is
-      # bundle-eligible only when the buffer source is byte-identical to the raw
-      # source (the common case — no CRLF/BOM); otherwise it falls back to a
-      # standalone scan of `buffer.source` with offsets converted against the same
-      # string. Either way the result is purely config-driven and stateless, so
-      # the autocorrect re-passes (fresh `ProcessedSource`) recompute correctly.
+      # (CRLF `\r\n` -> `\n`, BOM stripping). The shared walk scans that same
+      # `buffer.source`, so the trailing-whitespace byte positions line up, and
+      # offsets are converted against the same string. The result is purely
+      # config-driven and stateless, so the autocorrect re-passes (fresh
+      # `ProcessedSource`) recompute correctly.
       class TrailingEmptyLines < RuboCop::Cop::Base
         include RuboCop::Cop::ConfigurableEnforcedStyle
         include RuboCop::Cop::RangeHelp
@@ -54,11 +51,9 @@ module Shirobai
           style
 
           buffer = processed_source.buffer
-          # Offsets are byte positions into the string the check scanned. On the
-          # bundle path that is `raw_source` (byte-identical to `buffer.source`
-          # there); converting against `raw_source` shares the single-slot
-          # `SourceOffsets` cache with the other bundled cops. On the CRLF/BOM
-          # fallback the check scanned `buffer.source`, so convert against that.
+          # Offsets are byte positions into the string the check scanned:
+          # `buffer.source`, which also shares the single-slot `SourceOffsets`
+          # cache with the other bundled cops.
           off = SourceOffsets.for(processed_source.buffer.source)
 
           resolved_result.each do |report_start, report_end, ac_start, ac_end, replacement, blank_lines|

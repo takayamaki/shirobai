@@ -67,9 +67,9 @@ module Shirobai
 
         private
 
-        # Bundle path only when raw_source and the parser buffer agree byte for
-        # byte; a gated-off file (nil from Dispatch) falls back to the standalone
-        # entry scanning `buffer.source`.
+        # The shared walk scans `buffer.source`. A gated-off file (nil from
+        # Dispatch) falls back to the standalone entry, which scans
+        # `buffer.source` too, so every offset lines up with parser-gem's index.
         def resolved_anchors
           anchors = Dispatch.offenses_for(processed_source, config, metadata_slot)
           return anchors unless anchors.nil?

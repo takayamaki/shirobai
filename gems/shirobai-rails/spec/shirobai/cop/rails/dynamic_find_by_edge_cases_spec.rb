@@ -15,8 +15,7 @@ require "spec_helper"
 #   one argument (matches the keyword count) and fires.
 # - **lone bang column**: `find_by_!(x)` captures `!` as the column (lazy
 #   group), so `static_name` stays `find_by`.
-# - **CRLF**: the wrapper falls back to its standalone entry point so offsets
-#   still line up with parser-gem's index.
+# - **CRLF**: offsets still line up with parser-gem's index.
 RSpec.describe "Rails/DynamicFindBy edge cases" do
   include EdgeCaseParity
 
@@ -78,7 +77,7 @@ RSpec.describe "Rails/DynamicFindBy edge cases" do
   end
 
   describe "CRLF source" do
-    it "keeps offsets aligned on the standalone fallback" do
+    it "keeps offsets aligned" do
       expect_autocorrect_parity(*cops, "User.find_by_name(name)\r\n", config)
     end
   end

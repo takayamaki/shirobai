@@ -18,10 +18,9 @@ module Shirobai
       # does. It returns the offense byte ranges; the wrapper turns each into a
       # `Parser::Source::Range`, attaches the same MSG, and removes the range.
       #
-      # Bundle-eligible only when the parser-normalized `buffer.source` is
-      # byte-identical to `raw_source` (no CRLF / BOM normalization). On CRLF or
-      # BOM the standalone entry point scans `buffer.source` directly so every
-      # returned offset still indexes into the parser-gem buffer.
+      # The shared walk scans the parser-normalized `buffer.source`, so on a
+      # CRLF or BOM file every returned offset still indexes into the
+      # parser-gem buffer.
       class EmptyLines < RuboCop::Cop::Base
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector
@@ -40,10 +39,9 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          # On the bundle path Rust scanned `raw_source` (byte-identical to
-          # `buffer.source`); on the CRLF/BOM fallback the standalone path
-          # scans `buffer.source` instead so every offset Rust returns lines
-          # up with the parser-gem buffer.
+          # Rust scanned `buffer.source` (`Dispatch` passes it, also on CRLF /
+          # BOM files), so every offset Rust returns lines up with the
+          # parser-gem buffer.
           source = processed_source.buffer.source
           off = SourceOffsets.for(source)
           resolved_offenses.each do |start, fin|

@@ -36,11 +36,10 @@ module Shirobai
 
         private
 
-        # Bundle path only when raw_source and the parser buffer agree byte for
-        # byte; a gated-off file (nil from Dispatch) falls back to the
-        # standalone entry scanning `buffer.source`. The rails origin has no
-        # per-file gate, so on a bundle-eligible file the bundle path always
-        # wins.
+        # The shared walk scans `buffer.source`. A gated-off origin (nil from
+        # Dispatch) would fall back to the standalone entry over
+        # `buffer.source`; the rails origin has no per-file gate, so the shared
+        # walk always wins.
         def resolved_candidates
           ranges = Dispatch.offenses_for(processed_source, config, candidate_slot)
           return ranges unless ranges.nil?

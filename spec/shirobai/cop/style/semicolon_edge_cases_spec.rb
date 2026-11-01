@@ -22,7 +22,7 @@ require "spec_helper"
 #   5. Autocorrect: an endless range before `;` is wrapped in parens; a hash
 #      value omission is wrapped and its selector space removed; a heredoc
 #      opened earlier on the line suppresses the newline replacement.
-#   6. CRLF source (the wrapper's non-`bundle_eligible?` fallback path) and
+#   6. CRLF source and
 #      multibyte characters before the `;` keep offsets aligned with stock.
 #
 # All cases are differential against the pinned vendor cop.
@@ -131,7 +131,7 @@ RSpec.describe Shirobai::Cop::Style::Semicolon do
 
   # --- Quirk 6: CRLF and multibyte offsets. ---
 
-  it "matches on CRLF source (the non-bundle-eligible fallback path)" do
+  it "matches on CRLF source" do
     expect_autocorrect_parity(stock_klass, shirobai_klass,
                               "foo = 1; bar = 2\r\nbaz;\r\n", cfg)
   end

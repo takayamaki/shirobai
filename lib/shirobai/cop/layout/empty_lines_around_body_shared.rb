@@ -17,8 +17,8 @@ module Shirobai
       # checks of `class Foo\n\nend` hitting the same blank line) is inherited
       # for free by emitting in stock's order. The including cop selects its
       # result slot via `SLOT`; the three configurable cops pack their
-      # `EnforcedStyle` through `bundle_args`, so the family is bundle-eligible
-      # on every config; CRLF/BOM files take the standalone fallback.
+      # `EnforcedStyle` through `bundle_args`, so the family always takes the
+      # shared walk.
       module EmptyLinesAroundBodyShared
         # `SupportedStyles` order of `Layout/EmptyLinesAroundClassBody`,
         # mirrored by the Rust style constants.
@@ -38,11 +38,9 @@ module Shirobai
         def on_new_investigation
           buffer = processed_source.buffer
 
-          # Rust byte offsets are converted against the source they were
-          # computed on (`raw_source` for the bundled run, which must equal
-          # `buffer.source`); on the CRLF/BOM fallback the standalone path
-          # scans `buffer.source` instead so every offset Rust returns lines
-          # up with the parser-gem buffer.
+          # Rust scanned `buffer.source` (`Dispatch` passes it, also on CRLF /
+          # BOM files), so every offset Rust returns lines up with the
+          # parser-gem buffer.
           source = processed_source.buffer.source
           offenses = Dispatch.offenses_for(processed_source, config, self.class::SLOT)
           off = SourceOffsets.for(source)

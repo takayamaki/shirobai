@@ -13,7 +13,7 @@ require "spec_helper"
 #   Rails >= 6.1 (`INCOMPATIBLE_METHODS`); `<<` / `clear` / `[]=` fire always.
 # - **uncorrectable receivers**: `errors.details[...] << ...` is an offense
 #   with NO correction (`skip_autocorrect?`), and `[]=` never corrects.
-# - **non-ASCII / CRLF**: byte-vs-char offsets and the standalone fallback.
+# - **non-ASCII / CRLF**: byte-vs-char offsets and CR-stripped offsets.
 RSpec.describe "Rails/DeprecatedActiveModelErrorsMethods edge cases" do
   include EdgeCaseParity
 
@@ -90,8 +90,8 @@ RSpec.describe "Rails/DeprecatedActiveModelErrorsMethods edge cases" do
     expect(corrected).to eq("# 多バイトのコメント\nuser.errors.delete(:name)\n")
   end
 
-  it "matches stock on CRLF source (standalone fallback path)" do
-    # `buffer.source != raw_source` -> the wrapper takes its standalone entry.
+  it "matches stock on CRLF source" do
+    # `buffer.source != raw_source`.
     # Whatever stock does with the CRLF, shirobai must match byte for byte
     # (the differential is the assertion).
     corrected = expect_autocorrect_parity(*pair, "user.errors[:name] << 'msg'\r\n", config)

@@ -65,10 +65,9 @@ RSpec.describe Shirobai::Cop::Layout::EmptyLinesAroundExceptionHandlingKeywords 
 end
 
 # CRLF files: `buffer.source` is LF-normalized while `raw_source` keeps the
-# `\r`, so the shared walk's byte offsets do not line up with the parser-gem
-# buffer. The family falls back to the standalone Rust entry on
-# `buffer.source` (the same rule), like every other bundle-eligible cop.
-RSpec.describe Shirobai::Cop::Layout::EmptyLinesAroundExceptionHandlingKeywords, "CRLF fallback" do
+# `\r`. The shared walk scans `buffer.source`, so its byte offsets line up
+# with the parser-gem buffer.
+RSpec.describe Shirobai::Cop::Layout::EmptyLinesAroundExceptionHandlingKeywords, "CRLF source" do
   include EdgeCaseParity
 
   klasses = [

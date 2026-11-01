@@ -202,8 +202,8 @@ RSpec.describe Shirobai::Cop::RSpec::DescribedClass do
     end
   end
 
-  describe "CRLF fallback" do
-    it "handles CRLF line endings via fallback path" do
+  describe "CRLF source" do
+    it "handles CRLF line endings" do
       source = "describe MyClass do\r\n  subject { MyClass.do_something }\r\nend\r\n"
       expect_parity(source)
     end

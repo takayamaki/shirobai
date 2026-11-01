@@ -26,9 +26,8 @@ module Shirobai
       # `@ignored_nodes` is never reset), and containment is the same numeric
       # begin/end comparison stock does against stale ranges.
       #
-      # Bundle-eligible whenever the parser buffer equals the raw source
-      # (CRLF/BOM sources fall back to the standalone entry point over
-      # `buffer.source` so every offset lines up with parser positions).
+      # The shared walk scans `buffer.source`, so on CRLF/BOM sources every
+      # offset still lines up with parser positions.
       class IfUnlessModifier < RuboCop::Cop::Base
         include RuboCop::Cop::AllowedPattern
         include RuboCop::Cop::RangeHelp

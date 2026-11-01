@@ -26,11 +26,9 @@ module Shirobai
       # `EnforcedStyleForRationalLiterals` / `AllowForAlignment` (this cop) plus
       # `Layout/HashAlignment`'s `EnforcedHashRocketStyle` (the `table` guard) and
       # `Layout/ExtraSpacing`'s `ForceEqualSignAlignment` (the autocorrect
-      # collision avoidance). All are purely config-driven, so the cop is always
-      # bundle eligible — except when `raw_source != buffer.source` (CRLF/BOM
-      # normalization), where the token byte positions would not line up and it
-      # falls back to a standalone lex of `buffer.source`. (CRLF/buffer.source
-      # trap, `aee0e8e`.)
+      # collision avoidance). All are purely config-driven, so the cop always
+      # takes the shared walk, which lexes `buffer.source` (also on CRLF/BOM
+      # files).
       class SpaceAroundOperators < RuboCop::Cop::Base
         include RuboCop::Cop::RangeHelp
         extend RuboCop::Cop::AutoCorrector

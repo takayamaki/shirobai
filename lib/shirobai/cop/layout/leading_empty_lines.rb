@@ -41,10 +41,9 @@ module Shirobai
 
         def on_new_investigation
           buffer = processed_source.buffer
-          # On the bundle path Rust scanned `raw_source` (byte-identical to
-          # `buffer.source`); on the CRLF/BOM fallback the standalone path
-          # scans `buffer.source` instead so every offset Rust returns lines
-          # up with the parser-gem buffer.
+          # Rust scanned `buffer.source` (`Dispatch` passes it, also on CRLF /
+          # BOM files), so every offset Rust returns lines up with the
+          # parser-gem buffer.
           source = processed_source.buffer.source
           off = SourceOffsets.for(source)
           resolved_offenses.each do |start, fin, ac_start, ac_end|

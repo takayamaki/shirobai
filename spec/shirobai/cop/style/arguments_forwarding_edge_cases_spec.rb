@@ -5,10 +5,9 @@ require "spec_helper"
 # Edge-case regression specs for `Style/ArgumentsForwarding` that the vendor
 # spec does not exercise:
 #
-# - CRLF sources: `buffer.source != raw_source`, so the wrapper's
-#   `bundle_eligible?` gate must send the cop down the standalone entry point
-#   (which scans `buffer.source`) so every offset lines up with the parser-gem
-#   character index.
+# - CRLF sources: `buffer.source != raw_source`. The shared walk scans
+#   `buffer.source`, so every offset lines up with the parser-gem character
+#   index.
 # - The paren-less def / call whose kwrest AND block both anonymize with no
 #   rest present: two different-range offenses both call
 #   `add_parens_if_missing` on the same node. Before 1.92 the corrector
@@ -81,9 +80,9 @@ RSpec.describe "Style/ArgumentsForwarding edge cases" do
     stock_src
   end
 
-  it "falls back off the bundle path on a CRLF source (byte/char parity)" do
-    # `buffer.source` strips the CR, so raw_source != buffer.source and the
-    # cop takes the standalone entry point. A forward-all `...` fires at 2.7.
+  it "matches stock on a CRLF source (byte/char parity)" do
+    # `buffer.source` strips the CR, so raw_source != buffer.source. A
+    # forward-all `...` fires at 2.7.
     src = "def foo(*args, **kwargs, &block)\r\n  bar(*args, **kwargs, &block)\r\nend\r\n"
     expect_parity(src, 2.7)
   end

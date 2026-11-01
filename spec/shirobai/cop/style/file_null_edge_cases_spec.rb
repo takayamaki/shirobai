@@ -118,10 +118,10 @@ RSpec.describe Shirobai::Cop::Style::FileNull do
     end
   end
 
-  describe "CRLF sources (the bundle path falls back to the standalone scan)" do
+  describe "CRLF sources" do
     # A CRLF file makes `buffer.source` (normalized to LF) differ from
-    # `raw_source`, so `bundle_eligible?` is false and the wrapper scans
-    # `buffer.source`. Offsets and autocorrect must still match stock.
+    # `raw_source`. The shared walk scans `buffer.source`, and offsets and
+    # autocorrect must still match stock.
     it "matches stock offenses and autocorrect on a CRLF source" do
       # The parser buffer normalizes CRLF to LF, so both stock and shirobai
       # rewrite over the LF `buffer.source` (the differential is the real

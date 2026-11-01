@@ -49,9 +49,7 @@ module Shirobai
 
           # Find the last magic comment in document order (`reverse.find`).
           # The candidate slices come from the same buffer Rust scans
-          # (raw_source on the bundle path, buffer.source on the fallback);
-          # both are byte-identical to the bytes Rust used to compute the
-          # ranges, so plain byte indexing is safe.
+          # (`buffer.source`), so plain byte indexing is safe.
           source = processed_source.buffer.source
           last = nil
           candidates.reverse_each do |start, fin, line|

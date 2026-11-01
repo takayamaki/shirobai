@@ -218,11 +218,10 @@ RSpec.describe Shirobai::Cop::RSpec::LetSetup do
     end
   end
 
-  describe "CRLF sources (bundle-ineligible fallback)" do
+  describe "CRLF sources" do
     # A CRLF source normalizes to LF in the parser buffer while `raw_source`
-    # keeps the `\r`s, so shared-walk offsets no longer line up with parser
-    # positions. `bundle_eligible?` must route these files to the standalone
-    # entry point over `buffer.source`.
+    # keeps the `\r`s. The shared walk scans `buffer.source`, so its offsets
+    # must still line up with parser positions.
     it "matches stock offense positions on a CRLF source" do
       expect_parity(
         "describe 'x' do\r\n  let!(:w) { create(:widget) }\r\n" \

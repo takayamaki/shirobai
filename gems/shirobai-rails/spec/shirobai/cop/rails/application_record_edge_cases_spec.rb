@@ -19,9 +19,8 @@ require "spec_helper"
 #   still fires `Rails/ApplicationRecord`.
 # - **arity**: `Class.new(Base, x)` (two args) and `Class.new(Base, &blk)`
 #   (block-pass) do not match; a literal block does.
-# - **CRLF**: the wrapper falls back to its standalone entry point when
-#   `buffer.source != raw_source` (CRLF / BOM), so offsets must still line
-#   up with parser-gem's index.
+# - **CRLF**: when `buffer.source != raw_source` (CRLF / BOM), offsets must
+#   still line up with parser-gem's index.
 RSpec.describe "Application* cops edge cases" do
   include EdgeCaseParity
 
@@ -114,7 +113,7 @@ RSpec.describe "Application* cops edge cases" do
     end
   end
 
-  describe "CRLF source (standalone fallback path)" do
+  describe "CRLF source" do
     it "matches stock offenses and correction with CRLF line endings" do
       src = "class Foo < ActiveRecord::Base\r\nend\r\n"
       expect_autocorrect_parity(*record, src, config)

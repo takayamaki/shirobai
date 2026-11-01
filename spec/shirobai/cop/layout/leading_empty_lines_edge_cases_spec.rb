@@ -20,8 +20,8 @@ require "spec_helper"
 #      character by parser-gem; the wrapper's `SourceOffsets` does the
 #      byte→char conversion so the offense column lines up with stock.
 #   5. CRLF blank lines (`\r\n\r\n`) are normalized to `\n\n` in
-#      `buffer.source`; the wrapper falls back to the standalone path so
-#      offsets index into `buffer.source` rather than `raw_source`.
+#      `buffer.source`; the shared walk scans `buffer.source`, so offsets
+#      index into it rather than `raw_source`.
 #   6. Leading whitespace (spaces / tabs) on the first "blank" line still
 #      counts as blank for line-counting purposes — the offense fires when
 #      the first token's line is `> 1` regardless of indentation.

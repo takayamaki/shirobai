@@ -14,7 +14,7 @@ require "spec_helper"
 # - **case with multiple `when` conditions**: each unknown string condition is
 #   a separate offense.
 # - **non-string `when`**: ignored.
-# - **CRLF**: the wrapper falls back to its standalone entry point.
+# - **CRLF**: offsets still line up with parser-gem's index.
 RSpec.describe "Rails/UnknownEnv edge cases" do
   include EdgeCaseParity
 
@@ -57,9 +57,9 @@ RSpec.describe "Rails/UnknownEnv edge cases" do
     # inside the plugin: stock `extend`s `TargetRailsVersion`, whose
     # `target_rails_version` reads `RuboCop::Cop::TargetRailsVersion.resolve`
     # instead of RuboCop core's `Config#target_rails_version`. The `local`
-    # gate must follow that same resolver on both the bundle path and the
-    # standalone fallback. The config names a different version on purpose:
-    # a wrapper that still asks core would see 7.0 and flag `local`.
+    # gate must follow that same resolver on every file. The config names a
+    # different version on purpose: a wrapper that still asks core would see
+    # 7.0 and flag `local`.
     let(:config) do
       default = RuboCop::ConfigLoader.default_configuration
       hash = default.to_h.dup
@@ -73,7 +73,7 @@ RSpec.describe "Rails/UnknownEnv edge cases" do
       expect_lint_parity(*cops, "Rails.env.local?\nRails.env.proudction?\n", config)
     end
 
-    it "follows the resolver on the CRLF fallback path" do
+    it "follows the resolver on a CRLF source" do
       expect_lint_parity(*cops, "Rails.env.local?\r\nRails.env.proudction?\r\n", config)
     end
   end

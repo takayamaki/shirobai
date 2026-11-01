@@ -22,10 +22,9 @@ module Shirobai
       # whitespace before `end` with the target indentation, or (when something
       # non-space precedes `end`) insert a newline + indentation after it.
       #
-      # Offenses come from the per-file bundled run (`Shirobai::Dispatch`). On
-      # a CRLF / BOM source (`raw_source != buffer.source`) the standalone
-      # entry point scans `buffer.source`, so the offsets line up with the
-      # parser-normalized buffer.
+      # Offenses come from the per-file bundled run (`Shirobai::Dispatch`),
+      # which scans `buffer.source`, so on a CRLF / BOM source the offsets
+      # still line up with the parser-normalized buffer.
       class EndAlignment < RuboCop::Cop::Base
         include RuboCop::Cop::ConfigurableEnforcedStyle
         include RuboCop::Cop::RangeHelp

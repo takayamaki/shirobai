@@ -12,9 +12,8 @@ module Shirobai
       # `/dev/null` / `NUL` / `NUL:` (case-insensitive). It returns one
       # `[start, end, message]` per offense (message carries the original-case
       # source value); the offense range is also the `File::NULL` replace
-      # range, so the wrapper just applies them. Config-less, so it is always
-      # bundle-eligible for config purposes; the shared `bundle_eligible?`
-      # guard only guards the raw-vs-buffer byte identity (CRLF / BOM).
+      # range, so the wrapper just applies them. Config-less, so it always takes
+      # the shared walk.
       class FileNull < RuboCop::Cop::Base
         extend RuboCop::Cop::AutoCorrector
 
