@@ -7,7 +7,7 @@ resolver = "3"
 # is crate 2026.709.0 -- cargo rejects leading zeros in numeric segments, and
 # Gem::Version normalizes to the same integers, so the two stay value-equal).
 [workspace.package]
-version = "2026.1101.1500"
+version = "2026.1101.2300"
 # Lowest Rust that builds shirobai (let chains need 1.88). Keep README.md and
 # README.ja.md in step; clippy's incompatible_msrv lint flags newer std APIs.
 rust-version = "1.88"
