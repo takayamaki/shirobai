@@ -131,7 +131,7 @@ Push ordering: `cross-gem` has `needs: release`, so the 4 source gems are
 already indexed before any platform gem is pushed.
 Between build and push, `cross-gem-smoke` installs the exact built
 artifact into a scratch `GEM_HOME` **on the real target platform**
-(`ubuntu-latest` for `x86_64-linux`, `macos-14` for `arm64-darwin`,
+(`ubuntu-latest` for `x86_64-linux`, `macos-15` for `arm64-darwin`,
 `ubuntu-24.04-arm` for `aarch64-linux`) and
 checks require + wrapper enlistment.
 This applies the install-smoke rule (see the incident above) to platform
