@@ -159,3 +159,5 @@ and each job verifies the offense sets match before timing.
 Test corpora live in `.tmp/` (gitignored).
 Run `bin/setup-corpora` to clone them.
 `rubocop_source` is a symlink to `vendor/rubocop` (tracked in git).
+`stdlib` is `lib/` of ruby/ruby at a pinned commit (a non-cone sparse checkout,
+so nothing outside `lib/` is linted).

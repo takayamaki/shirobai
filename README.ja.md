@@ -25,6 +25,7 @@ RuboCopの膨大なエコシステム、そして必要に応じて開発者自�
 - [Discourse](https://github.com/discourse/discourse)
 - [Redmine](https://github.com/redmine/redmine)
 - [fluentd](https://github.com/fluent/fluentd)
+- Ruby の標準ライブラリ（[ruby/ruby](https://github.com/ruby/ruby) の `lib/`）
 
 また再実装時にspecで担保されているべきだがされていない疑いがある挙動については本家RuboCopへのcontributeもできたら…という展望がなくもないかもしれない。
 
@@ -256,7 +257,7 @@ cargo clippy --all-targets        # 新規警告ゼロをマージ基準とす�
 bin/setup-corpora
 ```
 
-Mastodon、Discourse、Redmine、fluentd を `.tmp/` に pin 済みコミットで clone する。
+Mastodon、Discourse、Redmine、fluentd、Ruby の標準ライブラリ（ruby/ruby の `lib/` を sparse checkout）を `.tmp/` に pin 済みコミットで clone する。
 `rubocop_source` は `vendor/rubocop` へのシンボリックリンク（git で追跡済み）。
 
 各コーパスに対して parity オラクルを実行する:
@@ -266,13 +267,14 @@ benches/parity_diff.sh .tmp/mastodon
 benches/parity_diff.sh .tmp/discourse
 benches/parity_diff.sh .tmp/redmine
 benches/parity_diff.sh .tmp/fluentd
+benches/parity_diff.sh .tmp/stdlib
 benches/parity_diff.sh .tmp/rubocop_source
 ```
 
 各実行では実 `rubocop` CLI を 2 回走らせる
 — 一度は `Gemfile.stock`（shirobai なし）、もう一度は `Gemfile.with_shirobai` で —
 per-cop / per-offense (`path:line:column:message`) を diff する。
-**5 コーパス全部で diff=0 がマージの必須条件**。
+**6 コーパス全部で diff=0 がマージの必須条件**。
 
 ### 速度ベンチマーク
 

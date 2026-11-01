@@ -61,7 +61,7 @@ and "only happens in test code" are not reasons to ship.
      (`spec/shirobai/cop/<dept>/<name>_edge_cases_spec.rb`).
      Prefer differential style: run the same snippet through both stock and shirobai,
      assert that offenses and autocorrect output match.
-   - Get `benches/parity_diff.sh` to show zero diff on all 5 corpora.
+   - Get `benches/parity_diff.sh` to show zero diff on all 6 corpora.
    - Finish as one commit on the branch.
    - Update `docs/cop-status.md`: move the cop into the implemented list,
      or add it to "Attempted but reverted" with the reason and lesson if
@@ -74,8 +74,8 @@ The branch must have one commit where all of these pass:
 1. `bundle exec rspec` — all pass (pending is OK, fail is not)
 2. `cargo test` — all pass (run at workspace root)
 3. `cargo clippy --all-targets` — **zero new warnings**
-4. **`benches/parity_diff.sh` with zero diff on all 5 corpora**
-   (Mastodon / Discourse / Redmine / RuboCop itself / fluentd)
+4. **`benches/parity_diff.sh` with zero diff on all 6 corpora**
+   (Mastodon / Discourse / Redmine / RuboCop itself / fluentd / Ruby stdlib)
 
 ## Speed criteria for merging
 
