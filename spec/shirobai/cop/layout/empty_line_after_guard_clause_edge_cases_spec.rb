@@ -251,4 +251,27 @@ RSpec.describe Shirobai::Cop::Layout::EmptyLineAfterGuardClause do
     RUBY
     expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
   end
+
+  # `guard rescue nil` is `rescue(if, resbody)` in parser, so the guard's
+  # parent is `rescue` and `next_line_rescue_or_ensure?` accepts it
+  # (optparse.rb: `return true if load(...) rescue nil`).
+  it "accepts a modifier guard wrapped in a `rescue` modifier" do
+    src = <<~RUBY
+      def foo
+        return true if load(x) rescue nil
+        bar
+      end
+    RUBY
+    expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
+  end
+
+  it "accepts a guard in the value of a `rescue` modifier" do
+    src = <<~RUBY
+      def foo
+        bar rescue (return if x)
+        baz
+      end
+    RUBY
+    expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
+  end
 end

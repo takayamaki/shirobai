@@ -501,6 +501,27 @@ fn resolve_via_parent(parent: &Node<'_>, if_node: &Node<'_>) -> Resolution {
         }
         return Resolution::Continue;
     }
+    // RescueModifierNode: parser builds `rescue(expr, resbody(nil, nil,
+    // value), nil)`.  An if that is the expression has parent `rescue`; one
+    // that is the value has parent `resbody`.  Neither has a right sibling.
+    // Without this arm the walk goes up and matches the rescue modifier
+    // itself, because it starts at the same byte as the if.
+    if let Some(rm) = parent.as_rescue_modifier_node() {
+        let if_loc = if_node.location();
+        let same = |n: &Node<'_>| {
+            let l = n.location();
+            l.start_offset() == if_loc.start_offset() && l.end_offset() == if_loc.end_offset()
+        };
+        let kind = if same(&rm.expression()) {
+            ParserKind::Rescue
+        } else {
+            ParserKind::Resbody
+        };
+        return Resolution::ParserParent {
+            kind,
+            right_sibling: None,
+        };
+    }
     // WhenNode / InNode: their body statements contain the if.
     if let Some(w) = parent.as_when_node() {
         if let Some(stmts) = w.statements()
