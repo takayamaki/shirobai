@@ -920,17 +920,29 @@ pub fn check_extra_spacing(source: &[u8], cfg: Config) -> Vec<ExtraSpacingOffens
     // shared parse cache (the entry is built with tokens; the later `with_parsed`
     // in `check_with_tokens` reuses it with no re-parse). The tokens are the
     // pm_lex stream translated into the parser-gem shape the scan reads.
-    let tokens = super::parse_cache::with_parsed_and_tokens(source, |owner, _root, raw| {
-        super::tokens::translate_tokens(owner, raw)
+    let streams = super::parse_cache::with_parsed_and_tokens(source, |owner, _root, raw| {
+        super::tokens::translate_token_streams(owner, raw)
     });
-    check_with_tokens(source, cfg, &tokens)
+    check_with_tokens(source, cfg, &streams)
 }
 
 /// The shared core: run the adjacent-pair scan over a pre-collected token list and
 /// resolve. Both the standalone entry point and the bundle's walk-outer phase call
-/// this with the same `translate_tokens` output, so the two paths cannot diverge
-/// (the `cargo test` equivalence case in `bundle.rs` pins them equal).
-pub fn check_with_tokens(source: &[u8], cfg: Config, tokens: &[Token]) -> Vec<ExtraSpacingOffense> {
+/// this with the same `translate_token_streams` output, so the two paths cannot
+/// diverge (the `cargo test` equivalence case in `bundle.rs` pins them equal).
+///
+/// The pair scan reads the lex order: stock walks `processed_source.tokens`, not
+/// `sorted_tokens`. The lexer puts a heredoc body right after its opener, so the
+/// token after the opener on the same line is paired with the heredoc end (on
+/// another line) and the gap before it is never checked. Everything else reads
+/// the sorted order (`tokens_within` is sorted; the per-line views are the same
+/// in both orders).
+pub fn check_with_tokens(
+    source: &[u8],
+    cfg: Config,
+    streams: &super::tokens::TokenStreams,
+) -> Vec<ExtraSpacingOffense> {
+    let tokens = streams.sorted();
     let line_index = super::line_index::with_line_index(source, |li| li.clone());
     let defs = collect_def_info(source);
     let assignment_set = if cfg.force_equal_sign_alignment {
@@ -939,8 +951,8 @@ pub fn check_with_tokens(source: &[u8], cfg: Config, tokens: &[Token]) -> Vec<Ex
         BTreeSet::new()
     };
     let mut rule = ExtraSpacingRule::new(cfg, assignment_set);
-    // `sorted_tokens.each_cons(2)`: drive the per-pair core directly.
-    for w in tokens.windows(2) {
+    // `tokens.each_cons(2)` (lex order): drive the per-pair core directly.
+    for w in streams.lex().windows(2) {
         rule.check_pair(source, &line_index, &w[0], &w[1]);
     }
     resolve(source, cfg, rule, tokens, &defs)
@@ -970,6 +982,18 @@ mod tests {
             })
             .map(|o| (o.start_offset, o.end_offset))
             .collect()
+    }
+
+    // The pair scan is in lex order: the token after a heredoc opener is paired
+    // with the heredoc end, so its leading gap is not checked. A later gap on
+    // the opener line is still flagged.
+    #[test]
+    fn heredoc_opener_gap_uses_lex_order() {
+        let c = cfg(true, false, false);
+        assert!(run("X = <<'XXX'      # :nodoc:\n\nfoo\nXXX\n", c).is_empty());
+        assert!(run("foo(<<X   , 1)\nbody\nX\n", c).is_empty());
+        // "foo(<<X,   1)": `,` ends at 8, `1` begins at 11, range [8,10).
+        assert_eq!(run("foo(<<X,   1)\nbody\nX\n", c), vec![(8, 10)]);
     }
 
     // Two spaces between two tokens on the same line is flagged over the extra
