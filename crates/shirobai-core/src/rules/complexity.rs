@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 
-use ruby_prism::{Node, Visit, visit_call_node, visit_def_node};
+use ruby_prism::{Node, Visit, visit_call_node, visit_def_node, visit_pinned_expression_node};
 
 /// Per-method complexity result. Both scores are reported; each cop selects the
 /// one it needs.
@@ -263,6 +263,7 @@ fn score_body(source: &[u8], body: &Node<'_>) -> (usize, usize) {
         source,
         csend_vars: HashSet::new(),
         guard_locs: HashSet::new(),
+        in_pattern: false,
         cyclomatic: 1,
         perceived: 1,
     };
@@ -281,6 +282,11 @@ struct Scorer<'a> {
     /// that is never a counted decision point. We record each guard's location
     /// when scoring the `case_match` node and skip it when the walk reaches it.
     guard_locs: HashSet<(usize, usize)>,
+    /// True while the walk is inside a pattern (`in pat`, `v => pat`,
+    /// `v in pat`). prism uses `LocalVariableTargetNode` for a pattern
+    /// capture, but parser-gem makes it a `:match_var`, not an `:lvasgn`,
+    /// so it must not reset the `&.` discount.
+    in_pattern: bool,
     cyclomatic: usize,
     perceived: usize,
 }
@@ -344,8 +350,25 @@ impl Scorer<'_> {
     }
 
     fn score_node(&mut self, node: &Node<'_>) {
+        // Every parser-gem `:lvasgn` resets the `&.` discount. Besides
+        // `x = v`, parser-gem emits one as the target of `x op= v`,
+        // `x ||= v`, `x &&= v`, `a, x = v`, `for x in v` and `rescue => x`.
+        // prism models those as the write nodes below or as a
+        // `LocalVariableTargetNode`.
         if let Some(write) = node.as_local_variable_write_node() {
             self.csend_vars.remove(write.name().as_slice());
+        } else if let Some(write) = node.as_local_variable_operator_write_node() {
+            self.csend_vars.remove(write.name().as_slice());
+        } else if let Some(write) = node.as_local_variable_or_write_node() {
+            self.csend_vars.remove(write.name().as_slice());
+            self.add_both(1);
+        } else if let Some(write) = node.as_local_variable_and_write_node() {
+            self.csend_vars.remove(write.name().as_slice());
+            self.add_both(1);
+        } else if let Some(target) = node.as_local_variable_target_node() {
+            if !self.in_pattern {
+                self.csend_vars.remove(target.name().as_slice());
+            }
         } else if let Some(call) = node.as_call_node() {
             self.score_call(&call);
         } else if let Some(if_node) = node.as_if_node() {
@@ -420,15 +443,13 @@ impl Scorer<'_> {
             | Node::GlobalVariableOrWriteNode { .. }
             | Node::IndexOrWriteNode { .. }
             | Node::InstanceVariableOrWriteNode { .. }
-            | Node::LocalVariableOrWriteNode { .. }
             | Node::CallAndWriteNode { .. }
             | Node::ClassVariableAndWriteNode { .. }
             | Node::ConstantAndWriteNode { .. }
             | Node::ConstantPathAndWriteNode { .. }
             | Node::GlobalVariableAndWriteNode { .. }
             | Node::IndexAndWriteNode { .. }
-            | Node::InstanceVariableAndWriteNode { .. }
-            | Node::LocalVariableAndWriteNode { .. } => self.add_both(1),
+            | Node::InstanceVariableAndWriteNode { .. } => self.add_both(1),
             // Perceived counts the `case`, cyclomatic counts the `when`s.
             Node::WhenNode { .. } => self.cyclomatic += 1,
             _ => {}
@@ -504,6 +525,75 @@ impl<'pr> Visit<'pr> for Scorer<'_> {
 
     fn visit_leaf_node_enter(&mut self, node: Node<'pr>) {
         self.score_node(&node);
+    }
+
+    // `case v; in pat [if cond]; body`. parser-gem walks the pattern, then the
+    // guard condition, then the body. Only the pattern is a capture context:
+    // an assignment in the guard or the body still resets.
+    fn visit_in_node(&mut self, node: &ruby_prism::InNode<'pr>) {
+        let pattern = node.pattern();
+        if let Some(guard) = pattern.as_if_node() {
+            self.visit_branch_node_enter(guard.as_node());
+            self.visit_guarded_pattern(guard.statements(), &guard.predicate());
+        } else if let Some(guard) = pattern.as_unless_node() {
+            self.visit_branch_node_enter(guard.as_node());
+            self.visit_guarded_pattern(guard.statements(), &guard.predicate());
+        } else {
+            self.visit_pattern(&pattern);
+        }
+        if let Some(statements) = node.statements() {
+            self.visit_statements_node(&statements);
+        }
+    }
+
+    // `v => pat`
+    fn visit_match_required_node(&mut self, node: &ruby_prism::MatchRequiredNode<'pr>) {
+        self.visit(&node.value());
+        self.visit_pattern(&node.pattern());
+    }
+
+    // `v in pat`
+    fn visit_match_predicate_node(&mut self, node: &ruby_prism::MatchPredicateNode<'pr>) {
+        self.visit(&node.value());
+        self.visit_pattern(&node.pattern());
+    }
+
+    // `^(expr)` inside a pattern is plain code again (parser-gem `:pin`).
+    fn visit_pinned_expression_node(&mut self, node: &ruby_prism::PinnedExpressionNode<'pr>) {
+        let saved = std::mem::replace(&mut self.in_pattern, false);
+        visit_pinned_expression_node(self, node);
+        self.in_pattern = saved;
+    }
+
+    // `/(?<x>.)/ =~ s` is `:match_with_lvasgn` in parser-gem, not `:lvasgn`,
+    // so its capture targets are skipped (they score nothing else).
+    fn visit_match_write_node(&mut self, node: &ruby_prism::MatchWriteNode<'pr>) {
+        self.visit_call_node(&node.call());
+    }
+}
+
+impl<'pr> Scorer<'_> {
+    fn visit_pattern(&mut self, pattern: &Node<'pr>) {
+        let saved = std::mem::replace(&mut self.in_pattern, true);
+        self.visit(pattern);
+        self.in_pattern = saved;
+    }
+
+    /// The inside of a guarded `in` pattern (prism wraps it in an `IfNode` /
+    /// `UnlessNode` whose hook the caller already ran), in parser-gem order:
+    /// the pattern, then the guard condition.
+    fn visit_guarded_pattern(
+        &mut self,
+        statements: Option<ruby_prism::StatementsNode<'pr>>,
+        predicate: &Node<'pr>,
+    ) {
+        if let Some(statements) = statements {
+            for pattern in &statements.body() {
+                self.visit_pattern(&pattern);
+            }
+        }
+        self.visit(predicate);
+        self.visit_branch_node_leave();
     }
 }
 
@@ -658,6 +748,43 @@ mod tests {
             "def m\n  var = 1\n  var&.foo\n  var&.bar\n  var = 2\n  var&.baz\n  var&.qux\nend";
         // var&.foo (+1), var&.bar (discount 0), reset, var&.baz (+1), var&.qux (0)
         assert_eq!(one(src), (3, 3));
+    }
+
+    fn between_csends(form: &str) -> (usize, usize) {
+        one(&format!("def m\n  x = nil\n  x&.a\n  {form}\n  x&.b\nend"))
+    }
+
+    // Every parser-gem `:lvasgn` resets the discount, not only `x = v`.
+    // Each case: `x&.a` (+1), the form, `x&.b` (+1 when reset).
+    #[test]
+    fn repeated_csend_reset_by_lvasgn_targets() {
+        assert_eq!(between_csends("x, _ = foo"), (3, 3));
+        assert_eq!(between_csends("x += 1"), (3, 3));
+        assert_eq!(between_csends("x ||= 1"), (4, 4));
+        assert_eq!(between_csends("x &&= 1"), (4, 4));
+        assert_eq!(between_csends("for x in y; end"), (4, 4));
+        assert_eq!(between_csends("a, (b, *x) = foo"), (3, 3));
+        assert_eq!(
+            between_csends("case z\n  in [*w] if (x, _ = foo)\n    1\n  end"),
+            (4, 4)
+        );
+        assert_eq!(
+            between_csends("case z\n  in ^(x, _ = foo) then 1\n  end"),
+            (4, 4)
+        );
+        assert_eq!(
+            one("def m\n  x = nil\n  x&.a\nrescue => x\n  x&.b\nend"),
+            (4, 4)
+        );
+    }
+
+    // Pattern captures and `=~` named captures are not `:lvasgn`: no reset.
+    #[test]
+    fn repeated_csend_not_reset_by_captures() {
+        assert_eq!(between_csends("case z\n  in [x] then 1\n  end"), (3, 3));
+        assert_eq!(between_csends("z => [x]"), (2, 2));
+        assert_eq!(between_csends("z in {x:}"), (2, 2));
+        assert_eq!(between_csends("/(?<x>.)/ =~ s"), (2, 2));
     }
 
     // Iterating blocks add 1; non-iterating blocks add 0.
