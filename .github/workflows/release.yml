@@ -91,7 +91,7 @@ jobs:
           if-no-files-found: error
 
   # Install smoke on the real target platform (ubuntu-latest is x86_64-linux,
-  # macos-14 is arm64-darwin, ubuntu-24.04-arm is aarch64-linux): scratch
+  # macos-15 is arm64-darwin, ubuntu-24.04-arm is aarch64-linux): scratch
   # GEM_HOME, install of the exact built artifact, then a require + wrapper-enlist check. This applies the
   # runbook's install-smoke rule to platform gems, and is the only stage that
   # exercises the fat gem's versioned .so load path end to end.
@@ -105,7 +105,7 @@ jobs:
           - platform: x86_64-linux
             runner: ubuntu-latest
           - platform: arm64-darwin
-            runner: macos-14
+            runner: macos-15
           - platform: aarch64-linux
             runner: ubuntu-24.04-arm
 
