@@ -89,15 +89,10 @@ RSpec.describe Shirobai::Rails do
     end
   end
 
+  # Only the Architecture-B wrappers keep a standalone entry (their nil
+  # fallback). The Application* cops read their slots only; the bundle
+  # examples above cover them.
   describe "the standalone fallback entry points" do
-    it "returns the same ranges as the bundle for each cop" do
-      source = "class Foo < ActiveRecord::Base\nend\nBaz = Class.new(ActionController::Base)\n"
-      expect(Shirobai.check_rails_application_record(source)).to eq([[12, 30]])
-      expect(Shirobai.check_rails_application_controller(source).length).to eq(1)
-      expect(Shirobai.check_rails_application_mailer(source)).to eq([])
-      expect(Shirobai.check_rails_application_job(source)).to eq([])
-    end
-
     it "returns candidate ranges for the Architecture-B cops" do
       expect(Shirobai.check_rails_http_positional_arguments("get :new, id: 1\n"))
         .to eq([[0, 15]])

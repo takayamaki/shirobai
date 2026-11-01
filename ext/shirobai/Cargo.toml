@@ -4,6 +4,7 @@
 # mismatch breaks `gem install` with "Dynamic library not found".
 name = "shirobai"
 version.workspace = true
+rust-version.workspace = true
 edition = "2024"
 publish = false
 

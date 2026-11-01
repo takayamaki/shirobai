@@ -44,7 +44,7 @@ The image is simple: RuboCop hops on a shiro-bai and gets faster.
 
 ## Current status
 
-- **106 cops** reimplemented in Rust (Lint / Layout / Metrics / Naming / Style).
+- **108 cops** reimplemented in Rust (Lint / Layout / Metrics / Naming / Style).
 - **Plugin-cop gems** (37 more cops through the same shared native
   extension, no second cargo build): `gems/shirobai-rspec` replaces 21
   rubocop-rspec cops, `gems/shirobai-rails` replaces 11 rubocop-rails cops,
@@ -102,14 +102,14 @@ The image is simple: RuboCop hops on a shiro-bai and gets faster.
 > On **x86_64 / arm64 Linux (glibc)** and **Apple Silicon macOS (arm64-darwin)**,
 > `gem install` pulls a prebuilt platform gem and **no Rust toolchain is needed**.
 > On every other platform `bundle install` runs `cargo build --release`,
-> so you need **Rust toolchain (stable, 1.75 or newer)** on the machine where you install.
+> so you need **Rust toolchain (stable, 1.88 or newer)** on the machine where you install.
 > Install it with [rustup](https://rustup.rs/) first.
 
 | | |
 |---|---|
 | RuboCop | **pinned to `= 1.92.2`** |
 | Ruby | `>= 3.1` |
-| Rust | `>= 1.75` (stable) — not needed on the prebuilt platforms below |
+| Rust | `>= 1.88` (stable) — not needed on the prebuilt platforms below |
 | Prebuilt platforms | `x86_64-linux` / `aarch64-linux` (glibc) / `arm64-darwin` (Apple Silicon), Ruby 3.1–4.0 |
 | Other platforms | Linux / macOS (anywhere `cargo build --release` works, e.g. musl, Intel macOS) |
 | Ruby parser | `ruby-prism` (Latest grammar ≈ Ruby 4.1) |
@@ -118,10 +118,15 @@ The hard pin on RuboCop is on purpose.
 shirobai copies cop behavior at the byte level, so even a minor RuboCop update can break compatibility.
 I prefer a failed install over a silent difference.
 
-### Known limitation: `AllCops/TargetRubyVersion`
+### Supported `AllCops/TargetRubyVersion`
 
 shirobai always parses with prism's Latest grammar.
-In practice, only five cops are affected:
+prism has no grammar for Ruby before 3.3,
+and shirobai does not pass the target version to prism yet (even for 3.3 and later).
+Until shirobai can parse for the target version,
+it supports an older target version only as far as
+stock RuboCop behaves there the same as on the latest Ruby.
+With an older target, these five cops can differ from stock:
 
 - **Layout/SpaceAroundKeyword** when detecting the Ruby 2.7
   `expr in pat` one-line pattern match.
