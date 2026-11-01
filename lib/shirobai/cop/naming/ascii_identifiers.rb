@@ -41,7 +41,7 @@ module Shirobai
           source = processed_source.buffer.source
           off = SourceOffsets.for(source)
 
-          resolved_result(source).each do |is_constant, start, fin|
+          resolved_result.each do |is_constant, start, fin|
             range = range_between(off[start], off[fin])
             add_offense(range, message: is_constant ? CONSTANT_MSG : IDENTIFIER_MSG)
           end
@@ -49,7 +49,7 @@ module Shirobai
 
         private
 
-        def resolved_result(source)
+        def resolved_result
           Dispatch.offenses_for(processed_source, config, :ascii_identifiers) || []
         end
       end

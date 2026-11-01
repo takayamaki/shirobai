@@ -65,10 +65,10 @@ module Shirobai
           buffer = processed_source.buffer
           source = processed_source.buffer.source
           off = SourceOffsets.for(source)
-          raw_positions(source).map { |begin_byte, end_byte| [off[begin_byte], off[end_byte]] }
+          raw_positions.map { |begin_byte, end_byte| [off[begin_byte], off[end_byte]] }
         end
 
-        def raw_positions(source)
+        def raw_positions
           Dispatch.offenses_for(processed_source, config, :rescue_ensure_alignment) || []
         end
 

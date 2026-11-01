@@ -75,10 +75,6 @@ module Shirobai
           cop_config["Environments"] || []
         end
 
-        def supports_local?
-          target_rails_version >= 7.1
-        end
-
         def resolved_offenses
           Dispatch.offenses_for(processed_source, config, :rails_unknown_env)
         end

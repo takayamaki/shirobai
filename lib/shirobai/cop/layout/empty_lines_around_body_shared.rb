@@ -20,17 +20,6 @@ module Shirobai
       # `EnforcedStyle` through `bundle_args`, so the family is bundle-eligible
       # on every config; CRLF/BOM files take the standalone fallback.
       module EmptyLinesAroundBodyShared
-        # Index of each member in the standalone `check_empty_lines_around_body`
-        # result (slot order: method, class, module, block, begin, keywords).
-        STANDALONE_INDEX = {
-          empty_lines_around_method_body: 0,
-          empty_lines_around_class_body: 1,
-          empty_lines_around_module_body: 2,
-          empty_lines_around_block_body: 3,
-          empty_lines_around_begin_body: 4,
-          empty_lines_around_exception_handling_keywords: 5
-        }.freeze
-
         # `SupportedStyles` order of `Layout/EmptyLinesAroundClassBody`,
         # mirrored by the Rust style constants.
         STYLES = {
@@ -81,17 +70,6 @@ module Shirobai
         end
 
         private
-
-        # The standalone run for the CRLF/BOM fallback: the whole family at
-        # once (same Rust rule as the shared walk), this cop's slot picked out.
-        def standalone_offenses(source)
-          Shirobai.check_empty_lines_around_body(
-            source,
-            EmptyLinesAroundClassBody.bundle_args(config)[0],
-            EmptyLinesAroundModuleBody.bundle_args(config)[0],
-            EmptyLinesAroundBlockBody.bundle_args(config)[0]
-          )[STANDALONE_INDEX.fetch(self.class::SLOT)]
-        end
 
         # The config half of EHK's `left_to_block_body_cop?` (1.92,
         # rubocop#15814); Rust already checked the block parent and the blank
