@@ -33,9 +33,14 @@
 //!   sees it as a left sibling. Prism has no such node, so it is
 //!   reproduced virtually (same for the `rescue => e` reference and the
 //!   `for` index, which parser emits as `lvasgn`).
-//! - parser `match_with_lvasgn` (named-capture `=~`) is ONE node; prism
-//!   wraps a `CallNode` in a `MatchWriteNode`. `parenthesize?` must not see
-//!   that CallNode as a send parent.
+//! - parser builds `match_with_lvasgn` (not `send`) for EVERY dot-less `=~`
+//!   whose receiver is a regexp literal, named captures or not. prism keeps
+//!   it a `CallNode` (wrapped in a `MatchWriteNode` only for named
+//!   captures). `named_capture_in_condition?`, `parenthesize?` and
+//!   `find_containing_collection` must not see that CallNode as a send
+//!   ([`is_match_with_lvasgn`]). An interpolated regexp is never one here:
+//!   that is the parser rule for 3.3+ grammars (prism Latest); whitequark
+//!   for older targets also folds an all-static interpolation (`/a#{"b"}/`).
 
 use std::rc::Rc;
 
@@ -427,9 +432,10 @@ impl<'a> Visitor<'a> {
         if scan.has_lvasgn {
             return; // `non_eligible_condition?`
         }
-        // `named_capture_in_condition?` suppresses the offense entirely for
-        // block forms (the elsif arm needs `modifier_form?`).
-        if predicate.as_match_write_node().is_some() {
+        // `named_capture_in_condition?` (`match_with_lvasgn_type?`)
+        // suppresses the offense entirely for block forms (the elsif arm
+        // needs `modifier_form?`).
+        if predicate.as_match_write_node().is_some() || is_match_with_lvasgn(predicate) {
             return;
         }
         if self.common_rejection(ns, body_nodes, &scan) {
@@ -662,18 +668,10 @@ impl<'a> Visitor<'a> {
         if let Some(d) = parent.as_def_node() {
             return d.equal_loc().is_some();
         }
-        if let Some(call) = parent.as_call_node() {
-            // 1.92 checks `call` (send AND csend). parser folds `MatchWriteNode`'s inner call into ONE
-            // `match_with_lvasgn` node, which is not a send.
-            if let Some(grand) = anc.next()
-                && let Some(mw) = grand.as_match_write_node()
-            {
-                let c = mw.call();
-                if c.location().start_offset() == call.location().start_offset() {
-                    return false;
-                }
-            }
-            return true;
+        if parent.as_call_node().is_some() {
+            // 1.92 checks `call` (send AND csend). A regexp-literal `=~` is
+            // parser `match_with_lvasgn`, which is not a send.
+            return !is_match_with_lvasgn(parent);
         }
         false
     }
@@ -957,7 +955,7 @@ impl<'a> Visitor<'a> {
     ) -> Option<Node<'static>> {
         // 1.92 adds `and` / `or`.
         if node.as_array_node().is_some()
-            || node.as_call_node().is_some()
+            || (node.as_call_node().is_some() && !is_match_with_lvasgn(node))
             || node.as_and_node().is_some()
             || node.as_or_node().is_some()
         {
@@ -1336,6 +1334,18 @@ fn if_lines(node: &Node<'_>) -> Option<(usize, Option<usize>)> {
         ));
     }
     None
+}
+
+/// Is this prism `CallNode` a parser `match_with_lvasgn`? parser's
+/// `match_op` (dot-less binary `=~`) builds it whenever the receiver is a
+/// static regexp literal; prism's translator hands it only a
+/// `RegularExpressionNode` receiver.
+fn is_match_with_lvasgn(node: &Node<'_>) -> bool {
+    node.as_call_node().is_some_and(|c| {
+        c.name().as_slice() == b"=~"
+            && c.call_operator_loc().is_none()
+            && c.receiver().is_some_and(|r| r.as_regular_expression_node().is_some())
+    })
 }
 
 /// parser `lvasgn` equivalents: a local write, or the target forms parser

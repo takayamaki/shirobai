@@ -140,6 +140,37 @@ RSpec.describe Shirobai::Cop::Style::IfUnlessModifier do
     end
   end
 
+  # parser builds `match_with_lvasgn` for EVERY `=~` whose receiver is a
+  # regexp literal, not only for named captures. prism keeps the plain case
+  # as a `CallNode` (no `MatchWriteNode`).
+  describe "regexp literal on the left of =~ (no named capture)" do
+    it "suppresses the to-modifier direction" do
+      src = "if /[\\r\\n]/ =~ s\n  raise ArgumentError\nend\n"
+      expect_lint_parity(*klasses, src, config, expect_offenses: false)
+    end
+
+    it "suppresses it for unless and %r{} with flags too" do
+      src = "unless %r{\\A\\w}io =~ name\n  raise ArgumentError, name\nend\n"
+      expect_lint_parity(*klasses, src, config, expect_offenses: false)
+    end
+
+    it "still fires for the explicit-dot call form" do
+      expect_autocorrect_parity(*klasses, "if /a/.=~(s)\n  foo\nend\n", config)
+    end
+
+    it "still fires for a regexp on the right of =~" do
+      expect_autocorrect_parity(*klasses, "if s =~ /a/\n  foo\nend\n", config)
+    end
+
+    it "does not parenthesize an if that is the match argument" do
+      expect_autocorrect_parity(*klasses, "/a/ =~ if c\n  b\nend\n", config)
+    end
+
+    it "does not treat the match as a collection for the too-long direction" do
+      expect_autocorrect_parity(*klasses, "/a/ =~ (#{long} if (z if w))\n", config)
+    end
+  end
+
   describe "another statement on the same line" do
     it "suppresses the too-long offense for a semicolon sibling" do
       src = "do_something(arg) if #{long}_condition; other_stuff\n"
