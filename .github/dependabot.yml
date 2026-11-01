@@ -14,27 +14,27 @@ updates:
   - package-ecosystem: bundler
     directory: "/"
     schedule:
-      interval: weekly
+      interval: daily
     allow:
       - dependency-name: "rubocop"
 
   - package-ecosystem: bundler
     directory: "/gems/shirobai-performance"
     schedule:
-      interval: weekly
+      interval: daily
     allow:
       - dependency-name: "rubocop-performance"
 
   - package-ecosystem: bundler
     directory: "/gems/shirobai-rails"
     schedule:
-      interval: weekly
+      interval: daily
     allow:
       - dependency-name: "rubocop-rails"
 
   - package-ecosystem: bundler
     directory: "/gems/shirobai-rspec"
     schedule:
-      interval: weekly
+      interval: daily
     allow:
       - dependency-name: "rubocop-rspec"
