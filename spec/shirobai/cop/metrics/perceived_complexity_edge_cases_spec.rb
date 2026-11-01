@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "spec_helper"
+require_relative "../../../support/complexity_csend_reset_fixtures"
 
 # Edge-case regression guard: `begin ... end while expr` is a `while_post`,
 # not a `while`, and is NOT a decision point.
@@ -117,6 +118,36 @@ RSpec.describe Shirobai::Cop::Metrics::PerceivedComplexity do
 
     it "still counts a plain `while`" do
       expect_lint_parity(*klasses, plain_while, tight_config)
+    end
+  end
+end
+
+# Which assignments reset the repeated `&.` discount.
+# See the header of `cyclomatic_complexity_edge_cases_spec.rb`.
+RSpec.describe Shirobai::Cop::Metrics::PerceivedComplexity do
+  include EdgeCaseParity
+
+  klasses = [
+    RuboCop::Cop::Metrics::PerceivedComplexity,
+    Shirobai::Cop::Metrics::PerceivedComplexity
+  ]
+  let(:tight_config) { ComplexityCsendResetFixtures.config("Metrics/PerceivedComplexity") }
+
+  describe "repeated `&.` discount" do
+    ComplexityCsendResetFixtures::RESETS.each do |name, body|
+      it "is reset by #{name}" do
+        expect_lint_parity(*klasses, ComplexityCsendResetFixtures.source(body), tight_config)
+      end
+    end
+
+    it "is reset by `rescue => x`" do
+      expect_lint_parity(*klasses, ComplexityCsendResetFixtures::RESCUE, tight_config)
+    end
+
+    ComplexityCsendResetFixtures::KEEPS.each do |name, body|
+      it "is not reset by #{name}" do
+        expect_lint_parity(*klasses, ComplexityCsendResetFixtures.source(body), tight_config)
+      end
     end
   end
 end
