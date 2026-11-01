@@ -290,6 +290,9 @@ enum ParserKind {
     None,
     /// `begin` (multi-stmt Statements or `kwbegin`).
     Begin,
+    /// A plain `kwbegin` holding two or more statements directly.  Unlike
+    /// `Begin`, it is not `begin_type?`.
+    KwBegin,
     /// `rescue` (outer with else/resbody).
     Rescue,
     /// `ensure`.
@@ -377,6 +380,23 @@ fn resolve_via_parent(parent: &Node<'_>, if_node: &Node<'_>) -> Resolution {
         if let Some(stmts) = b.statements()
             && let Some(r) = resolve_if_inside(&stmts, if_start, outer_kind)
         {
+            // A plain `begin ... end` (no rescue/ensure) is a parser
+            // `kwbegin` whose children are the statements themselves, so
+            // the parent of a multi-statement body is `kwbegin`, which is
+            // not `begin_type?`.
+            let plain_kwbegin =
+                begin_keyword && b.rescue_clause().is_none() && b.ensure_clause().is_none();
+            if plain_kwbegin
+                && let Resolution::ParserParent {
+                    kind: ParserKind::Begin,
+                    right_sibling,
+                } = r
+            {
+                return Resolution::ParserParent {
+                    kind: ParserKind::KwBegin,
+                    right_sibling,
+                };
+            }
             return r;
         }
         // Inside the else_clause (rescue's else): parser parent = rescue.

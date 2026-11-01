@@ -223,4 +223,32 @@ RSpec.describe Shirobai::Cop::Layout::EmptyLineAfterGuardClause do
     expect_lint_parity(*klasses, src, cfg)
     expect_correction_edits_parity(*klasses, src, cfg)
   end
+
+  # A `begin ... end` with no `rescue`/`ensure` is a `kwbegin` whose children
+  # are the statements themselves.  `kwbegin` is not `begin_type?`, so
+  # `multiple_statements_on_line?` does not apply and stock flags a guard
+  # followed by `;` and more code (time.rb: `break if year; year = now.year`).
+  it "flags `guard; stmt` on one line inside a plain `begin ... end`" do
+    src = <<~RUBY
+      begin
+        break if year; year = 1
+        break if mon; mon = 2
+      end until true
+    RUBY
+    expect_lint_parity(*klasses, src, cfg)
+    expect_correction_edits_parity(*klasses, src, cfg)
+    expect_autocorrect_parity(*klasses, src, cfg)
+  end
+
+  it "accepts `guard; stmt` on one line inside `begin ... rescue ... end`" do
+    src = <<~RUBY
+      begin
+        return if a; x = 1
+        y
+      rescue
+        z
+      end
+    RUBY
+    expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
+  end
 end
