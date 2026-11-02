@@ -6,7 +6,8 @@
 # Gemfile.stock*, Gemfile.with_shirobai*, benches/Gemfile.*,
 # the vendor/ submodules, and the versions written in the READMEs.
 #
-# One entry per gemspec, each allowing only the gem that gemspec pins.
+# One bundler entry per gemspec, each allowing only the gem that gemspec pins.
+# The root entry also watches prism (see the comment there).
 # The plugin directories also see rubocop through the path gem,
 # and allowing it there would open duplicate PRs against shirobai.gemspec.
 version: 2
@@ -17,6 +18,34 @@ updates:
       interval: daily
     allow:
       - dependency-name: "rubocop"
+      # The Rust side must parse with the same prism as stock RuboCop.
+      # Stock gets prism through rubocop-ast (`prism ~> 1.7` as of 1.50.0).
+      # These two tell us when that changes:
+      # a new prism 1.x to follow in the crates,
+      # or a rubocop-ast that allows prism 2.
+      - dependency-name: "rubocop-ast"
+        dependency-type: indirect
+      - dependency-name: "prism"
+        dependency-type: indirect
+
+  # The prism crates, kept on the same version as the prism gem
+  # that stock resolves (see the bundler entry above).
+  # Major 2 is ignored until rubocop-ast allows prism 2:
+  # moving only the crate would make shirobai parse differently from stock.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: daily
+    allow:
+      - dependency-name: "ruby-prism"
+      - dependency-name: "ruby-prism-sys"
+    ignore:
+      - dependency-name: "ruby-prism*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      prism:
+        patterns:
+          - "ruby-prism*"
 
   - package-ecosystem: bundler
     directory: "/gems/shirobai-performance"
