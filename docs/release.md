@@ -106,9 +106,13 @@ How it works:
 - Three jobs in `release.yml` run after the `release` job:
   `cross-gem` (build) -> `cross-gem-smoke` (install smoke) -> `cross-gem-push`.
   The build job uses `oxidize-rb/actions/cross-gem`, which cross-compiles inside
-  rb-sys-dock (Docker); the container ships the Rust toolchain and every
-  cross Ruby, so the `resolver = "3"` / `edition = "2024"` workspace builds
-  there with no host toolchain.
+  rb-sys-dock (Docker); the container ships rustup and every cross Ruby,
+  so the `resolver = "3"` / `edition = "2024"` workspace builds there with no
+  host toolchain.
+  rustup in the container reads `rust-toolchain.toml`, so the build uses the
+  same Rust version as CI.
+  rustup installs that version on demand for the host target only,
+  so the job's `pre-script` adds the cross target (`$RUST_TARGET`).
 - Each platform gem is a **fat gem**: it carries one `.so` per Ruby ABI
   (`3.1`, `3.2`, `3.3`, `3.4`, `4.0`) under `lib/shirobai/<abi>/shirobai.so`.
   `lib/shirobai.rb` requires the versioned path first and falls back to the

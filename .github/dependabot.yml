@@ -1,4 +1,4 @@
-# Dependabot here is a tripwire for upstream releases, not an auto-updater.
+# The bundler and cargo entries are a tripwire for upstream releases, not an auto-updater.
 # shirobai pins RuboCop and each plugin exactly,
 # so a new upstream release blocks users until shirobai follows it.
 # Treat each bump PR as the follow-up task: check parity on a branch
@@ -67,3 +67,24 @@ updates:
       interval: daily
     allow:
       - dependency-name: "rubocop-rspec"
+
+  # The github-actions and rust-toolchain entries are plain updaters.
+  # github-actions also updates .github/workflows/actions.lock.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Only versions out for 7 days or more: a broken or hijacked release is usually pulled by then.
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: rust-toolchain
+    directory: /
+    schedule:
+      interval: weekly
+    # Wait for the first point release (x.y.1) that often follows a new Rust version.
+    cooldown:
+      default-days: 7
