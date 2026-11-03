@@ -1,0 +1,7 @@
+# The Rust version for CI, release builds, and local builds. Dependabot (rust-toolchain) updates it.
+# This is not the minimum version: users who build from source need only
+# the rust-version in Cargo.toml.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
