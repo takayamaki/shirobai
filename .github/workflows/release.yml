@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: ruby/setup-ruby@v1.335.0
+      - uses: ruby/setup-ruby@v1.336.0
         with:
           ruby-version: "4.0"
           bundler-cache: true
@@ -68,7 +68,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: ruby/setup-ruby@v1.335.0
+      - uses: ruby/setup-ruby@v1.336.0
         with:
           ruby-version: "4.0"
           bundler-cache: true
@@ -117,7 +117,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
 
     steps:
-      - uses: ruby/setup-ruby@v1.335.0
+      - uses: ruby/setup-ruby@v1.336.0
         with:
           ruby-version: "4.0"
 
@@ -162,7 +162,7 @@ jobs:
         platform: [arm64-darwin, x86_64-linux, aarch64-linux]
 
     steps:
-      - uses: ruby/setup-ruby@v1.335.0
+      - uses: ruby/setup-ruby@v1.336.0
         with:
           ruby-version: "4.0"
 
