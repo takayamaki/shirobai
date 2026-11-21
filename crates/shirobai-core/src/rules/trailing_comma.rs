@@ -54,6 +54,10 @@ pub struct TrailingCommaOffense {
     pub end_offset: usize,
     pub message: u8,
     pub fix: u8,
+    /// `FIX_PUT` only: the start of the whole last item. 1.92.3 anchors the
+    /// inserted comma to the item (`insert_after(last_item, ',')`), not to the
+    /// caret range on its last line. 0 for `FIX_AVOID`.
+    pub item_start: usize,
 }
 
 /// The literal-node flavour of `TrailingComma#check`, shared by
@@ -148,6 +152,7 @@ impl<'a> LiteralChecker<'a> {
             end_offset: comma_pos + 1,
             message,
             fix: FIX_AVOID,
+            item_start: 0,
         });
     }
 
@@ -163,6 +168,7 @@ impl<'a> LiteralChecker<'a> {
             end_offset: range.1,
             message: MSG_PUT,
             fix: FIX_PUT,
+            item_start: start,
         });
     }
 

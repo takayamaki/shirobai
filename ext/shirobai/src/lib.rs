@@ -578,25 +578,26 @@ fn map_string_literals_in_interpolation(
 }
 
 /// `Style/TrailingCommaInArguments` records. Each entry is `[start, end,
-/// message, fix]`. `message` selects the text (0 avoid/no_comma, 1 avoid/comma,
+/// message, fix, item_start]`. `message` selects the text (0 avoid/no_comma, 1 avoid/comma,
 /// 2 avoid/consistent_comma, 3 avoid/diff_comma, 4 put); `fix` is the corrector
-/// op (0 avoid -> remove the comma, 1 put -> insert a comma after the range).
+/// op (0 avoid -> remove the comma, 1 put -> insert a comma after the item
+/// `[item_start, end)`, 1.92.3).
 fn map_trailing_comma_in_arguments(
     v: Vec<shirobai_core::rules::trailing_comma_in_arguments::TrailingCommaInArgumentsOffense>,
-) -> Vec<(usize, usize, u8, u8)> {
+) -> Vec<(usize, usize, u8, u8, usize)> {
     v.into_iter()
-        .map(|o| (o.start_offset, o.end_offset, o.message, o.fix))
+        .map(|o| (o.start_offset, o.end_offset, o.message, o.fix, o.item_start))
         .collect()
 }
 
 /// `Style/TrailingCommaInHashLiteral` / `Style/TrailingCommaInArrayLiteral`
 /// records, same wire shape as `map_trailing_comma_in_arguments`: `[start,
-/// end, message, fix]`.
+/// end, message, fix, item_start]`.
 fn map_trailing_comma_literal(
     v: Vec<shirobai_core::rules::trailing_comma::TrailingCommaOffense>,
-) -> Vec<(usize, usize, u8, u8)> {
+) -> Vec<(usize, usize, u8, u8, usize)> {
     v.into_iter()
-        .map(|o| (o.start_offset, o.end_offset, o.message, o.fix))
+        .map(|o| (o.start_offset, o.end_offset, o.message, o.fix, o.item_start))
         .collect()
 }
 
@@ -2466,7 +2467,7 @@ fn check_string_literals_in_interpolation(
 fn check_trailing_comma_in_arguments(
     source: RString,
     nums: Vec<i64>,
-) -> Vec<(usize, usize, u8, u8)> {
+) -> Vec<(usize, usize, u8, u8, usize)> {
     let cfg = shirobai_core::rules::trailing_comma_in_arguments::Config {
         style: nums[0] as u8,
     };
@@ -2484,7 +2485,7 @@ fn check_trailing_comma_in_arguments(
 fn check_trailing_comma_in_hash_literal(
     source: RString,
     nums: Vec<i64>,
-) -> Vec<(usize, usize, u8, u8)> {
+) -> Vec<(usize, usize, u8, u8, usize)> {
     let cfg = shirobai_core::rules::trailing_comma::Config {
         style: nums[0] as u8,
     };
@@ -2502,7 +2503,7 @@ fn check_trailing_comma_in_hash_literal(
 fn check_trailing_comma_in_array_literal(
     source: RString,
     nums: Vec<i64>,
-) -> Vec<(usize, usize, u8, u8)> {
+) -> Vec<(usize, usize, u8, u8, usize)> {
     let cfg = shirobai_core::rules::trailing_comma::Config {
         style: nums[0] as u8,
     };

@@ -72,6 +72,10 @@ pub struct TrailingCommaInArgumentsOffense {
     pub end_offset: usize,
     pub message: u8,
     pub fix: u8,
+    /// `FIX_PUT` only: the start of the whole last item. 1.92.3 anchors the
+    /// inserted comma to the item (`insert_after(last_item, ',')`), not to the
+    /// caret range on its last line. 0 for `FIX_AVOID`.
+    pub item_start: usize,
 }
 
 pub fn check_trailing_comma_in_arguments(
@@ -206,6 +210,7 @@ impl Visitor<'_> {
             end_offset: comma_pos + 1,
             message,
             fix: FIX_AVOID,
+            item_start: 0,
         });
     }
 
@@ -224,6 +229,7 @@ impl Visitor<'_> {
             end_offset: range.1,
             message: MSG_PUT,
             fix: FIX_PUT,
+            item_start: start,
         });
     }
 
