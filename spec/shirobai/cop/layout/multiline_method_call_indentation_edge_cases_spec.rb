@@ -335,4 +335,45 @@ RSpec.describe Shirobai::Cop::Layout::MultilineMethodCallIndentation do
       expect_autocorrect_parity(*klasses, source_192, cfg)
     end
   end
+
+  # 1.92.3 (rubocop#16229): an implicit `.()` call's base is `.(`
+  # (`dot_with_method_name`). The vendor spec covers hash pairs; these add the
+  # receiver chain (`find_hash_method_base_in_receiver_chain`), a grouped
+  # receiver, safe navigation, and the indented style.
+  source_1923 = <<~'SRC'
+    a = {}.(1)
+      .b
+    c = (d
+    ).(1)
+      .e
+    {
+      key: foo&.(bar)
+        .baz,
+      other: {}.(1).x
+        .y,
+      more: foo.(1)
+        .(2)
+        .z
+    }
+    {}.(1)
+      .b
+    (d
+    ).(1)
+      .e
+    g.h(1).(2)
+      .i
+    f(key: foo.(bar)
+      .baz)
+  SRC
+
+  %w[aligned indented].each do |style|
+    it "matches stock on 1.92.3 implicit call bases (#{style})" do
+      cfg = RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new({ "Layout/MultilineMethodCallIndentation" => { "EnforcedStyle" => style } }, "(test)"),
+        "(test)"
+      )
+      expect_lint_parity(*klasses, source_1923, cfg)
+      expect_autocorrect_parity(*klasses, source_1923, cfg)
+    end
+  end
 end

@@ -175,6 +175,8 @@ struct Frame {
 struct CallInfo {
     range: (usize, usize),
     dot: Option<usize>,
+    /// `loc.selector || loc.begin` (1.92.3 `dot_with_method_name`): the
+    /// selector, or the `(` of an implicit `.()` call.
     sel: Option<(usize, usize)>,
     recv: Option<(usize, usize)>,
     has_multiline_block: bool,
@@ -699,9 +701,10 @@ impl<'a> Visitor<'a> {
                         self.line_of(dot.start_offset()) == self.line_of(br.location().end_offset())
                     })
             });
+            // `dot_with_method_name` (1.92.3): `.(` for an implicit call.
             if matched
                 && let Some(dot) = c.call_operator_loc()
-                && let Some(sel) = c.message_loc()
+                && let Some(sel) = c.message_loc().or_else(|| c.opening_loc())
             {
                 return Some((dot.start_offset(), sel.end_offset()));
             }
@@ -1094,7 +1097,7 @@ impl<'a> Visitor<'a> {
             v.push(CallInfo {
                 range: loc(&c.as_node().location()),
                 dot: c.call_operator_loc().map(|d| d.start_offset()),
-                sel: c.message_loc().as_ref().map(loc),
+                sel: c.message_loc().or_else(|| c.opening_loc()).as_ref().map(loc),
                 recv: c.receiver().map(|r| loc(&r.location())),
                 has_multiline_block,
             });
