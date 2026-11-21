@@ -218,4 +218,33 @@ RSpec.describe Shirobai::Cop::Layout::MultilineMethodCallBraceLayout do
     hash[cop_name] = (hash[cop_name] || {}).merge(overrides)
     RuboCop::Config.new(hash, base.loaded_path)
   end
+
+  # 1.92.3 (rubocop#16352): with `Lint/HeredocMethodCallPosition` enabled, a
+  # call after a heredoc terminator anywhere in the last argument (or block
+  # pass) keeps the brace where it is. The 1.92.3 corrector changes (comment
+  # lines before the brace, nested brackets) come from the stock corrector the
+  # wrapper delegates to; the comment cases below pin that hand-off.
+  heredoc_1923 = {
+    "a call in a hash argument" => "foo(a: <<~EOS\n  text\nEOS\n  .strip\n)\n",
+    "a call with a block" => "foo(<<~EOS\n  text\nEOS\n  .each_line { |l| l }\n)\n",
+    "a heredoc call nested in an argument call" => "foo(bar(<<~EOS\n  text\nEOS\n  .strip)\n)\n",
+    "an interpolated heredoc" => "foo(<<~EOS\n  \#{x}\nEOS\n  .strip\n)\n",
+    "an xstring heredoc" => "foo(<<~`EOS`\n  ls\nEOS\n  .strip\n)\n",
+    "a call on the opener line" => "foo(x, <<~EOS.strip\n  text\nEOS\n)\n",
+    "a non-last argument" => "foo(<<~EOS\n  text\nEOS\n  .strip, 1\n)\n",
+    "a comment line before the brace" => "foo(bar,\n  # comment\n).baz\n",
+    "a comment line before the brace with a nested call" =>
+      "foo(bar(1,\n    # c\n  ),\n  # comment\n)\n",
+    "a trailing comment and a continuation" => "foo(bar,\n  baz # c\n) \\\n  .qux\n"
+  }
+
+  [true, false].each do |enabled|
+    heredoc_1923.each do |label, src|
+      it "matches stock for #{label} (HeredocMethodCallPosition enabled: #{enabled})" do
+        cfg = config_with(default_config, "Lint/HeredocMethodCallPosition", "Enabled" => enabled)
+        expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
+        expect_autocorrect_parity(*klasses, src, cfg)
+      end
+    end
+  end
 end

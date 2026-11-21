@@ -833,6 +833,11 @@ impl Visitor<'_> {
             text: replacement.to_string(),
         }];
 
+        // next if node.value_omission? (1.92.3): including the value never
+        // needs the parentheses.
+        if pair.value_omission {
+            return ops;
+        }
         // def_node_that_require_parentheses(node): add parens to a no-paren call.
         if let Some(paren) = self.def_node_that_require_parentheses(pair) {
             // white_spaces = selector.end_pos .. first_argument.begin_pos

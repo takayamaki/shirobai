@@ -103,6 +103,7 @@ module Shirobai
         def first_argument_unparenthesized?(node)
           parent = node.parent
           return false unless parent && %i[send super zsuper].include?(parent.type)
+          return false if parent.operator_method? && !parent.loc.dot
 
           node.equal?(parent.first_argument) && !parentheses?(node.parent)
         end

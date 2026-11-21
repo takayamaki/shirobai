@@ -81,6 +81,10 @@ pub struct Config {
     pub style: Style,
     /// `EnforcedStyleForEmptyBrackets == 'space'`.
     pub space_empty: bool,
+    /// 1.92.3 `closing_bracket_on_new_line_enforced?`:
+    /// `Layout/MultilineArrayBraceLayout` is enabled with
+    /// `EnforcedStyle: new_line`.
+    pub closing_new_line: bool,
 }
 
 /// One offense. `node` indexes into [`ArrayBracketsResult::node_ops`]; the
@@ -177,6 +181,7 @@ pub(crate) fn build_rule(source: &[u8], config: Config) -> Visitor<'_> {
         rbrack_closers: HashSet::new(),
         const_scope_end: 0,
         first_child: None,
+        checking_array: false,
     }
 }
 
@@ -210,6 +215,9 @@ pub(crate) struct Visitor<'a> {
     /// children: a const pattern's constant first). Read by the compact
     /// `closing_bracket_kept_apart?` check.
     first_child: Option<usize>,
+    /// The bracket pair being checked belongs to an array literal (stock's
+    /// `node.array_type?`), not a pattern.
+    checking_array: bool,
 }
 
 impl<'a> Visitor<'a> {
@@ -436,11 +444,16 @@ impl<'a> Visitor<'a> {
                 // complete only after the walk.
                 // 1.92 `closing_bracket_kept_apart?`: a `]` on its own line
                 // stays apart unless the `[` shares the first element's line
-                // (rubocop#15997, #16079).
+                // (rubocop#15997, #16079). 1.92.3: an array's `]` always stays
+                // apart when `Layout/MultilineArrayBraceLayout` enforces
+                // `new_line` (rubocop#16206).
                 let first_child_same_line = self
                     .first_child
                     .is_some_and(|c| self.line_index.line_of(c) == self.line_index.line_of(lb_s));
-                if self.end_has_own_line(rb_s) && !multi_left && !first_child_same_line {
+                if self.end_has_own_line(rb_s)
+                    && ((self.checking_array && self.config.closing_new_line)
+                        || (!multi_left && !first_child_same_line))
+                {
                     return;
                 }
                 let prev_end = prev_non_space(src, rb_s).expect("a `[` precedes");
@@ -670,6 +683,7 @@ impl super::dispatch::Rule for Visitor<'_> {
             if let (Some(o), Some(c)) = (array.opening_loc(), array.closing_loc())
                 && self.source.get(o.start_offset()) == Some(&b'[')
             {
+                self.checking_array = true;
                 self.check_brackets(
                     node.location().start_offset(),
                     node.location().end_offset(),
@@ -678,6 +692,7 @@ impl super::dispatch::Rule for Visitor<'_> {
                     c.start_offset(),
                     c.end_offset(),
                 );
+                self.checking_array = false;
                 self.collect_closer(&o, &c);
             }
         } else if let Some(pat) = node.as_array_pattern_node() {
@@ -829,7 +844,7 @@ mod tests {
     use super::*;
 
     fn run(source: &str, style: Style, space_empty: bool) -> Vec<(usize, usize, u8, usize, bool)> {
-        check_space_inside_array_literal_brackets(source.as_bytes(), Config { style, space_empty })
+        check_space_inside_array_literal_brackets(source.as_bytes(), Config { style, space_empty, closing_new_line: false })
             .offenses
             .into_iter()
             .map(|o| {
@@ -845,7 +860,7 @@ mod tests {
     }
 
     fn ops(source: &str, style: Style, space_empty: bool) -> Vec<Vec<(u8, usize, usize)>> {
-        check_space_inside_array_literal_brackets(source.as_bytes(), Config { style, space_empty })
+        check_space_inside_array_literal_brackets(source.as_bytes(), Config { style, space_empty, closing_new_line: false })
             .node_ops
             .into_iter()
             .map(|v| v.into_iter().map(Op::packed).collect())

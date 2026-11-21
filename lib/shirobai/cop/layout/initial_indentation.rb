@@ -47,10 +47,10 @@ module Shirobai
 
         private
 
-        # Stock `first_token`: the first token whose text is not a `#` line
-        # comment (block comments start with `=`, so they are kept).
+        # Stock `first_token`: the first token that is not a comment (1.92.3,
+        # rubocop#16249; `=begin`/`=end` block comments are skipped too).
         def first_token
-          processed_source.tokens.find { |t| !t.text.start_with?("#") }
+          processed_source.tokens.find { |t| !t.comment? }
         end
 
         # Stock `space_before`, verbatim.

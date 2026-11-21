@@ -21,17 +21,23 @@ module Shirobai
         extend RuboCop::Cop::AutoCorrector
 
         MSG = "Space found before comma."
+        SPACE_INSIDE_PARENS_STYLES = %w[space compact].freeze
 
         def self.cop_name = "Layout/SpaceBeforeComma"
         def self.badge = RuboCop::Cop::Badge.parse(cop_name)
 
         # Packed args for the bundled run:
-        # `[Layout/SpaceInsideBlockBraces EnforcedStyle == 'space']`
+        # `[bits]`: 1 = `Layout/SpaceInsideBlockBraces` `EnforcedStyle == 'space'`
         # (`nil` falls back to `'space'`, like stock's
-        # `space_required_after_lcurly?`).
+        # `space_required_after_lcurly?`), 2 = the enabled
+        # `Layout/SpaceInsideParens` `EnforcedStyle` is `space` or `compact`
+        # (`space_required_after_lparen?`, 1.92.3; unreachable for commas in
+        # code that parses, but mirrored like the `{` skip).
         def self.bundle_args(config)
           style = config.for_cop("Layout/SpaceInsideBlockBraces")["EnforcedStyle"] || "space"
-          [[style == "space" ? 1 : 0], []]
+          parens = config.for_enabled_cop("Layout/SpaceInsideParens")["EnforcedStyle"]
+          bits = (style == "space" ? 1 : 0) | (SPACE_INSIDE_PARENS_STYLES.include?(parens) ? 2 : 0)
+          [[bits], []]
         end
 
         def on_new_investigation

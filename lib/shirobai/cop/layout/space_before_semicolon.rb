@@ -9,7 +9,9 @@ module Shirobai
       # stock's `SpaceBeforePunctuation`). The block-`{` skip is live here:
       # `loop { ; 1 }` keeps its space when `Layout/SpaceInsideBlockBraces`
       # is `space` (a lambda's `tLAMBEG` and `BEGIN`/`END` braces count as
-      # left curlies; a `"#{ ;…}"` `tSTRING_DBEG` does not).
+      # left curlies; a `"#{ ;…}"` `tSTRING_DBEG` does not). Since 1.92.3 a
+      # `(` (`tLPAREN` / `tLPAREN2`, not the `tLPAREN_ARG` of `foo (`) keeps
+      # its space too when `Layout/SpaceInsideParens` wants one.
       #
       # Each offense is the `[start, end)` whitespace run before the
       # semicolon; the corrector removes it.
@@ -17,15 +19,21 @@ module Shirobai
         extend RuboCop::Cop::AutoCorrector
 
         MSG = "Space found before semicolon."
+        SPACE_INSIDE_PARENS_STYLES = %w[space compact].freeze
 
         def self.cop_name = "Layout/SpaceBeforeSemicolon"
         def self.badge = RuboCop::Cop::Badge.parse(cop_name)
 
         # Packed args for the bundled run:
-        # `[Layout/SpaceInsideBlockBraces EnforcedStyle == 'space']`.
+        # `[bits]`: 1 = `Layout/SpaceInsideBlockBraces` `EnforcedStyle == 'space'`
+        # (`space_required_after_lcurly?`), 2 = the enabled
+        # `Layout/SpaceInsideParens` `EnforcedStyle` is `space` or `compact`
+        # (`space_required_after_lparen?`, 1.92.3).
         def self.bundle_args(config)
           style = config.for_cop("Layout/SpaceInsideBlockBraces")["EnforcedStyle"] || "space"
-          [[style == "space" ? 1 : 0], []]
+          parens = config.for_enabled_cop("Layout/SpaceInsideParens")["EnforcedStyle"]
+          bits = (style == "space" ? 1 : 0) | (SPACE_INSIDE_PARENS_STYLES.include?(parens) ? 2 : 0)
+          [[bits], []]
         end
 
         def on_new_investigation

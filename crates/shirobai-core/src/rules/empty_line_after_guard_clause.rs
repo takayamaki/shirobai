@@ -5,10 +5,8 @@
 //! with `and`/`or` peeled to the rhs) UNLESS one of `correct_style?`'s gates
 //! fires:
 //!
-//! - `node.parent` is `nil`, `rescue`, `ensure` (`next_line_rescue_or_ensure?`),
-//! - `node.right_sibling.nil?` or the sibling's parent is an `if` with `else`
-//!   (`next_sibling_parent_empty_or_else?`),
-//! - the sibling is itself a guard-bearing `if`/`unless`
+//! - `node.parent` is not `begin` / `kwbegin` (1.92.3, rubocop#16288),
+//! - `node.right_sibling.nil?`, or the sibling is itself a guard-bearing `if`/`unless`
 //!   (`next_sibling_empty_or_guard_clause?`).
 //!
 //! After that, `next_line_empty_or_allowed_directive_comment?` looks at the
@@ -149,26 +147,26 @@ impl<'a> Visitor<'a> {
         // Resolve parser parent + right sibling from the prism context.
         let context = self.parser_context(node);
 
-        // `multiple_statements_on_line?(node)`.
-        if context.parent_is_begin
-            && let Some(sib) = context.right_sibling.as_ref()
-        {
-            let n_line = self.line_index.line_of(node.location().start_offset());
-            let s_line = self.line_index.line_of(sib.location().start_offset());
-            if n_line == s_line {
-                return;
-            }
-        }
-
-        // `correct_style?`:
-        if context.is_rescue_or_ensure_or_nil_parent {
-            return;
-        }
-        if next_sibling_parent_empty_or_else(&context) {
+        // `correct_style?` (1.92.3, rubocop#16288): only a guard whose
+        // parser parent is `begin` / `kwbegin` can be an offense.
+        if !context.parent_is_begin {
             return;
         }
         if next_sibling_empty_or_guard_clause(&context.right_sibling) {
             return;
+        }
+
+        // `multiple_statements_on_line?(node)` (1.92.3, rubocop#16207 /
+        // #16368): `kwbegin` counts too, and the guard's *last* line is
+        // compared with the sibling's first line.
+        if let Some(sib) = context.right_sibling.as_ref() {
+            let n_line = self
+                .line_index
+                .line_of(node.location().end_offset().saturating_sub(1));
+            let s_line = self.line_index.line_of(sib.location().start_offset());
+            if n_line == s_line {
+                return;
+            }
         }
 
         // We are an offense candidate; the directive-comment check happens
@@ -244,9 +242,7 @@ impl<'a> Visitor<'a> {
         if len < 2 {
             // No parser parent (the if is the program root statement).
             return ParserContext {
-                parser_kind: ParserKind::None,
                 parent_is_begin: false,
-                is_rescue_or_ensure_or_nil_parent: true,
                 right_sibling: None,
             };
         }
@@ -255,15 +251,10 @@ impl<'a> Visitor<'a> {
             let parent = &self.frames[i].node;
             match resolve_via_parent(parent, if_node) {
                 Resolution::ParserParent { kind, right_sibling } => {
-                    let parent_is_begin = matches!(kind, ParserKind::Begin);
-                    let is_rne = matches!(
-                        kind,
-                        ParserKind::None | ParserKind::Rescue | ParserKind::Ensure
-                    );
+                    // `node.parent&.type?(:begin, :kwbegin)`.
+                    let parent_is_begin = matches!(kind, ParserKind::Begin | ParserKind::KwBegin);
                     return ParserContext {
-                        parser_kind: kind,
                         parent_is_begin,
-                        is_rescue_or_ensure_or_nil_parent: is_rne,
                         right_sibling,
                     };
                 }
@@ -271,9 +262,7 @@ impl<'a> Visitor<'a> {
                     if i == 0 {
                         // No parser parent found.  Treat as nil.
                         return ParserContext {
-                            parser_kind: ParserKind::None,
                             parent_is_begin: false,
-                            is_rescue_or_ensure_or_nil_parent: true,
                             right_sibling: None,
                         };
                     }
@@ -286,8 +275,6 @@ impl<'a> Visitor<'a> {
 
 #[derive(Clone, Copy, PartialEq)]
 enum ParserKind {
-    /// No parser parent.
-    None,
     /// `begin` (multi-stmt Statements or `kwbegin`).
     Begin,
     /// A plain `kwbegin` holding two or more statements directly.  Unlike
@@ -310,9 +297,7 @@ enum ParserKind {
 }
 
 struct ParserContext {
-    parser_kind: ParserKind,
     parent_is_begin: bool,
-    is_rescue_or_ensure_or_nil_parent: bool,
     right_sibling: Option<Node<'static>>,
 }
 
@@ -684,25 +669,6 @@ fn resolve_if_inside(
         (outer_kind, None)
     };
     Some(Resolution::ParserParent { kind, right_sibling })
-}
-
-/// `next_sibling_parent_empty_or_else?(node)`:
-/// - `right_sibling.nil?` → true
-/// - else: `right_sibling.parent.if_type? && right_sibling.parent.else?` → true
-///
-/// In our model: the sibling's parser parent equals the if's parser parent.
-/// `parent.if_type? && parent.else?` is true ONLY when parser parent is
-/// `IfThenBranch` AND the outer if has an `else_branch` slot — which is the
-/// case here because the sibling itself IS that else_branch (no other source
-/// of a right sibling exists when parser parent is IfThenBranch).  So:
-/// - right_sibling None → true
-/// - right_sibling Some AND parser_kind == IfThenBranch → true
-/// - otherwise → false
-fn next_sibling_parent_empty_or_else(ctx: &ParserContext) -> bool {
-    if ctx.right_sibling.is_none() {
-        return true;
-    }
-    ctx.parser_kind == ParserKind::IfThenBranch
 }
 
 fn next_sibling_empty_or_guard_clause(right_sib: &Option<Node<'static>>) -> bool {

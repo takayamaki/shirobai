@@ -172,4 +172,25 @@ RSpec.describe Shirobai::Cop::Style::StabbyLambdaParentheses do
       expect_autocorrect_parity(*klasses, src, require_no_parens_config)
     end
   end
+
+  # 1.92.3 (rubocop#16391): only the FIRST argument being destructured keeps
+  # the parens; a later destructured argument does not.
+  describe "1.92.3 destructured arguments and block-local variables" do
+    it "keeps parens only when the first argument is destructured" do
+      src = <<~RUBY
+        a = ->((x, y)) { x }
+        b = ->((x, y), z) { x }
+        c = ->(z, (x, y)) { x }
+        d = ->(z = 1, (x, y)) { x }
+        e = ->(*z, (x, y)) { x }
+        f = ->((x, *y), **z) { x }
+      RUBY
+      expect_autocorrect_parity(*klasses, src, require_no_parens_config)
+    end
+
+    it "keeps parens for any block-local variable" do
+      src = "a = ->(x; y, z) { x }\nb = ->(x, (y, w); z) { x }\nc = ->(;z) { 1 }\n"
+      expect_autocorrect_parity(*klasses, src, require_no_parens_config)
+    end
+  end
 end

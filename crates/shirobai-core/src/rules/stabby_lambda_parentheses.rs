@@ -158,10 +158,24 @@ impl Visitor<'_> {
 
 impl Visitor<'_> {
     /// 1.92 `redundant_parentheses?` extras: the parentheses stay when an
-    /// argument needs them (`arguments_require_parentheses?`: a block or a
+    /// argument needs them (`arguments_require_parentheses?`: a destructured
+    /// first argument or a block-local variable (1.92.3), or a block or a
     /// braced hash anywhere inside) or when the padding between them and the
     /// arguments holds anything but whitespace (a comment).
     fn parens_removable(&self, bp: &BlockParametersNode<'_>) -> bool {
+        if !bp.locals().is_empty() {
+            return false;
+        }
+        // The first parser `args` child is the first required parameter when
+        // there is one; optionals, rest and posts never come before it.
+        if let Some(p) = bp.parameters()
+            && p.requireds()
+                .iter()
+                .next()
+                .is_some_and(|n| n.as_multi_target_node().is_some())
+        {
+            return false;
+        }
         let mut scan = NeedsParens { found: false };
         if let Some(p) = bp.parameters() {
             scan.visit(&p.as_node());
@@ -418,6 +432,8 @@ mod tests {
             "c = ->(x = -> { 1 }) { x }\n",
             "d = ->(k: {}) { k }\n",
             "m = ->(x # c\n) { x }\n",
+            "g = ->(x; y) { x }\n",
+            "h = ->((x, y)) { x }\n",
         ] {
             assert!(run(src, STYLE_REQUIRE_NO_PARENTHESES).is_empty(), "{src}");
         }
@@ -427,7 +443,6 @@ mod tests {
     fn removes_padding_with_the_parens() {
         assert_eq!(corrected_no_parens("e = ->( x, y ) { x }\n"), "e = ->x, y { x }\n");
         assert_eq!(corrected_no_parens("f = ->(\n  x\n) { x }\n"), "f = ->x { x }\n");
-        assert_eq!(corrected_no_parens("g = ->(x; y) { x }\n"), "g = ->x; y { x }\n");
         assert_eq!(
             corrected_no_parens("b = ->(x = foo(a: 1)) { x }\n"),
             "b = ->x = foo(a: 1) { x }\n"

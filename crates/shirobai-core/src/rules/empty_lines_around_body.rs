@@ -21,9 +21,8 @@
 //! - Stock `add_offense` dedupes by identical range (`class Foo\n\nend` keeps
 //!   only the "beginning" offense), which the Ruby wrapper inherits for free
 //!   by emitting in stock's order; this rule emits both.
-//! - `EmptyLinesAroundExceptionHandlingKeywords` aliases `on_block` /
-//!   `on_numblock` but **not** `on_itblock` (stock quirk), so a block whose
-//!   parameter is `it` is skipped — mirrored via `ItParametersNode`.
+//! - `EmptyLinesAroundExceptionHandlingKeywords` also checks `it` blocks
+//!   since 1.92.3 (rubocop#16325 added the `on_itblock` alias).
 
 use ruby_prism::Node;
 
@@ -100,7 +99,7 @@ pub(crate) fn build_rule(source: &[u8], cfg: Config) -> Visitor<'_> {
             begin_body: Vec::new(),
             exception_keywords: Vec::new(),
         },
-        ehk_block_end: None,
+        ehk_block: None,
     }
 }
 
@@ -132,12 +131,16 @@ impl Kind {
 struct ChildInfo {
     /// `constant_definition?`: `{class module}` (not `sclass`).
     is_constant_def: bool,
-    /// `empty_line_required?`: `{any_def class module (send nil? {:private
-    /// :protected :public})}` (the send arm is the *bare* modifier: no
-    /// receiver, no arguments, no block).
+    /// `empty_line_required?`: `{any_def class module #access_modifier_send?
+    /// [{(if _ #access_modifier_send? nil?) (if _ nil? #access_modifier_send?)}
+    /// modifier_form?]}` (1.92.3 added the modifier arm;
+    /// `access_modifier_send?` is the *bare* modifier: no receiver, no
+    /// arguments, no block).
     required: bool,
     /// 1-based first line (for `check_deferred_empty_line`).
     first_line: usize,
+    /// 1-based parser `last_line` (for `same_line_as_previous_statement?`).
+    last_line: usize,
     /// Parser node type interpolated into `MSG_DEFERRED`.
     type_name: &'static str,
 }
@@ -147,6 +150,8 @@ struct ChildInfo {
 struct BodyInfo {
     is_begin: bool,
     children: Vec<ChildInfo>,
+    /// Parser `body.first_line` / `body.last_line` (1.92.3, rubocop#16305).
+    lines: (usize, usize),
 }
 
 pub(crate) struct Visitor<'a> {
@@ -155,9 +160,9 @@ pub(crate) struct Visitor<'a> {
     line_starts: Vec<usize>,
     cfg: Config,
     out: FamilyOffenses,
-    /// Closing line of the block whose body EHK is checking (`body.parent`
-    /// is a block); `None` for def / kwbegin bodies.
-    ehk_block_end: Option<usize>,
+    /// Body start line and closing line of the block whose body EHK is
+    /// checking (`body.parent` is a block); `None` for def / kwbegin bodies.
+    ehk_block: Option<(usize, usize)>,
 }
 
 impl super::dispatch::Rule for Visitor<'_> {
@@ -337,14 +342,12 @@ impl<'a> Visitor<'a> {
             let first = self.line_of(l.location().start_offset());
             let open_line = self.line_of(l.opening_loc().start_offset());
             let close_line = self.line_of(l.closing_loc().start_offset());
-            let body_nil = l.body().is_none();
+            let body_lines = l.body().map(|b| self.parser_lines(&b));
             let start = self.body_start_line(open_line, &l.parameters());
-            self.check_block_body(open_line, close_line, start, body_nil);
-            if !is_it_parameters(&l.parameters()) {
-                self.ehk_block_end = Some(close_line);
-                self.check_ehk_body(l.body(), first, Some(close_line));
-                self.ehk_block_end = None;
-            }
+            self.check_block_body(open_line, close_line, start, body_lines);
+            self.ehk_block = Some((start, close_line));
+            self.check_ehk_body(l.body(), first, Some(close_line));
+            self.ehk_block = None;
         }
     }
 
@@ -392,25 +395,23 @@ impl<'a> Visitor<'a> {
             first,
             end_line,
             adjusted,
-            d.body().is_none(),
+            d.body().map(|b| self.parser_lines(&b)),
         );
         self.check_ehk_body(d.body(), first, Some(end_line));
     }
 
     /// Shared `on_block` for call/super blocks: `EmptyLinesAroundBlockBody`
-    /// plus EHK (which skips `it`-parameter blocks; stock has no
-    /// `on_itblock` alias).
+    /// plus EHK (`it` blocks included since 1.92.3, rubocop#16325).
     fn on_block(&mut self, node: &Node<'_>, bn: &ruby_prism::BlockNode<'_>) {
         let first = self.line_of(node.location().start_offset());
         let open_line = self.line_of(bn.opening_loc().start_offset());
         let close_line = self.line_of(bn.closing_loc().start_offset());
         let start = self.body_start_line(open_line, &bn.parameters());
-        self.check_block_body(open_line, close_line, start, bn.body().is_none());
-        if !is_it_parameters(&bn.parameters()) {
-            self.ehk_block_end = Some(close_line);
-            self.check_ehk_body(bn.body(), first, Some(close_line));
-            self.ehk_block_end = None;
-        }
+        let body_lines = bn.body().map(|b| self.parser_lines(&b));
+        self.check_block_body(open_line, close_line, start, body_lines);
+        self.ehk_block = Some((start, close_line));
+        self.check_ehk_body(bn.body(), first, Some(close_line));
+        self.ehk_block = None;
     }
 
     /// `body_start_line` (1.92, rubocop#15953 / #16059): the line of `{` /
@@ -438,7 +439,7 @@ impl<'a> Visitor<'a> {
         open_line: usize,
         close_line: usize,
         body_start: usize,
-        body_nil: bool,
+        body_lines: Option<(usize, usize)>,
     ) {
         self.check_simple(
             Kind::Block,
@@ -446,7 +447,7 @@ impl<'a> Visitor<'a> {
             open_line,
             close_line,
             Some(body_start),
-            body_nil,
+            body_lines,
         );
     }
 
@@ -460,9 +461,9 @@ impl<'a> Visitor<'a> {
         node_first: usize,
         node_last: usize,
         adjusted: Option<usize>,
-        body_nil: bool,
+        body_lines: Option<(usize, usize)>,
     ) {
-        if body_nil && style != NO_EMPTY_LINES {
+        if body_lines.is_none() && style != NO_EMPTY_LINES {
             return; // valid_body_style?
         }
         if node_first == node_last {
@@ -472,7 +473,7 @@ impl<'a> Visitor<'a> {
         if first >= node_last {
             return; // 1.92: `first_line >= last_line`
         }
-        self.check_both(kind, style, first, node_last);
+        self.check_both(kind, style, body_lines, first, node_last);
     }
 
     /// `check` for class/module (full style set; `body` is the
@@ -502,48 +503,70 @@ impl<'a> Visitor<'a> {
                 // body is Some here (nil bodies returned above).
                 let ns = body.as_ref().is_some_and(namespace_with_one_child);
                 let inner = if ns { NO_EMPTY_LINES } else { EMPTY_LINES };
-                self.check_both(kind, inner, first, last);
+                let lines = body.as_ref().map(|b| b.lines);
+                self.check_both(kind, inner, lines, first, last);
             }
             EMPTY_LINES_SPECIAL => {
                 let Some(body) = body else { return };
+                let lines = Some(body.lines);
                 if namespace_with_one_child(body) {
-                    self.check_both(kind, NO_EMPTY_LINES, first, last);
+                    self.check_both(kind, NO_EMPTY_LINES, lines, first, last);
                 } else {
                     if body.children.first().is_some_and(|c| c.required) {
-                        self.check_beginning(kind, EMPTY_LINES, first);
+                        self.check_beginning(kind, EMPTY_LINES, lines, first);
                     } else {
-                        self.check_beginning(kind, NO_EMPTY_LINES, first);
+                        self.check_beginning(kind, NO_EMPTY_LINES, lines, first);
                         self.check_deferred(kind, body);
                     }
-                    self.check_ending(kind, EMPTY_LINES, last);
+                    self.check_ending(kind, EMPTY_LINES, lines, last);
                 }
             }
-            _ => self.check_both(kind, style, first, last),
+            _ => {
+                let lines = body.as_ref().map(|b| b.lines);
+                self.check_both(kind, style, lines, first, last);
+            }
         }
     }
 
-    fn check_both(&mut self, kind: Kind, style: u8, first: usize, last: usize) {
+    fn check_both(
+        &mut self,
+        kind: Kind,
+        style: u8,
+        body: Option<(usize, usize)>,
+        first: usize,
+        last: usize,
+    ) {
         match style {
             BEGINNING_ONLY => {
-                self.check_beginning(kind, EMPTY_LINES, first);
-                self.check_ending(kind, NO_EMPTY_LINES, last);
+                self.check_beginning(kind, EMPTY_LINES, body, first);
+                self.check_ending(kind, NO_EMPTY_LINES, body, last);
             }
             ENDING_ONLY => {
-                self.check_beginning(kind, NO_EMPTY_LINES, first);
-                self.check_ending(kind, EMPTY_LINES, last);
+                self.check_beginning(kind, NO_EMPTY_LINES, body, first);
+                self.check_ending(kind, EMPTY_LINES, body, last);
             }
             _ => {
-                self.check_beginning(kind, style, first);
-                self.check_ending(kind, style, last);
+                self.check_beginning(kind, style, body, first);
+                self.check_ending(kind, style, body, last);
             }
         }
     }
 
-    fn check_beginning(&mut self, kind: Kind, style: u8, first: usize) {
+    /// 1.92.3 (rubocop#16305): no blank line is required at the beginning
+    /// when the body starts on the (adjusted) first line.
+    fn check_beginning(&mut self, kind: Kind, style: u8, body: Option<(usize, usize)>, first: usize) {
+        if style == EMPTY_LINES && body.is_some_and(|(f, _)| f == first) {
+            return;
+        }
         self.check_source(kind, style, first, "beginning");
     }
 
-    fn check_ending(&mut self, kind: Kind, style: u8, last: usize) {
+    /// 1.92.3 (rubocop#16305): no blank line is required at the end when
+    /// the body ends on the closing line.
+    fn check_ending(&mut self, kind: Kind, style: u8, body: Option<(usize, usize)>, last: usize) {
+        if style == EMPTY_LINES && body.is_some_and(|(_, l)| l == last) {
+            return;
+        }
         // `last - 2` can underflow only for a node "ending" on line 1, which
         // `single_line?` already excluded.
         self.check_source(kind, style, last - 2, "end");
@@ -573,9 +596,16 @@ impl<'a> Visitor<'a> {
 
     /// `check_deferred_empty_line(body)`.
     fn check_deferred(&mut self, kind: Kind, body: &BodyInfo) {
-        let Some(child) = body.children.iter().find(|c| c.required) else {
+        let Some(idx) = body.children.iter().position(|c| c.required) else {
             return;
         };
+        let child = &body.children[idx];
+        // `same_line_as_previous_statement?` (1.92.3, rubocop#16372). The
+        // deferred path only runs when the first child is not required, so
+        // `idx > 0` and the left sibling exists.
+        if idx > 0 && body.children[idx - 1].last_line == child.first_line {
+            return;
+        }
         // `previous_line_ignoring_comments(node.first_line)`:
         // decrement-then-read, skipping comment lines, clamped at 0.
         let mut line0 = child.first_line.saturating_sub(2);
@@ -744,8 +774,33 @@ impl<'a> Visitor<'a> {
         }
         // `lines[line - 2]`: the line above the keyword.
         if line >= 2 && self.line_empty0(line - 2) {
-            self.push_ehk(line - 1, ehk_msg("before", kw), false);
+            let deferred = self.only_empty_lines_since_block_start(line);
+            self.push_ehk(line - 1, ehk_msg("before", kw), deferred);
         }
+    }
+
+    /// `beginning_left_to_block_body_cop?` minus the config check (1.92.3,
+    /// rubocop#16262): the body's parent is a block and
+    /// `only_empty_lines_since_beginning?` — walking up from the line above
+    /// the keyword, the first line whose `strip` is non-empty is the block
+    /// body start line (`block_body_start_line`, the same as the block body
+    /// cop's `body_start_line`).
+    fn only_empty_lines_since_block_start(&self, keyword_line: usize) -> bool {
+        let Some((start_line, _)) = self.ehk_block else {
+            return false;
+        };
+        let prev = (start_line..keyword_line)
+            .rev()
+            .find(|&l| !self.line_blank0(l - 1));
+        prev == Some(start_line)
+    }
+
+    /// `lines[idx0].strip.empty?` (a missing line counts as non-blank).
+    fn line_blank0(&self, idx0: usize) -> bool {
+        self.line_content0(idx0).is_some_and(|c| {
+            c.iter()
+                .all(|&b| matches!(b, b' ' | b'\t' | b'\n' | b'\x0b' | b'\x0c' | b'\r' | 0))
+        })
     }
 
     /// `left_to_block_body_cop?` minus the config check (done per offense in
@@ -753,15 +808,10 @@ impl<'a> Visitor<'a> {
     /// `only_empty_lines_until_end?` — the first line after the keyword whose
     /// `strip` is non-empty is the block's closing line.
     fn only_empty_lines_until_block_end(&self, keyword_line: usize) -> bool {
-        let Some(end_line) = self.ehk_block_end else {
+        let Some((_, end_line)) = self.ehk_block else {
             return false;
         };
-        let next = (keyword_line + 1..=end_line).find(|&l| {
-            self.line_content0(l - 1).is_none_or(|c| {
-                c.iter()
-                    .any(|&b| !matches!(b, b' ' | b'\t' | b'\n' | b'\x0b' | b'\x0c' | b'\r' | 0))
-            })
-        });
+        let next = (keyword_line + 1..=end_line).find(|&l| !self.line_blank0(l - 1));
         next == Some(end_line)
     }
 
@@ -782,14 +832,43 @@ impl<'a> Visitor<'a> {
     /// `StatementsNode` or absent in prism).
     fn body_info(&self, body: Option<Node<'_>>) -> Option<BodyInfo> {
         let body = body?;
+        let lines = self.parser_lines(&body);
         let Some(stmts) = body.as_statements_node() else {
-            // Defensive: class/module bodies are StatementsNodes; treat
-            // anything else as a single opaque child.
+            // A body with `rescue` / `ensure` is an implicit `BeginNode`;
+            // parser sees one `rescue` / `ensure` child, which is never
+            // `empty_line_required?`.
             return Some(BodyInfo {
                 is_begin: false,
-                children: vec![self.child_info(&body)],
+                children: vec![ChildInfo {
+                    is_constant_def: false,
+                    required: false,
+                    first_line: lines.0,
+                    last_line: lines.1,
+                    type_name: "",
+                }],
+                lines,
             });
         };
+        let mut iter = stmts.body().iter();
+        if let (Some(sole), None) = (iter.next(), iter.next())
+            && let Some(paren) = sole.as_parentheses_node()
+        {
+            // A sole `( ... )` statement is the body itself in parser: a
+            // `begin` node (`begin_type?`) whose children are the statements
+            // inside the parentheses.
+            let children: Vec<ChildInfo> = match paren.body() {
+                None => Vec::new(),
+                Some(inner) => match inner.as_statements_node() {
+                    Some(st) => st.body().iter().map(|n| self.child_info(&n)).collect(),
+                    None => vec![self.child_info(&inner)],
+                },
+            };
+            return Some(BodyInfo {
+                is_begin: true,
+                children,
+                lines,
+            });
+        }
         let children: Vec<ChildInfo> = stmts.body().iter().map(|n| self.child_info(&n)).collect();
         if children.is_empty() {
             return None;
@@ -797,16 +876,77 @@ impl<'a> Visitor<'a> {
         Some(BodyInfo {
             is_begin: children.len() > 1,
             children,
+            lines,
         })
+    }
+
+    /// Parser `first_line` / `last_line` of a body. A `StatementsNode` spans
+    /// its statements like parser's `begin` (or the sole child). An
+    /// implicit `BeginNode` (a body with `rescue` / `ensure` clauses) spans
+    /// up to the `end` keyword in prism, while parser's `rescue` / `ensure`
+    /// node ends at the last clause: the `ensure` body (or keyword), the
+    /// `else` body (or keyword), or the last resbody (body, `then`,
+    /// variable, exception list, or keyword, in that order).
+    fn parser_lines(&self, body: &Node<'_>) -> (usize, usize) {
+        let Some(bn) = body.as_begin_node().filter(|b| b.begin_keyword_loc().is_none()) else {
+            let loc = body.location();
+            return (
+                self.line_of(loc.start_offset()),
+                self.line_of(loc.end_offset().saturating_sub(1).max(loc.start_offset())),
+            );
+        };
+        let end_line = |loc: ruby_prism::Location<'_>| {
+            self.line_of(loc.end_offset().saturating_sub(1).max(loc.start_offset()))
+        };
+        let first = if let Some(st) = bn.statements() {
+            self.line_of(st.location().start_offset())
+        } else if let Some(r) = bn.rescue_clause() {
+            self.line_of(r.keyword_loc().start_offset())
+        } else if let Some(e) = bn.ensure_clause() {
+            self.line_of(e.ensure_keyword_loc().start_offset())
+        } else {
+            self.line_of(bn.location().start_offset())
+        };
+        let last = if let Some(e) = bn.ensure_clause() {
+            match e.statements() {
+                Some(st) => end_line(st.location()),
+                None => end_line(e.ensure_keyword_loc()),
+            }
+        } else if let Some(e) = bn.else_clause() {
+            match e.statements() {
+                Some(st) => end_line(st.location()),
+                None => end_line(e.else_keyword_loc()),
+            }
+        } else if let Some(mut r) = bn.rescue_clause() {
+            while let Some(next) = r.subsequent() {
+                r = next;
+            }
+            if let Some(st) = r.statements() {
+                end_line(st.location())
+            } else if let Some(t) = r.then_keyword_loc() {
+                end_line(t)
+            } else if let Some(v) = r.reference() {
+                end_line(v.location())
+            } else if let Some(x) = r.exceptions().iter().last() {
+                end_line(x.location())
+            } else {
+                end_line(r.keyword_loc())
+            }
+        } else {
+            end_line(bn.location())
+        };
+        (first, last)
     }
 
     fn child_info(&self, node: &Node<'_>) -> ChildInfo {
         let first_line = self.line_of(node.location().start_offset());
+        let last_line = self.parser_lines(node).1;
         if let Some(d) = node.as_def_node() {
             return ChildInfo {
                 is_constant_def: false,
                 required: true, // any_def
                 first_line,
+                last_line,
                 type_name: if d.receiver().is_some() {
                     "defs"
                 } else {
@@ -819,6 +959,7 @@ impl<'a> Visitor<'a> {
                 is_constant_def: true,
                 required: true,
                 first_line,
+                last_line,
                 type_name: "class",
             };
         }
@@ -827,33 +968,78 @@ impl<'a> Visitor<'a> {
                 is_constant_def: true,
                 required: true,
                 first_line,
+                last_line,
                 type_name: "module",
             };
         }
-        // `(send nil? {:private :protected :public})`: bare modifier — no
-        // receiver, no arguments, no block (a block makes the parser node a
-        // `block`, not a `send`).
-        if let Some(c) = node.as_call_node() {
-            let bare = c.receiver().is_none()
-                && c.arguments().is_none()
-                && c.block().is_none()
-                && matches!(c.name().as_slice(), b"private" | b"protected" | b"public");
-            if bare {
-                return ChildInfo {
-                    is_constant_def: false,
-                    required: true,
-                    first_line,
-                    type_name: "send",
-                };
-            }
+        if is_access_modifier_send(node) {
+            return ChildInfo {
+                is_constant_def: false,
+                required: true,
+                first_line,
+                last_line,
+                type_name: "send",
+            };
+        }
+        if is_modifier_access_modifier(node) {
+            return ChildInfo {
+                is_constant_def: false,
+                required: true,
+                first_line,
+                last_line,
+                type_name: "if",
+            };
         }
         ChildInfo {
             is_constant_def: false,
             required: false,
             first_line,
+            last_line,
             type_name: "",
         }
     }
+}
+
+/// `access_modifier_send?`: `(send nil? {:private :protected :public})`, a
+/// bare modifier — no receiver, no arguments, no block (a block makes the
+/// parser node a `block`, not a `send`).
+fn is_access_modifier_send(node: &Node<'_>) -> bool {
+    node.as_call_node().is_some_and(|c| {
+        c.receiver().is_none()
+            && c.arguments().is_none()
+            && c.block().is_none()
+            && matches!(c.name().as_slice(), b"private" | b"protected" | b"public")
+    })
+}
+
+/// The 1.92.3 arm of `empty_line_required?` (rubocop#16309):
+/// `[{(if _ #access_modifier_send? nil?) (if _ nil? #access_modifier_send?)}
+/// modifier_form?]`, i.e. `private if cond` / `private unless cond`.
+fn is_modifier_access_modifier(node: &Node<'_>) -> bool {
+    let sole_modifier = |stmts: Option<ruby_prism::StatementsNode<'_>>, kw_start: usize| {
+        stmts.is_some_and(|st| {
+            let mut it = st.body().iter();
+            match (it.next(), it.next()) {
+                (Some(n), None) => {
+                    n.location().start_offset() < kw_start && is_access_modifier_send(&n)
+                }
+                _ => false,
+            }
+        })
+    };
+    if let Some(i) = node.as_if_node() {
+        // A modifier `if` has an `if` keyword after its body and no `end`.
+        return i.end_keyword_loc().is_none()
+            && i.subsequent().is_none()
+            && i.if_keyword_loc()
+                .is_some_and(|kw| sole_modifier(i.statements(), kw.start_offset()));
+    }
+    if let Some(u) = node.as_unless_node() {
+        return u.end_keyword_loc().is_none()
+            && u.else_clause().is_none()
+            && sole_modifier(u.statements(), u.keyword_loc().start_offset());
+    }
+    false
 }
 
 /// `namespace?(body, with_one_child: true)`: a single class/module child.
@@ -861,12 +1047,6 @@ fn namespace_with_one_child(body: &BodyInfo) -> bool {
     !body.is_begin && body.children.first().is_some_and(|c| c.is_constant_def)
 }
 
-/// EHK's missing `on_itblock` alias: skip blocks whose parameter is `it`.
-fn is_it_parameters(parameters: &Option<Node<'_>>) -> bool {
-    parameters
-        .as_ref()
-        .is_some_and(|p| p.as_it_parameters_node().is_some())
-}
 
 fn extra_msg(kind: &str, loc: &str) -> String {
     format!("Extra empty line detected at {kind} body {loc}.")
@@ -1294,11 +1474,11 @@ mod tests {
 
     // EHK in blocks (incl. numbered) but not it-blocks.
     #[test]
-    fn ehk_blocks_and_itblock_quirk() {
+    fn ehk_blocks_numbered_and_it() {
         let got = run("foo do\n  f(_1)\n\nrescue\n  y\nend\n", default_cfg());
         assert_eq!(got.exception_keywords.len(), 1);
         let got = run("foo do\n  f(it)\n\nrescue\n  y\nend\n", default_cfg());
-        assert!(got.exception_keywords.is_empty());
+        assert_eq!(got.exception_keywords.len(), 1);
         let got = run("-> do\n  x\n\nrescue\n  y\nend\n", default_cfg());
         assert_eq!(got.exception_keywords.len(), 1);
     }

@@ -55,6 +55,10 @@ pub struct ParenthesesAsGroupedExpressionOffense {
     /// End byte of the first argument. Same as above (paired with `arg_start`
     /// the wrapper reads `source[arg_start..arg_end]`).
     pub arg_end: usize,
+    /// The argument is a one-line `expr in pat`. Stock accepts it only for a
+    /// target Ruby of 3.0 or newer, so the wrapper reports this offense only
+    /// below 3.0.
+    pub before_ruby30_only: bool,
 }
 
 /// Standalone entry point used by the per-cop fallback. This cop is always
@@ -117,7 +121,8 @@ impl ParenthesesAsGroupedExpressionVisitor {
         // their (possibly re-parenthesised) sole expression could not stand as
         // a bare argument — `and` / `or` / `not`, a modifier `rescue`, or a
         // modifier `if` / `unless` / `while` / `until`.
-        if invalid_bare_argument(first_arg) {
+        let required = invalid_bare_argument(first_arg);
+        if required == Required::Yes {
             return;
         }
 
@@ -153,6 +158,7 @@ impl ParenthesesAsGroupedExpressionVisitor {
             space_end,
             arg_start: parens.location().start_offset(),
             arg_end: parens.location().end_offset(),
+            before_ruby30_only: required == Required::Ruby30,
         });
     }
 }
@@ -169,21 +175,222 @@ impl ParenthesesAsGroupedExpressionVisitor {
 /// gives a `ParenthesesNode` whose `body` is a `StatementsNode`. Peeling a
 /// single-statement parenthesis repeatedly lands on the innermost expression
 /// (or on nothing for `()`).
-fn invalid_bare_argument(node: &Node<'_>) -> bool {
-    if let Some(parens) = node.as_parentheses_node() {
-        // `()`: `children.first` is nil.
-        let Some(body) = parens.body() else { return false };
-        if let Some(stmts) = body.as_statements_node() {
-            let children: Vec<Node<'_>> = stmts.body().iter().collect();
-            if children.len() == 1 {
-                return invalid_bare_argument(&children[0]);
-            }
+///
+/// 1.92.3 adds checks on the outer `begin` only (rubocop#16245, #16353): two
+/// or more statements, no statement at all (`()`, `(;)`), or a semicolon
+/// token outside the one expression (`(; foo)`, `(foo;)`). After unwrapping
+/// it also accepts a multiple-value assignment (rubocop#16377), a one-line
+/// `in` pattern match and a command call with a `do` block (rubocop#16311).
+fn invalid_bare_argument(node: &Node<'_>) -> Required {
+    let Some(parens) = node.as_parentheses_node() else {
+        return innermost_required(node);
+    };
+    let Some(expression) = parens_children(&parens).and_then(|mut c| {
+        let first = c.next();
+        if c.next().is_some() { None } else { Some(first) }
+    }) else {
+        // `multiple_statements?` (or no body, which the next check takes)
+        return Required::Yes;
+    };
+    // `not_a_single_expression?`: no expression at all.
+    let Some(expression) = expression else { return Required::Yes };
+    if semicolon_outside(&parens, &expression) {
+        return Required::Yes;
+    }
+    // `innermost_expression`: unwrap single-child `begin`s. An empty or
+    // multi-statement inner `begin` stays, and no check below accepts it.
+    let mut inner = expression;
+    while let Some(p) = inner.as_parentheses_node() {
+        let Some(mut children) = parens_children(&p) else { return Required::No };
+        match (children.next(), children.next()) {
+            (Some(only), None) => inner = only,
+            _ => return Required::No,
         }
-        // A multi-statement `begin` is neither a keyword operator nor a
-        // modifier expression.
+    }
+    innermost_required(&inner)
+}
+
+/// The parser `begin` children of a `(...)`: its statements, or its single
+/// non-statements body. `None` when it has no body.
+fn parens_children<'pr>(
+    parens: &ruby_prism::ParenthesesNode<'pr>,
+) -> Option<Box<dyn Iterator<Item = Node<'pr>> + 'pr>> {
+    let body = parens.body()?;
+    match body.as_statements_node() {
+        Some(stmts) => Some(Box::new(stmts.body().iter())),
+        None => Some(Box::new(std::iter::once(body))),
+    }
+}
+
+/// Whether stock's `invalid_bare_argument?` holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Required {
+    No,
+    Yes,
+    /// Only for a target Ruby of 3.0 or newer: a one-line `expr in pat`
+    /// (`match_pattern_p_type?`, added in 1.92.3). Before 3.0 parser
+    /// reads it as `match_pattern`, which no check accepts.
+    Ruby30,
+}
+
+fn innermost_required(node: &Node<'_>) -> Required {
+    if multiple_values_assignment(node)
+        || keyword_operator(node)
+        || modifier_expression(node)
+        || command_call_operand(node)
+    {
+        Required::Yes
+    } else if node.as_match_predicate_node().is_some() {
+        Required::Ruby30
+    } else {
+        Required::No
+    }
+}
+
+/// `processed_source.tokens_within(node).any? { semicolon? && !expression
+/// contains it }`. Outside the expression, a `(...)` holds only spaces,
+/// line continuations, comments, `=begin` blocks, heredoc bodies of the
+/// expression and semicolons, so a byte scan that skips the others finds the
+/// semicolon tokens.
+fn semicolon_outside(parens: &ruby_prism::ParenthesesNode<'_>, expression: &Node<'_>) -> bool {
+    let src = parens.location().as_slice();
+    let base = parens.location().start_offset();
+    let (expr_start, expr_end) = (
+        expression.location().start_offset() - base,
+        expression.location().end_offset() - base,
+    );
+    // `(` and `)` are one byte each.
+    let gaps = [(1, expr_start), (expr_end, src.len().saturating_sub(1))];
+    if !gaps.iter().any(|&(s, e)| s < e && src[s..e].contains(&b';')) {
         return false;
     }
-    keyword_operator(node) || modifier_expression(node) || command_call_operand(node)
+    // A heredoc body runs from the line after its opener through its
+    // terminator; the rest of the opener's line is ordinary code.
+    let heredocs: Vec<(usize, usize)> = heredoc_spans(expression)
+        .into_iter()
+        .filter_map(|(open_end, close_end)| {
+            let (open_end, close_end) = (open_end - base, close_end - base);
+            let nl = src.get(open_end..)?.iter().position(|&b| b == b'\n')?;
+            Some((open_end + nl + 1, close_end.min(src.len())))
+        })
+        .collect();
+    gaps.iter().any(|&(s, e)| gap_has_semicolon(src, s, e, &heredocs))
+}
+
+fn gap_has_semicolon(src: &[u8], start: usize, end: usize, heredocs: &[(usize, usize)]) -> bool {
+    let mut i = start;
+    while i < end {
+        if let Some(&(_, body_end)) = heredocs.iter().find(|&&(s, e)| s <= i && i < e) {
+            i = body_end;
+            continue;
+        }
+        let line_start = i == 0 || src[i - 1] == b'\n';
+        if line_start && src[i..].starts_with(b"=begin") {
+            // Skip to the end of the `=end` line.
+            let mut j = i;
+            loop {
+                match src[j..].iter().position(|&b| b == b'\n') {
+                    Some(n) => j += n + 1,
+                    None => return false,
+                }
+                if src[j..].starts_with(b"=end") {
+                    i = j;
+                    break;
+                }
+            }
+            continue;
+        }
+        match src[i] {
+            b';' => return true,
+            b'#' => {
+                i += src[i..].iter().position(|&b| b == b'\n').unwrap_or(end - i);
+            }
+            _ => i += 1,
+        }
+    }
+    false
+}
+
+/// `(opener end, terminator end)` of every heredoc in `node`, as absolute
+/// offsets.
+fn heredoc_spans(node: &Node<'_>) -> Vec<(usize, usize)> {
+    struct Scan {
+        out: Vec<(usize, usize)>,
+    }
+    impl Scan {
+        fn push(&mut self, opening: Option<ruby_prism::Location<'_>>, closing: Option<ruby_prism::Location<'_>>) {
+            if let (Some(o), Some(c)) = (opening, closing)
+                && o.as_slice().starts_with(b"<<")
+            {
+                self.out.push((o.end_offset(), c.end_offset()));
+            }
+        }
+    }
+    impl<'pr> Visit<'pr> for Scan {
+        fn visit_string_node(&mut self, node: &ruby_prism::StringNode<'pr>) {
+            self.push(node.opening_loc(), node.closing_loc());
+        }
+        fn visit_x_string_node(&mut self, node: &ruby_prism::XStringNode<'pr>) {
+            self.push(Some(node.opening_loc()), Some(node.closing_loc()));
+        }
+        fn visit_interpolated_string_node(&mut self, node: &ruby_prism::InterpolatedStringNode<'pr>) {
+            self.push(node.opening_loc(), node.closing_loc());
+            ruby_prism::visit_interpolated_string_node(self, node);
+        }
+        fn visit_interpolated_x_string_node(
+            &mut self,
+            node: &ruby_prism::InterpolatedXStringNode<'pr>,
+        ) {
+            self.push(Some(node.opening_loc()), Some(node.closing_loc()));
+            ruby_prism::visit_interpolated_x_string_node(self, node);
+        }
+    }
+    let mut scan = Scan { out: Vec::new() };
+    scan.visit(node);
+    scan.out
+}
+
+/// `multiple_values_assignment?` (rubocop#16377): a `masgn`, or an
+/// assignment (including an assignment-method send) whose value is an
+/// unbracketed array (`x = 1, 2`, `x = *y`).
+fn multiple_values_assignment(node: &Node<'_>) -> bool {
+    if node.as_multi_write_node().is_some() {
+        return true;
+    }
+    let value = match assignment_value(node) {
+        Some(v) => v,
+        None => match node.as_call_node() {
+            Some(c) if is_setter_name(c.name().as_slice()) => {
+                match c.arguments().and_then(|a| a.arguments().iter().last()) {
+                    Some(v) => v,
+                    None => return false,
+                }
+            }
+            _ => return false,
+        },
+    };
+    value.as_array_node().is_some_and(|a| a.opening_loc().is_none())
+}
+
+/// `command_call_with_do_block?` (rubocop#16311): follow the receiver chain
+/// of plain sends to a block, which must use `do ... end` around a command
+/// call. In prism a call with a literal block IS parser's block node.
+fn command_call_with_do_block(node: &Node<'_>) -> bool {
+    let do_block = |block: Option<Node<'_>>| {
+        block
+            .and_then(|b| b.as_block_node())
+            .is_some_and(|b| b.opening_loc().as_slice() == b"do")
+    };
+    if let Some(c) = node.as_call_node() {
+        if c.block().is_some_and(|b| b.as_block_node().is_some()) {
+            return do_block(c.block()) && command_call(node);
+        }
+        return c.receiver().is_some_and(|r| command_call_with_do_block(&r));
+    }
+    if let Some(s) = node.as_super_node() {
+        return do_block(s.block()) && command_call(node);
+    }
+    false
 }
 
 /// `command_call_operand?` (1.92.2, rubocop#16143): an assignment (or an
@@ -215,7 +422,7 @@ fn command_call_operand(node: &Node<'_>) -> bool {
             return c.receiver().is_some_and(|r| command_call_value(&r));
         }
     }
-    false
+    command_call_with_do_block(node)
 }
 
 /// The value of a parser `ASSIGNMENTS`-type node, in prism terms.
@@ -639,6 +846,18 @@ mod tests {
     }
 
     #[test]
+    fn accepts_parentheses_that_are_not_one_expression() {
+        // 1.92.3: two statements, none, or a semicolon outside the expression.
+        for src in ["f (a; b)\n", "f ()\n", "f (1;)\n", "f (;1)\n", "f (<<~A;\n  x\nA\n)\n"] {
+            assert!(detect(src).is_empty(), "{src:?}");
+        }
+        // A semicolon in a comment, heredoc body or inner expression is no token here.
+        for src in ["f (1 # ;\n)\n", "f (<<~A\n  x;y\nA\n)\n", "f ((1;))\n", "f ('a;b')\n"] {
+            assert_eq!(detect(src).len(), 1, "{src:?}");
+        }
+    }
+
+    #[test]
     fn flags_non_command_call_operands() {
         for src in [
             "obj.do_something (foo 'baz')\n",
@@ -647,7 +866,6 @@ mod tests {
             "obj.do_something (x = foo)\n",
             "obj.do_something (x = -> {})\n",
             "obj.do_something (x = (foo 'baz'))\n",
-            "obj.do_something (x == foo 'baz')\n",
             "def m\n  obj.do_something (x = super)\nend\n",
             "def m\n  obj.do_something (x = yield(1))\nend\n",
         ] {

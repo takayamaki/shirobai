@@ -97,7 +97,10 @@ pub(crate) fn build_rule(source: &[u8], style: u8) -> Visitor {
         .collect();
     Visitor {
         line_index,
-        style,
+        // `style` packs `EnforcedStyle` in bits 0-1 and, in bit 2 (1.92.3),
+        // whether `Lint/HeredocMethodCallPosition` is enabled.
+        style: style & 3,
+        heredoc_call_position: style & 4 != 0,
         comment_lines,
         // Marker stack: every `enter` pushes one entry, every `leave` pops one.
         // `Some(frame)` for CallNode (parser `send`/`csend`), `None` for other
@@ -125,6 +128,9 @@ struct CallFrame {
 pub(crate) struct Visitor {
     line_index: Rc<LineIndex>,
     style: u8,
+    /// `Lint/HeredocMethodCallPosition` is enabled (1.92.3
+    /// `heredoc_method_call_to_be_repositioned?`).
+    heredoc_call_position: bool,
     /// Set of 1-based line numbers that contain at least one comment-start.
     /// Pre-collected before the walk to avoid re-borrowing `parse_cache`
     /// (single RefCell, panics on re-entrant `with_parsed`).
@@ -228,6 +234,12 @@ impl Visitor {
         // 1.92 `heredoc_opened_on_closing_brace_line?` (rubocop#15832): a
         // heredoc opened on the `)` line cannot be moved around.
         if self.heredoc_opened_on_line(c, close_line) {
+            return;
+        }
+        // 1.92.3 `heredoc_method_call_to_be_repositioned?(node.children.last)`
+        // (rubocop#16352): `Lint/HeredocMethodCallPosition` moves a call made
+        // after a heredoc terminator, so this cop leaves the brace alone.
+        if self.heredoc_call_position && heredoc_call_after_terminator(c) {
             return;
         }
 
@@ -410,6 +422,57 @@ impl Visitor {
         }
         finder.found
     }
+}
+
+/// `heredoc_method_call_to_be_repositioned?(node.children.last)`: the last
+/// parser child (the `&blk` block pass when present, else the last argument)
+/// or any call inside it has a heredoc receiver whose terminator ends before
+/// the call (send range, block excluded) does.
+fn heredoc_call_after_terminator(c: &ruby_prism::CallNode<'_>) -> bool {
+    let last = match c.block() {
+        Some(b) if b.as_block_argument_node().is_some() => Some(b),
+        _ => c.arguments().and_then(|a| a.arguments().iter().last()),
+    };
+    let Some(last) = last else { return false };
+    let mut finder = HeredocCallFinder { found: false };
+    finder.visit(&last);
+    finder.found
+}
+
+struct HeredocCallFinder {
+    found: bool,
+}
+
+impl<'pr> Visit<'pr> for HeredocCallFinder {
+    fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
+        if let Some(heredoc_end) = node.receiver().as_ref().and_then(heredoc_end_offset)
+            && heredoc_end < super::send_range::send_node_end_offset(node)
+        {
+            self.found = true;
+            return;
+        }
+        ruby_prism::visit_call_node(self, node);
+    }
+}
+
+/// `loc.heredoc_end.end_pos` of a heredoc string node (prism's `closing_loc`
+/// keeps the trailing newline; parser's does not).
+fn heredoc_end_offset(node: &Node<'_>) -> Option<usize> {
+    let (open, close) = if let Some(s) = node.as_string_node() {
+        (s.opening_loc()?, s.closing_loc()?)
+    } else if let Some(s) = node.as_interpolated_string_node() {
+        (s.opening_loc()?, s.closing_loc()?)
+    } else if let Some(s) = node.as_x_string_node() {
+        (s.opening_loc(), s.closing_loc())
+    } else {
+        let s = node.as_interpolated_x_string_node()?;
+        (s.opening_loc(), s.closing_loc())
+    };
+    if !open.as_slice().starts_with(b"<<") {
+        return None;
+    }
+    let end = close.end_offset();
+    Some(if close.as_slice().ends_with(b"\n") { end - 1 } else { end })
 }
 
 struct HeredocOpenerLines<'a> {

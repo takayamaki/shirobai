@@ -86,10 +86,10 @@ module Shirobai
           buffer = processed_source.buffer
           off = SourceOffsets.for(processed_source.buffer.source)
 
-          resolved_result.each do |start, fin, message_idx, fix|
+          resolved_result.each do |start, fin, message_idx, fix, item_start|
             range = Parser::Source::Range.new(buffer, off[start], off[fin])
             add_offense(range, message: MESSAGES[message_idx]) do |corrector|
-              apply_fix(corrector, range, fix)
+              apply_fix(corrector, range, fix, off[item_start])
             end
           end
         end
@@ -110,15 +110,17 @@ module Shirobai
           true
         end
 
-        # Applies the corrector op. `swap_comma`: remove a `,` range, else insert
-        # `,` after the range. Rust guarantees a `FIX_AVOID` range is exactly the
-        # comma and a `FIX_PUT` range is not, so we can apply the op directly.
-        def apply_fix(corrector, range, fix)
+        # Applies the corrector op. `avoid_comma` (`swap_comma`) removes the range,
+        # which Rust guarantees is exactly the comma. Since 1.92.3 `put_comma`
+        # anchors the comma to the whole last item (`insert_after(last_item, ',')`),
+        # so parentheses another cop wraps around a part of the item end up
+        # before it.
+        def apply_fix(corrector, range, fix, item_start)
           case fix
           when FIX_AVOID
             corrector.remove(range)
           when FIX_PUT
-            corrector.insert_after(range, ",")
+            corrector.insert_after(range.with(begin_pos: item_start), ",")
           end
         end
       end

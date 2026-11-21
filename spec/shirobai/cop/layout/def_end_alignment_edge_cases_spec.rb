@@ -71,32 +71,48 @@ RSpec.describe Shirobai::Cop::Layout::DefEndAlignment do
       .to eq("private def foo\n        end\n")
   end
 
-  it "splits message range and autocorrect column on chained modifiers" do
-    # `private module_function def foo`: start_of_line message names the outer
-    # send (col 0), but the corrected `end` lands at the def's IMMEDIATE parent
-    # send (`module_function def`, col 8). The two disagree, so stock's own
-    # autocorrect does NOT converge — it parks `end` at col 8 while the message
-    # keeps demanding col 0. shirobai must replicate this stuck state EXACTLY
-    # (matching corrected source AND the residual offense), not "fix" it.
+  # Up to 1.92.2 `start_of_line` aligned the corrected `end` with the def node
+  # parent send, while the message names the outermost modifier. That split
+  # the two for chained modifiers (stock parked `end` at col 8 and never
+  # converged) and for a def argument of a call with a receiver. 1.92.3
+  # (rubocop#16251) aligns with `outermost_def_modifier`, so both now agree.
+  it "aligns `end` with the outermost send on chained modifiers" do
     src = "private module_function def foo\n  end\n"
     stock = expect_lint_parity(*klasses, src, sol_config)
     expect(stock.first[2]).to include("with `private module_function def` at 1, 0")
-    corrected = expect_autocorrect_parity(*klasses, src, sol_config)
-    expect(corrected).to eq("private module_function def foo\n        end\n")
-    # The "corrected" source still carries the same offense in BOTH cops (stock
-    # parks `end` at col 8 but still wants col 0): a stable, non-converging quirk.
-    residual = expect_lint_parity(*klasses, corrected, sol_config)
-    expect(residual.first[2]).to include("`end` at 2, 8")
+    expect(expect_autocorrect_parity(*klasses, src, sol_config))
+      .to eq("private module_function def foo\nend\n")
   end
 
-  it "splits message and autocorrect for a def argument with a receiver" do
+  it "aligns `end` with the `def` for a def argument with a receiver" do
     # `obj.foo def bar` is not a modifier (receiver present); on_def fires.
-    # Message names the `def` (col 8), autocorrect aligns to the call (col 0).
     src = "obj.foo def bar\n      end\n"
     stock = expect_lint_parity(*klasses, src, sol_config)
     expect(stock.first[2]).to include("with `def` at 1, 8")
     expect(expect_autocorrect_parity(*klasses, src, sol_config))
-      .to eq("obj.foo def bar\nend\n")
+      .to eq("obj.foo def bar\n        end\n")
+  end
+
+  # rubocop-ast `def_modifier` looks at the first argument only: more
+  # arguments, a block argument or a block keep the send a modifier.
+  it "treats a send whose first argument is the def as a modifier" do
+    src = <<~RUBY
+      foo def bar
+        end, 1
+      foo(def baz
+        end) { }
+      foo(def qux
+        end, &b)
+      foo(x, bar(def quux
+        end))
+      foo(bar(
+        def corge
+          end), 1)
+    RUBY
+    [sol_config, def_config].each do |cfg|
+      expect_lint_parity(*klasses, src, cfg)
+      expect_autocorrect_parity(*klasses, src, cfg)
+    end
   end
 
   it "ignores endless methods (no `end` to align) under both styles" do

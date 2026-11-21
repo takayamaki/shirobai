@@ -106,10 +106,10 @@ what matters is that the merged unit helps somewhere and hurts nowhere.
 
 ## Environment notes
 
-- RuboCop is pinned with `spec.add_dependency "rubocop", "= 1.92.2"`.
+- RuboCop is pinned with `spec.add_dependency "rubocop", "= 1.92.3"`.
   Only bump it on purpose — even minor updates can break compatibility.
 - Build with `bundle exec rake compile`
   (runs `cargo build --release -p shirobai` + copies `.so` to `lib/shirobai/`).
   The workspace `Cargo.toml` uses fat LTO + codegen-units=1.
-- `vendor/rubocop` is a git submodule pinned to 1.92.2.
+- `vendor/rubocop` is a git submodule pinned to 1.92.3.
   Vendor specs are pulled into the spec suite from there.

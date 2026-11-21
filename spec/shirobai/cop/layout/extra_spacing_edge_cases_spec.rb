@@ -278,4 +278,28 @@ RSpec.describe Shirobai::Cop::Layout::ExtraSpacing do
       expect_autocorrect_parity(*klasses, src, cfg)
     end
   end
+
+  # 1.92.3 (rubocop#16166): a uniformly padded column is alignment when the
+  # column holds two different NON-ZERO paddings across token types. A
+  # zero-width padding (a token right after `(`) does not count.
+  describe "1.92.3 uniform padding beside other token types" do
+    let(:config) { RuboCop::ConfigLoader.default_configuration }
+
+    it "keeps a uniform column aligned with a differently padded constant" do
+      src = "call_long DEFAULTS\nbar       nil\nbaz       nil\n"
+      expect_lint_parity(*klasses, src, config, expect_offenses: false)
+    end
+
+    it "still flags a uniform column next to a zero-padded token" do
+      src = "abcdefghi(:x)\nbar       nil\nbaz       nil\n"
+      expect_lint_parity(*klasses, src, config)
+      expect_autocorrect_parity(*klasses, src, config)
+    end
+
+    it "keeps uniform keyword-argument padding beside a single-spaced pair" do
+      src = "def create(\n  features: DEFAULTS,\n  dummy:    nil,\n  async:    false,\n  " \
+            "admin:    nil\n)\nend\n"
+      expect_lint_parity(*klasses, src, config, expect_offenses: false)
+    end
+  end
 end

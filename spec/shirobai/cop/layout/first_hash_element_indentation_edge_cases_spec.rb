@@ -118,4 +118,69 @@ RSpec.describe Shirobai::Cop::Layout::FirstHashElementIndentation do
       expect_autocorrect_parity(*klasses, source_192, cfg)
     end
   end
+
+  # 1.92.3 (rubocop#16247): the longest-key offset applies only when the
+  # separator style can check the hash (`SeparatorAlignment#checkable_layout?`).
+  # The vendor spec covers rockets; these pin colons, kwsplat placement, a
+  # value omission and a multi-line pair against stock.
+  source_1923 = <<~'RUBY'
+    a = {
+          b: 1, ccc: 2
+    }
+    d = {
+      e: 1,
+      fff: 2
+    }
+    g = {
+      h: 1,
+      **x, iii: 2
+    }
+    j = {
+      **x, k: 1,
+      lll: 2
+    }
+    m = {
+      n:,
+      ooo: 2
+    }
+    p = {
+      q: 1,
+      rrr: 2
+    }
+    s = {
+      t: 1,
+      uuu: [
+        2
+      ], vv: 3
+    }
+    w = {
+      **x,
+      y: 1,
+      zzz: 2
+    }
+    ab = {
+      cd: 1,
+      "efg": 2,
+      hi: (
+        3)
+    }
+    jk = {
+      'l' => 1,
+      [
+        :mno
+      ] => 2,
+      'pqrs' => 3
+    }
+  RUBY
+
+  it "applies the longest-key offset only to a checkable separator layout" do
+    # The value omission (`n:,`) needs a 3.1+ parser; the helpers default to 2.7.
+    stub_const("RuboCop::TargetRuby::DEFAULT_VERSION", 3.4)
+    hash = { "Layout/HashAlignment" => { "EnforcedColonStyle" => "separator",
+                                         "EnforcedHashRocketStyle" => "separator" } }
+    cfg = RuboCop::ConfigLoader.merge_with_default(RuboCop::Config.new(hash, "(test)"), "(test)")
+    src = source_1923.gsub("p = {\n  q: 1", "p = {\n    q: 1")
+    expect_lint_parity(*klasses, src, cfg)
+    expect_autocorrect_parity(*klasses, src, cfg)
+  end
 end

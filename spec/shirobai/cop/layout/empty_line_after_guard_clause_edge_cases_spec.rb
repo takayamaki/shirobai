@@ -225,15 +225,44 @@ RSpec.describe Shirobai::Cop::Layout::EmptyLineAfterGuardClause do
   end
 
   # A `begin ... end` with no `rescue`/`ensure` is a `kwbegin` whose children
-  # are the statements themselves.  `kwbegin` is not `begin_type?`, so
-  # `multiple_statements_on_line?` does not apply and stock flags a guard
-  # followed by `;` and more code (time.rb: `break if year; year = now.year`).
-  it "flags `guard; stmt` on one line inside a plain `begin ... end`" do
+  # are the statements themselves.  Up to 1.92.2 `multiple_statements_on_line?`
+  # only looked at `begin_type?` parents, so stock flagged a guard followed by
+  # `;` and more code here (time.rb: `break if year; year = now.year`).
+  # 1.92.3 (rubocop#16368) accepts `kwbegin` too, so this is no offense now.
+  it "accepts `guard; stmt` on one line inside a plain `begin ... end`" do
     src = <<~RUBY
       begin
         break if year; year = 1
         break if mon; mon = 2
       end until true
+    RUBY
+    expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
+  end
+
+  # 1.92.3 (rubocop#16288): a guard is checked only when its parser parent is
+  # `begin` / `kwbegin`, so a guard used as a value with a right sibling (an
+  # array element, a call argument) is no offense any more.  rubocop#16207 /
+  # #16368: a multiline guard whose last line holds the next statement is
+  # also accepted.
+  it "matches stock for guards used as values and multiline guards" do
+    src = <<~RUBY
+      def foo
+        x = [if a then raise end, b]
+        bar(if a then return end, b)
+        baz(c, if a then raise end, *d)
+        z
+      end
+
+      def bar
+        raise Foo,
+              "x" if y; baz
+        qux
+      end
+
+      def baz
+        return if a
+        b
+      end
     RUBY
     expect_lint_parity(*klasses, src, cfg)
     expect_correction_edits_parity(*klasses, src, cfg)

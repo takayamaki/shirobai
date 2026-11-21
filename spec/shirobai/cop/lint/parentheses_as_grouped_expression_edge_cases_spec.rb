@@ -222,4 +222,78 @@ RSpec.describe Shirobai::Cop::Lint::ParenthesesAsGroupedExpression do
       end
     end
   end
+
+  # 1.92.3 `invalid_bare_argument?` (rubocop#16245, #16311, #16353, #16373,
+  # #16377). The semicolon check scans bytes outside the one expression, so
+  # comments, `=begin` blocks and heredoc bodies must not count; the other
+  # shapes pin the parser-to-prism mapping of the new checks.
+  describe "1.92.3 invalid bare arguments" do
+    # Run at a given target so shapes that need Ruby 3.x parse on the stock
+    # side too. Returns sorted offenses and the corrected source.
+    def run_at(klass, source, version, config)
+      cop = klass.new(config, autocorrect: true)
+      processed = RuboCop::ProcessedSource.new(source, version)
+      processed.config = config
+      processed.registry = RuboCop::Cop::Registry.global
+      report = RuboCop::Cop::Commissioner.new([cop]).investigate(processed)
+      expect(report.errors).to be_empty
+      corrector = RuboCop::Cop::Corrector.new(processed)
+      report.offenses.each { |o| corrector.merge!(o.corrector) if o.corrector }
+      [report.offenses.map { |o| [o.location.begin_pos, o.location.end_pos, o.message] }.sort,
+       corrector.rewrite]
+    end
+
+    {
+      "a semicolon after the expression" => ["foo (1;)\n", false],
+      "a semicolon before the expression" => ["foo (;1)\n", false],
+      "a semicolon in a trailing comment" => ["foo (1 # ;\n)\n", true],
+      "a semicolon in a leading comment" => ["foo (# ;\n1)\n", true],
+      "a semicolon in an =begin block" => ["foo (\n=begin\n;\n=end\n1)\n", true],
+      "a semicolon in a heredoc body inside the parentheses" => ["foo (<<~A\n  x;y\nA\n)\n", true],
+      "a semicolon after a heredoc opener" => ["foo (<<~A;\n  x\nA\n)\n", false],
+      "a semicolon in a nested heredoc body" => ["foo (bar(<<~A)\n  ;\nA\n)\n", true],
+      "a semicolon inside inner parentheses" => ["foo ((1;))\n", true],
+      "empty inner parentheses" => ["foo (())\n", true],
+      "two statements on two lines" => ["foo (1\n2)\n", false],
+      "a semicolon in a string" => ["foo ('a;b')\n", true],
+      "a semicolon in an interpolation" => ["foo (\"\#{a; b}\")\n", true],
+      "a semicolon after a line continuation" => ["foo (a \\\n ; b)\n", false],
+      "a do-block command call with a safe navigation chain" => ["foo (bar 1 do end&.baz)\n", false],
+      "a do-block command call with a chained command call" => ["foo (bar 1 do end.baz 2)\n", false],
+      "a do-block call with a receiver" => ["foo (a.bar 1 do end)\n", false],
+      "a do-block call without arguments" => ["foo (bar do end)\n", true],
+      "a lambda with a do block" => ["foo (-> do end)\n", true],
+      "a do-block super with arguments" => ["def m\n  foo (super 1 do end)\nend\n", false],
+      "a do-block super with parentheses" => ["def m\n  foo (super(1) do end)\nend\n", true],
+      "a do-block zsuper" => ["def m\n  foo (super do end)\nend\n", true],
+      "a negated do-block command call" => ["foo (!bar 1 do end)\n", false],
+      "an assignment of a bracketed array" => ["foo (x = [1, 2])\n", true],
+      "an or-assignment of a bracketed array" => ["foo (x ||= [1])\n", true],
+      "a setter of a bracketed array" => ["foo (x.y = [1])\n", true],
+      "a doubly parenthesized multiple-value assignment" => ["foo ((x = 1, 2))\n", false],
+      "constant and instance variable multiple-value assignments" =>
+        ["foo (X = 1, 2)\nfoo (@x = 1, 2)\n", false],
+      "an explicit setter call" => ["foo (x.y=(1))\n", true]
+    }.each do |label, (source, offense)|
+      it "matches stock at Ruby 2.7 and 3.4 for #{label}" do
+        [2.7, 3.4].each do |version|
+          stock = run_at(klasses.first, source, version, config)
+          expect(stock.first.empty?).to eq(!offense)
+          expect(run_at(klasses.last, source, version, config)).to eq(stock)
+        end
+      end
+    end
+
+    # Ruby 2.7 parses a one-line `expr in pat` as `match_pattern`, which stock
+    # reports; 3.0 and newer parse it as the accepted `match_pattern_p`.
+    it "reports a one-line pattern match only below Ruby 3.0" do
+      source = "foo (x in Integer)\nfoo ((x in Integer))\n"
+      old = run_at(klasses.first, source, 2.7, config)
+      expect(old.first.size).to eq(2)
+      expect(run_at(klasses.last, source, 2.7, config)).to eq(old)
+      new = run_at(klasses.first, source, 3.4, config)
+      expect(new.first).to be_empty
+      expect(run_at(klasses.last, source, 3.4, config)).to eq(new)
+    end
+  end
 end

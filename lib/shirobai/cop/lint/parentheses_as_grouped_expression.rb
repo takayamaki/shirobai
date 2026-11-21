@@ -33,7 +33,12 @@ module Shirobai
         def on_new_investigation
           buffer = processed_source.buffer
           off = SourceOffsets.for(processed_source.buffer.source)
-          fetch_offenses.each do |space_start, space_end, arg_start, arg_end|
+          ruby30 = processed_source.ruby_version >= 3.0
+          fetch_offenses.each do |space_start, space_end, arg_start, arg_end, before_ruby30_only|
+            # A one-line `expr in pat` is `match_pattern_p` (accepted) from
+            # Ruby 3.0 on, but `match_pattern` (reported) before it.
+            next if before_ruby30_only && ruby30
+
             range = Parser::Source::Range.new(buffer, off[space_start], off[space_end])
             arg_range = Parser::Source::Range.new(buffer, off[arg_start], off[arg_end])
             message = format(MSG, argument: arg_range.source)

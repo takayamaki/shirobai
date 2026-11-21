@@ -78,4 +78,28 @@ RSpec.describe Shirobai::Cop::Style::TrailingCommaInArguments do
       expect_lint_parity(*klasses, source, config, expect_offenses: false)
     end
   end
+
+  # 1.92.3 (rubocop#16209): `put_comma` inserts the comma after the whole last
+  # item, so parentheses `Lint/AmbiguousOperatorPrecedence` wraps around a part
+  # of it (starting on an earlier line) end up before the comma. One shared
+  # Team round shows the merge order; a single cop cannot.
+  it "puts the comma after parentheses another cop adds in the same round (1.92.3)" do
+    cfg = RuboCop::ConfigLoader.merge_with_default(
+      RuboCop::Config.new(
+        {
+          "Style/TrailingCommaInArguments" => { "EnforcedStyleForMultiline" => "comma" },
+          "Lint/AmbiguousOperatorPrecedence" => { "Enabled" => true }
+        },
+        "(test)"
+      ),
+      "(test)"
+    )
+    src = "foo(\n  a,\n  x + y *\n    z\n)\nbar(\n  \"é\", baz(1,\n    2) + c *\n    d\n)\n"
+    other = RuboCop::Cop::Lint::AmbiguousOperatorPrecedence
+    stock = one_team_round([RuboCop::Cop::Style::TrailingCommaInArguments, other], src, cfg)
+    expect(stock).to include("z),")
+    expect(one_team_round([Shirobai::Cop::Style::TrailingCommaInArguments, other], src, cfg)).to eq(stock)
+    expect(one_team_round([other, Shirobai::Cop::Style::TrailingCommaInArguments], src, cfg))
+      .to eq(one_team_round([other, RuboCop::Cop::Style::TrailingCommaInArguments], src, cfg))
+  end
 end

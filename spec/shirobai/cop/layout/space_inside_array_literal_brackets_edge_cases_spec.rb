@@ -156,4 +156,51 @@ RSpec.describe Shirobai::Cop::Layout::SpaceInsideArrayLiteralBrackets do
       expect_autocorrect_parity(*klasses, src, cfg)
     end
   end
+
+  # 1.92.3 (rubocop#16206): with `Layout/MultilineArrayBraceLayout` enabled
+  # and `new_line`, an ARRAY's own-line `]` is never collapsed. Patterns are
+  # not `array_type?`, so they keep the 1.92 rule; a disabled brace-layout cop
+  # or another style changes nothing.
+  describe "1.92.3 own-line closing bracket under MultilineArrayBraceLayout" do
+    def compact_with(layout)
+      RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new(
+          {
+            "Layout/SpaceInsideArrayLiteralBrackets" => { "EnforcedStyle" => "compact" },
+            "Layout/MultilineArrayBraceLayout" => layout
+          },
+          "(test)"
+        ),
+        "(test)"
+      )
+    end
+
+    sources = {
+      "a nested array" => "x = [[ 1, 2 ],\n  [ 3, 4 ]\n]\n",
+      "a flat array" => "x = [ 1,\n  2\n]\n",
+      "an array with its [ apart" => "x = [\n  [ 1, 2 ],\n  [ 3, 4 ]\n]\n",
+      "an array pattern" => "case x\nin [[ a, b ],\n  [ c ]\n]\nend\n",
+      "a bracketed const pattern" => "case x\nin Foo[[ a, b ],\n  [ c ]\n]\nend\n"
+    }
+    layouts = {
+      "new_line" => { "Enabled" => true, "EnforcedStyle" => "new_line" },
+      "disabled new_line" => { "Enabled" => false, "EnforcedStyle" => "new_line" },
+      "symmetrical" => { "Enabled" => true, "EnforcedStyle" => "symmetrical" }
+    }
+    layouts.each do |layout_name, layout|
+      sources.each do |label, src|
+        it "matches stock for #{label} (#{layout_name})" do
+          cfg = compact_with(layout)
+          expect_lint_parity(*klasses, src, cfg, expect_offenses: false)
+          expect_autocorrect_parity(*klasses, src, cfg)
+        end
+      end
+    end
+
+    it "keeps an array's closing bracket apart only under new_line" do
+      src = "x = [[ 1, 2 ],\n  [ 3, 4 ]\n]\n"
+      expect(lint_offenses(klasses.first, src, compact_with(layouts["new_line"]))).to be_empty
+      expect(lint_offenses(klasses.first, src, compact_with(layouts["symmetrical"]))).not_to be_empty
+    end
+  end
 end

@@ -578,25 +578,26 @@ fn map_string_literals_in_interpolation(
 }
 
 /// `Style/TrailingCommaInArguments` records. Each entry is `[start, end,
-/// message, fix]`. `message` selects the text (0 avoid/no_comma, 1 avoid/comma,
+/// message, fix, item_start]`. `message` selects the text (0 avoid/no_comma, 1 avoid/comma,
 /// 2 avoid/consistent_comma, 3 avoid/diff_comma, 4 put); `fix` is the corrector
-/// op (0 avoid -> remove the comma, 1 put -> insert a comma after the range).
+/// op (0 avoid -> remove the comma, 1 put -> insert a comma after the item
+/// `[item_start, end)`, 1.92.3).
 fn map_trailing_comma_in_arguments(
     v: Vec<shirobai_core::rules::trailing_comma_in_arguments::TrailingCommaInArgumentsOffense>,
-) -> Vec<(usize, usize, u8, u8)> {
+) -> Vec<(usize, usize, u8, u8, usize)> {
     v.into_iter()
-        .map(|o| (o.start_offset, o.end_offset, o.message, o.fix))
+        .map(|o| (o.start_offset, o.end_offset, o.message, o.fix, o.item_start))
         .collect()
 }
 
 /// `Style/TrailingCommaInHashLiteral` / `Style/TrailingCommaInArrayLiteral`
 /// records, same wire shape as `map_trailing_comma_in_arguments`: `[start,
-/// end, message, fix]`.
+/// end, message, fix, item_start]`.
 fn map_trailing_comma_literal(
     v: Vec<shirobai_core::rules::trailing_comma::TrailingCommaOffense>,
-) -> Vec<(usize, usize, u8, u8)> {
+) -> Vec<(usize, usize, u8, u8, usize)> {
     v.into_iter()
-        .map(|o| (o.start_offset, o.end_offset, o.message, o.fix))
+        .map(|o| (o.start_offset, o.end_offset, o.message, o.fix, o.item_start))
         .collect()
 }
 
@@ -1120,13 +1121,15 @@ fn map_unreachable_code(
 /// autocorrect `remove` range (matches stock's `corrector.remove(range)`).
 /// `[arg_start, arg_end)` is the first argument's full source range; the
 /// wrapper reads `source[arg_start..arg_end]` for the `MSG` substitution.
+/// `before_ruby30_only` marks a one-line `expr in pat` argument, which stock
+/// reports only for a target Ruby below 3.0.
 fn map_parentheses_as_grouped_expression(
     v: Vec<
         shirobai_core::rules::parentheses_as_grouped_expression::ParenthesesAsGroupedExpressionOffense,
     >,
-) -> Vec<(usize, usize, usize, usize)> {
+) -> Vec<(usize, usize, usize, usize, bool)> {
     v.into_iter()
-        .map(|o| (o.space_start, o.space_end, o.arg_start, o.arg_end))
+        .map(|o| (o.space_start, o.space_end, o.arg_start, o.arg_end, o.before_ruby30_only))
         .collect()
 }
 
@@ -2464,7 +2467,7 @@ fn check_string_literals_in_interpolation(
 fn check_trailing_comma_in_arguments(
     source: RString,
     nums: Vec<i64>,
-) -> Vec<(usize, usize, u8, u8)> {
+) -> Vec<(usize, usize, u8, u8, usize)> {
     let cfg = shirobai_core::rules::trailing_comma_in_arguments::Config {
         style: nums[0] as u8,
     };
@@ -2482,7 +2485,7 @@ fn check_trailing_comma_in_arguments(
 fn check_trailing_comma_in_hash_literal(
     source: RString,
     nums: Vec<i64>,
-) -> Vec<(usize, usize, u8, u8)> {
+) -> Vec<(usize, usize, u8, u8, usize)> {
     let cfg = shirobai_core::rules::trailing_comma::Config {
         style: nums[0] as u8,
     };
@@ -2500,7 +2503,7 @@ fn check_trailing_comma_in_hash_literal(
 fn check_trailing_comma_in_array_literal(
     source: RString,
     nums: Vec<i64>,
-) -> Vec<(usize, usize, u8, u8)> {
+) -> Vec<(usize, usize, u8, u8, usize)> {
     let cfg = shirobai_core::rules::trailing_comma::Config {
         style: nums[0] as u8,
     };
@@ -2692,13 +2695,14 @@ fn map_space_inside_reference_brackets(
 
 /// Ruby entry point for `Layout/SpaceInsideArrayLiteralBrackets` (the bundle
 /// is the usual path). `style` is 0 = no_space, 1 = space, 2 = compact;
-/// `space_empty` is `EnforcedStyleForEmptyBrackets == 'space'`. Returns the
+/// `flags` is the bundle word 97 (1 = `EnforcedStyleForEmptyBrackets ==
+/// 'space'`, 2 = `Layout/MultilineArrayBraceLayout` enforces `new_line`). Returns the
 /// shape documented on `map_space_inside_array_literal_brackets`.
 #[allow(clippy::type_complexity)]
 fn check_space_inside_array_literal_brackets(
     source: RString,
     style: u8,
-    space_empty: bool,
+    flags: u8,
 ) -> (
     Vec<(usize, usize, u8, usize, bool)>,
     Vec<Vec<(u8, usize, usize)>>,
@@ -2710,7 +2714,8 @@ fn check_space_inside_array_literal_brackets(
             2 => sialb::Style::Compact,
             _ => sialb::Style::NoSpace,
         },
-        space_empty,
+        space_empty: flags & 1 != 0,
+        closing_new_line: flags & 2 != 0,
     };
     map_space_inside_array_literal_brackets(sialb::check_space_inside_array_literal_brackets(
         bytes(&source),

@@ -97,4 +97,13 @@ RSpec.describe "Style/HashSyntax edge cases" do
       "def m(if:, bar:, a:)\n  f(\"s\" => 1, :bar => bar, :a => a, if:)\n  g(bar: bar, a: 1, if:)\nend\n"
     )
   end
+
+  # 1.92.3 (rubocop#16331): including an omitted value never adds call
+  # parentheses, wherever the call sits.
+  it "includes omitted values without adding call parentheses" do
+    src = "def m(a:, b:)\n  foo a:, b:;\n  y = [corge(a:), grault(a:)]\nend\n" \
+          "def n(a:)\n  x = bar a:\nend\nqux a:, b: 1;\ndef o(a:) = garply a:\n"
+    out = expect_parity(src, "ruby19", "never")
+    expect(out).not_to include("foo(")
+  end
 end

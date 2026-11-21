@@ -335,7 +335,10 @@ impl Visitor<'_> {
             // begins its line is checked (not one after `**splat,` on the
             // same line).
             if self.begins_its_line(pair.range.0) {
-                if self.separator_style(pair) {
+                // 1.92.3 `separator_aligned?` (rubocop#16247): the
+                // longest-key offset applies only when `HashAlignment`'s
+                // separator style can check this hash at all.
+                if self.separator_style(pair) && self.separator_checkable(h) {
                     let offset = self.longest_key_offset(h, pair);
                     self.check_first(pair, open_start, paren, offset);
                 } else {
@@ -361,6 +364,58 @@ impl Visitor<'_> {
         } else {
             self.separators.rocket_separator
         }
+    }
+
+    /// `HashAlignmentStyles::SeparatorAlignment#checkable_layout?`
+    /// (`ValueAlignment`): no two pairs share a line, the delimiters are not
+    /// mixed, the values are alignable, and no pair other than the first
+    /// starts on the line where the previous element ends.
+    fn separator_checkable(&self, h: &ruby_prism::HashNode<'_>) -> bool {
+        // (first line, last line, Some(is rocket) for a pair / None for a
+        // kwsplat) per element.
+        let elements: Vec<(usize, usize, Option<bool>)> = h
+            .elements()
+            .iter()
+            .map(|e| {
+                let (s, end) = loc(&e.location());
+                let rocket = e.as_assoc_node().map(|a| a.operator_loc().is_some());
+                (self.line_of(s), self.line_of(end.saturating_sub(1).max(s)), rocket)
+            })
+            .collect();
+        let pairs: Vec<&(usize, usize, Option<bool>)> =
+            elements.iter().filter(|e| e.2.is_some()).collect();
+        // pairs_on_same_line?
+        if pairs
+            .windows(2)
+            .any(|w| w[0].1 == w[1].0 || w[0].0 == w[1].1)
+        {
+            return false;
+        }
+        // mixed_delimiters?
+        if pairs.iter().any(|p| p.2 == Some(true)) && pairs.iter().any(|p| p.2 == Some(false)) {
+            return false;
+        }
+        // alignable_values?: the first pair has a value, and every value
+        // starts on its key's last line.
+        let mut assocs = h.elements().iter().filter_map(|e| e.as_assoc_node()).peekable();
+        if assocs
+            .peek()
+            .is_some_and(|a| a.value().as_implicit_node().is_some())
+        {
+            return false;
+        }
+        for a in assocs {
+            let key = loc(&a.key().location());
+            let key_last = self.line_of(key.1.saturating_sub(1).max(key.0));
+            if key_last != self.line_of(a.value().location().start_offset()) {
+                return false;
+            }
+        }
+        // pair_after_kwsplat_on_same_line?
+        let first_pair = elements.iter().position(|e| e.2.is_some());
+        !elements.windows(2).enumerate().any(|(i, w)| {
+            w[1].2.is_some() && Some(i + 1) != first_pair && w[0].1 == w[1].0
+        })
     }
 
     /// `check_based_on_longest_key`'s offset: the longest single-line key
