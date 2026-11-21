@@ -135,3 +135,48 @@ RSpec.describe Shirobai::Cop::Layout::EndAlignment do
     expect_autocorrect_parity(*klasses, source, cfg)
   end
 end
+
+# 1.92.3 (rubocop#16265 / #16250): under the `variable` style the owner of
+# the alignment is the nearest assignment whose leading RHS node is the
+# construct, or the nearest call (send or csend) whose leading last argument
+# is it. The operator method arm (an operator send whose leading node is NOT
+# the construct) is gone, so an `if` in the receiver of an operator falls
+# back to the keyword, and a non-setter csend now owns its argument.
+RSpec.describe Shirobai::Cop::Layout::EndAlignment, "variable owner after 1.92.3" do
+  include EdgeCaseParity
+
+  klasses = [
+    RuboCop::Cop::Layout::EndAlignment,
+    Shirobai::Cop::Layout::EndAlignment
+  ]
+
+  let(:cfg) do
+    RuboCop::ConfigLoader.merge_with_default(
+      RuboCop::Config.new({ "Layout/EndAlignment" => { "EnforcedStyleAlignWith" => "variable" } }, "(test)"),
+      "(test)"
+    )
+  end
+
+  {
+    "if in the receiver of an operator in an assignment" =>
+      "x = [(if a\n  b\n  end)].compact + y\n",
+    "if in the receiver of an operator argument" =>
+      "foo((if a\n  b\n    end).to_a + y)\n",
+    "if as the left operand inside a call" =>
+      "foo(if a\n  b\n      end + 1)\n",
+    "if as the right operand" =>
+      "z + if a\n  b\n    end\n",
+    "if as a csend argument" =>
+      "obj&.foo 1, if a\n  b\n    end\n",
+    "if as a csend shovel argument" =>
+      "obj&.<<(if a\n  b\n    end)\n",
+    "case as a csend operator argument" =>
+      "obj&.+(case a\n  when b then c\n    end)\n"
+  }.each do |name, source|
+    it "matches stock for #{name}" do
+      expect_lint_parity(*klasses, source, cfg)
+      expect_correction_edits_parity(*klasses, source, cfg)
+      expect_autocorrect_parity(*klasses, source, cfg)
+    end
+  end
+end

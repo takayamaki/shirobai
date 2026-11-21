@@ -124,35 +124,23 @@ pub(crate) struct Visitor<'a> {
     /// recorded when the assignment is entered.
     scope_asgn_parents: Vec<(usize, usize)>,
     /// One entry per open ancestor (parallel to `ancestors`): how the node
-    /// takes part in `assignment_or_operator_method`. Only filled under the
+    /// takes part in `assignment_or_method_call`. Only filled under the
     /// `variable` style, the only style that reads it.
     owner_frames: Vec<Option<OwnerFrame>>,
 }
 
-/// An ancestor that `assignment_or_operator_method(node)` may return, with the
-/// test that decides it for a given `node`.
+/// An ancestor that `assignment_or_method_call(node)` may return: an
+/// assignment (`leading_node(extract_rhs(ancestor))`) or a call
+/// (`leading_node(ancestor.last_argument)`), matched when that leading node
+/// is the node.
 struct OwnerFrame {
     /// The ancestor's start offset (the alignment column owner).
     outer_start: usize,
-    kind: OwnerKind,
     /// `(start, end)` of the leading node the test compares against.
     key: Option<(usize, usize)>,
     /// The call's `do`/`{}` block. In parser the block wraps the send, so a
     /// node inside the block does not have the send as an ancestor.
     block: Option<(usize, usize)>,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum OwnerKind {
-    /// `assignment_or_similar?` (assignments, setter calls, `recv << x`):
-    /// matches when `leading_node(extract_rhs(ancestor))` is the node.
-    Assignment,
-    /// An operator-method `send`: matches when `leading_node(ancestor)` is
-    /// NOT the node.
-    Operator,
-    /// Any other `send`: matches when `leading_node(ancestor.last_argument)`
-    /// is the node.
-    Send,
 }
 
 /// A resolved alignment range: a source range whose `column` / `line` the
@@ -487,25 +475,14 @@ fn leading_range(node: Node<'_>) -> Option<(usize, usize)> {
     Some(loc(&n.location()))
 }
 
-/// The parser-gem operator methods (`MethodIdentifierPredicates::OPERATOR_METHODS`).
-fn is_operator_method(name: &[u8]) -> bool {
-    matches!(
-        name,
-        b"|" | b"^" | b"&" | b"<=>" | b"==" | b"===" | b"=~" | b">" | b">=" | b"<" | b"<="
-            | b"<<" | b">>" | b"+" | b"-" | b"*" | b"/" | b"%" | b"**" | b"~" | b"+@"
-            | b"-@" | b"!@" | b"~@" | b"[]" | b"[]=" | b"!" | b"!=" | b"!~" | b"`"
-    )
-}
-
 impl<'a> Visitor<'a> {
-    /// Classify `node` for `assignment_or_operator_method` (see
+    /// Classify `node` for `assignment_or_method_call` (see
     /// [`OwnerFrame`]).
     fn owner_frame(&self, node: &Node<'_>) -> Option<OwnerFrame> {
         let outer_start = node.location().start_offset();
         if let Some(rhs) = self.assignment_rhs(node) {
             return Some(OwnerFrame {
                 outer_start,
-                kind: OwnerKind::Assignment,
                 key: leading_range(rhs),
                 block: None,
             });
@@ -522,48 +499,28 @@ impl<'a> Visitor<'a> {
             .block()
             .filter(|b| b.as_block_node().is_some())
             .map(|b| loc(&b.location()));
-        let name = call.name().as_slice();
-        let setter = call.equal_loc().is_some();
-        let kind = if call.is_safe_navigation() {
-            // csend: `assignment?` only as a setter; never `send_type?`.
-            if !setter {
-                return None;
-            }
-            OwnerKind::Assignment
-        } else if setter || (name == b"<<" && call.receiver().is_some()) {
-            OwnerKind::Assignment
-        } else if is_operator_method(name) {
-            OwnerKind::Operator
-        } else {
-            OwnerKind::Send
-        };
-        let key = if kind == OwnerKind::Operator {
-            leading_range(call.as_node())
-        } else {
-            last_argument.and_then(leading_range)
-        };
+        // `assignment_or_similar?` (a setter or `recv << x`) and the
+        // `call_type?` arm (any other send or csend; 1.92.3 dropped the
+        // operator method arm, rubocop#16265) both compare
+        // `leading_node(last_argument)` with the node.
+        let key = last_argument.and_then(leading_range);
         Some(OwnerFrame {
             outer_start,
-            kind,
             key,
             block,
         })
     }
 
-    /// `assignment_or_operator_method(node)`: the nearest ancestor that owns
+    /// `assignment_or_method_call(node)`: the nearest ancestor that owns
     /// the `variable` style alignment of `node` (`(start, end)`).
-    fn assignment_or_operator_method(&self, node: (usize, usize)) -> Option<usize> {
+    fn assignment_or_method_call(&self, node: (usize, usize)) -> Option<usize> {
         // `enter_node` runs before the node pushes its own frame, so every
         // frame scanned here is an ancestor.
         self.owner_frames.iter().rev().flatten().find_map(|f| {
             if f.block.is_some_and(|(s, e)| s <= node.0 && node.1 <= e) {
                 return None;
             }
-            let hit = match f.kind {
-                OwnerKind::Assignment | OwnerKind::Send => f.key == Some(node),
-                OwnerKind::Operator => f.key != Some(node),
-            };
-            hit.then_some(f.outer_start)
+            (f.key == Some(node)).then_some(f.outer_start)
         })
     }
 
@@ -741,10 +698,10 @@ impl<'a> Visitor<'a> {
         match self.style {
             STYLE_START_OF_LINE => self.start_line_range(c.kw_start).start,
             // `alignment_node_for_variable_style`: the nearest owning ancestor
-            // (`assignment_or_operator_method`) unless there is a line break
+            // (`assignment_or_method_call`) unless there is a line break
             // before the node, else the node itself, whose column equals the
             // keyword column for these constructs.
-            STYLE_VARIABLE => match self.assignment_or_operator_method(node) {
+            STYLE_VARIABLE => match self.assignment_or_method_call(node) {
                 Some(owner) if self.line_of(node.0) <= self.line_of(owner) => owner,
                 _ => c.kw_start,
             },
