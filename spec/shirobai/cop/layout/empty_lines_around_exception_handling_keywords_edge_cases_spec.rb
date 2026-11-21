@@ -62,6 +62,61 @@ RSpec.describe Shirobai::Cop::Layout::EmptyLinesAroundExceptionHandlingKeywords 
       expect_autocorrect_parity(*klasses, source, cfg)
     end
   end
+
+  # 1.92.3: the blank line before the first keyword of a block body is also
+  # left to the block body cop when only blank lines sit between the body
+  # start line (after multiline arguments, not for numbered / `it` / empty
+  # `||` parameters) and the keyword (rubocop#16262); `it` blocks are now
+  # checked (rubocop#16325; the vendor spec pins those under Ruby 3.4).
+  beginning_source = <<~RUBY
+    foo do
+
+    rescue
+      x
+    end
+    foo do |a,
+           b|
+    \t
+    ensure
+      x
+    end
+    foo do ||
+
+    rescue
+    end
+    foo do
+      _1
+
+    rescue
+    end
+    foo do
+
+      it
+    rescue
+
+    end
+    -> (a,
+        b) do
+
+    rescue
+    end
+    foo do # c
+
+    rescue
+    end
+  RUBY
+
+  [
+    { "EnforcedStyle" => "empty_lines" },
+    { "Enabled" => false, "EnforcedStyle" => "empty_lines" },
+    { "EnforcedStyle" => "no_empty_lines" }
+  ].each do |block_cop|
+    it "matches stock at the block body beginning with Layout/EmptyLinesAroundBlockBody #{block_cop}" do
+      cfg = ehk_config(block_cop)
+      expect_lint_parity(*klasses, beginning_source, cfg)
+      expect_autocorrect_parity(*klasses, beginning_source, cfg)
+    end
+  end
 end
 
 # CRLF files: `buffer.source` is LF-normalized while `raw_source` keeps the

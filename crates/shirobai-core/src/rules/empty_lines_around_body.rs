@@ -21,9 +21,8 @@
 //! - Stock `add_offense` dedupes by identical range (`class Foo\n\nend` keeps
 //!   only the "beginning" offense), which the Ruby wrapper inherits for free
 //!   by emitting in stock's order; this rule emits both.
-//! - `EmptyLinesAroundExceptionHandlingKeywords` aliases `on_block` /
-//!   `on_numblock` but **not** `on_itblock` (stock quirk), so a block whose
-//!   parameter is `it` is skipped — mirrored via `ItParametersNode`.
+//! - `EmptyLinesAroundExceptionHandlingKeywords` also checks `it` blocks
+//!   since 1.92.3 (rubocop#16325 added the `on_itblock` alias).
 
 use ruby_prism::Node;
 
@@ -100,7 +99,7 @@ pub(crate) fn build_rule(source: &[u8], cfg: Config) -> Visitor<'_> {
             begin_body: Vec::new(),
             exception_keywords: Vec::new(),
         },
-        ehk_block_end: None,
+        ehk_block: None,
     }
 }
 
@@ -161,9 +160,9 @@ pub(crate) struct Visitor<'a> {
     line_starts: Vec<usize>,
     cfg: Config,
     out: FamilyOffenses,
-    /// Closing line of the block whose body EHK is checking (`body.parent`
-    /// is a block); `None` for def / kwbegin bodies.
-    ehk_block_end: Option<usize>,
+    /// Body start line and closing line of the block whose body EHK is
+    /// checking (`body.parent` is a block); `None` for def / kwbegin bodies.
+    ehk_block: Option<(usize, usize)>,
 }
 
 impl super::dispatch::Rule for Visitor<'_> {
@@ -346,11 +345,9 @@ impl<'a> Visitor<'a> {
             let body_lines = l.body().map(|b| self.parser_lines(&b));
             let start = self.body_start_line(open_line, &l.parameters());
             self.check_block_body(open_line, close_line, start, body_lines);
-            if !is_it_parameters(&l.parameters()) {
-                self.ehk_block_end = Some(close_line);
-                self.check_ehk_body(l.body(), first, Some(close_line));
-                self.ehk_block_end = None;
-            }
+            self.ehk_block = Some((start, close_line));
+            self.check_ehk_body(l.body(), first, Some(close_line));
+            self.ehk_block = None;
         }
     }
 
@@ -404,8 +401,7 @@ impl<'a> Visitor<'a> {
     }
 
     /// Shared `on_block` for call/super blocks: `EmptyLinesAroundBlockBody`
-    /// plus EHK (which skips `it`-parameter blocks; stock has no
-    /// `on_itblock` alias).
+    /// plus EHK (`it` blocks included since 1.92.3, rubocop#16325).
     fn on_block(&mut self, node: &Node<'_>, bn: &ruby_prism::BlockNode<'_>) {
         let first = self.line_of(node.location().start_offset());
         let open_line = self.line_of(bn.opening_loc().start_offset());
@@ -413,11 +409,9 @@ impl<'a> Visitor<'a> {
         let start = self.body_start_line(open_line, &bn.parameters());
         let body_lines = bn.body().map(|b| self.parser_lines(&b));
         self.check_block_body(open_line, close_line, start, body_lines);
-        if !is_it_parameters(&bn.parameters()) {
-            self.ehk_block_end = Some(close_line);
-            self.check_ehk_body(bn.body(), first, Some(close_line));
-            self.ehk_block_end = None;
-        }
+        self.ehk_block = Some((start, close_line));
+        self.check_ehk_body(bn.body(), first, Some(close_line));
+        self.ehk_block = None;
     }
 
     /// `body_start_line` (1.92, rubocop#15953 / #16059): the line of `{` /
@@ -780,8 +774,33 @@ impl<'a> Visitor<'a> {
         }
         // `lines[line - 2]`: the line above the keyword.
         if line >= 2 && self.line_empty0(line - 2) {
-            self.push_ehk(line - 1, ehk_msg("before", kw), false);
+            let deferred = self.only_empty_lines_since_block_start(line);
+            self.push_ehk(line - 1, ehk_msg("before", kw), deferred);
         }
+    }
+
+    /// `beginning_left_to_block_body_cop?` minus the config check (1.92.3,
+    /// rubocop#16262): the body's parent is a block and
+    /// `only_empty_lines_since_beginning?` — walking up from the line above
+    /// the keyword, the first line whose `strip` is non-empty is the block
+    /// body start line (`block_body_start_line`, the same as the block body
+    /// cop's `body_start_line`).
+    fn only_empty_lines_since_block_start(&self, keyword_line: usize) -> bool {
+        let Some((start_line, _)) = self.ehk_block else {
+            return false;
+        };
+        let prev = (start_line..keyword_line)
+            .rev()
+            .find(|&l| !self.line_blank0(l - 1));
+        prev == Some(start_line)
+    }
+
+    /// `lines[idx0].strip.empty?` (a missing line counts as non-blank).
+    fn line_blank0(&self, idx0: usize) -> bool {
+        self.line_content0(idx0).is_some_and(|c| {
+            c.iter()
+                .all(|&b| matches!(b, b' ' | b'\t' | b'\n' | b'\x0b' | b'\x0c' | b'\r' | 0))
+        })
     }
 
     /// `left_to_block_body_cop?` minus the config check (done per offense in
@@ -789,15 +808,10 @@ impl<'a> Visitor<'a> {
     /// `only_empty_lines_until_end?` — the first line after the keyword whose
     /// `strip` is non-empty is the block's closing line.
     fn only_empty_lines_until_block_end(&self, keyword_line: usize) -> bool {
-        let Some(end_line) = self.ehk_block_end else {
+        let Some((_, end_line)) = self.ehk_block else {
             return false;
         };
-        let next = (keyword_line + 1..=end_line).find(|&l| {
-            self.line_content0(l - 1).is_none_or(|c| {
-                c.iter()
-                    .any(|&b| !matches!(b, b' ' | b'\t' | b'\n' | b'\x0b' | b'\x0c' | b'\r' | 0))
-            })
-        });
+        let next = (keyword_line + 1..=end_line).find(|&l| !self.line_blank0(l - 1));
         next == Some(end_line)
     }
 
@@ -1033,12 +1047,6 @@ fn namespace_with_one_child(body: &BodyInfo) -> bool {
     !body.is_begin && body.children.first().is_some_and(|c| c.is_constant_def)
 }
 
-/// EHK's missing `on_itblock` alias: skip blocks whose parameter is `it`.
-fn is_it_parameters(parameters: &Option<Node<'_>>) -> bool {
-    parameters
-        .as_ref()
-        .is_some_and(|p| p.as_it_parameters_node().is_some())
-}
 
 fn extra_msg(kind: &str, loc: &str) -> String {
     format!("Extra empty line detected at {kind} body {loc}.")
@@ -1466,11 +1474,11 @@ mod tests {
 
     // EHK in blocks (incl. numbered) but not it-blocks.
     #[test]
-    fn ehk_blocks_and_itblock_quirk() {
+    fn ehk_blocks_numbered_and_it() {
         let got = run("foo do\n  f(_1)\n\nrescue\n  y\nend\n", default_cfg());
         assert_eq!(got.exception_keywords.len(), 1);
         let got = run("foo do\n  f(it)\n\nrescue\n  y\nend\n", default_cfg());
-        assert!(got.exception_keywords.is_empty());
+        assert_eq!(got.exception_keywords.len(), 1);
         let got = run("-> do\n  x\n\nrescue\n  y\nend\n", default_cfg());
         assert_eq!(got.exception_keywords.len(), 1);
     }
