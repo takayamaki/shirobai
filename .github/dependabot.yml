@@ -10,12 +10,19 @@
 # The root entry also watches prism (see the comment there).
 # The plugin directories also see rubocop through the path gem,
 # and allowing it there would open duplicate PRs against shirobai.gemspec.
+#
+# The bundler and cargo entries wait 1 day after a release.
+# Dependabot waits 3 days by default, and that is too late for a tripwire.
+# But 0 days is too soon: CI runs the new gem as soon as the PR opens,
+# and a hijacked release is usually found and pulled within a day.
 version: 2
 updates:
   - package-ecosystem: bundler
     directory: "/"
     schedule:
       interval: daily
+    cooldown:
+      default-days: 1
     allow:
       - dependency-name: "rubocop"
       # The Rust side must parse with the same prism as stock RuboCop.
@@ -36,6 +43,8 @@ updates:
     directory: "/"
     schedule:
       interval: daily
+    cooldown:
+      default-days: 1
     allow:
       - dependency-name: "ruby-prism"
       - dependency-name: "ruby-prism-sys"
@@ -51,6 +60,8 @@ updates:
     directory: "/gems/shirobai-performance"
     schedule:
       interval: daily
+    cooldown:
+      default-days: 1
     allow:
       - dependency-name: "rubocop-performance"
 
@@ -58,6 +69,8 @@ updates:
     directory: "/gems/shirobai-rails"
     schedule:
       interval: daily
+    cooldown:
+      default-days: 1
     allow:
       - dependency-name: "rubocop-rails"
 
@@ -65,6 +78,8 @@ updates:
     directory: "/gems/shirobai-rspec"
     schedule:
       interval: daily
+    cooldown:
+      default-days: 1
     allow:
       - dependency-name: "rubocop-rspec"
 
