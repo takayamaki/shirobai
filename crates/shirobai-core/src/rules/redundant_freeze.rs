@@ -174,10 +174,7 @@ impl<'s> RedundantFreezeVisitor<'s> {
             return true;
         }
         // `target_ruby_version >= 3.0 && node.type?(:regexp, :range)`.
-        if self.target_ruby_30_plus && is_regexp_or_range(stripped) {
-            return true;
-        }
-        false
+        self.target_ruby_30_plus && is_regexp_or_range(stripped)
     }
 
     /// `frozen_string_literal?(node)` candidate check (the "is this a string
@@ -301,10 +298,7 @@ impl RedundantFreezeVisitor<'_> {
         }
         // Arm 3: `(send _ {:== :=== :!= :<= :>= :< :>} _)` — one argument, any
         // receiver.
-        if args.len() == 1 && is_comparison_op(name) {
-            return true;
-        }
-        false
+        args.len() == 1 && is_comparison_op(name)
     }
 }
 
