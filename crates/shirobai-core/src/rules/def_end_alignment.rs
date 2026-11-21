@@ -22,12 +22,11 @@
 //!
 //! The autocorrect column (`AlignmentCorrector#align_end`) comes from a
 //! separate anchor: under `def` style always the def keyword; under
-//! `start_of_line` the def keyword *unless the def node's parent is a send*, in
-//! which case the parent send's column. This makes the message's align range
-//! and the corrected column diverge for chained modifiers (message names the
-//! outermost send's line range, column is the innermost send's) and for a def
-//! that is a call argument with a receiver (`obj.foo def bar`: message names
-//! the `def`, column is the enclosing call's `0`).
+//! `start_of_line` the outermost send of the def's modifier chain
+//! (`outermost_def_modifier`, 1.92.3, rubocop#16251), or the def keyword when
+//! the def is not under a modifier. Before 1.92.3 it was the def's *parent*
+//! send, which split the message and the corrected column for chained
+//! modifiers and for a def argument of a call with a receiver.
 //!
 //! Reconstructed over Prism in one ancestor-stack walk; each definition's `end`
 //! is checked once, in stock's callback order, with a `handled` set standing in
@@ -90,7 +89,6 @@ pub(crate) fn build_rule(source: &[u8], config: Config) -> Visitor<'_> {
         style: config.style,
         records: Vec::new(),
         handled: HashSet::new(),
-        ancestors: Vec::new(),
     }
 }
 
@@ -102,16 +100,6 @@ pub(crate) struct Visitor<'a> {
     /// Start offsets of definitions already checked through the modifier
     /// (`on_send`) path (`ignore_node`); their own `on_def` callback is a no-op.
     handled: HashSet<usize>,
-    /// Start offset of each open ancestor node (top = parent of the entering
-    /// node). Used to test whether a definition's parent is a send.
-    ancestors: Vec<AncestorFrame>,
-}
-
-/// An open ancestor frame: its start offset and whether it is a `CallNode`.
-#[derive(Clone, Copy)]
-struct AncestorFrame {
-    start: usize,
-    is_send: bool,
 }
 
 /// A resolved alignment range: a source range whose `column` / `line` the
@@ -213,30 +201,19 @@ impl<'a> Visitor<'a> {
 
 // --- Modifier (`def_modifier?`) resolution. ---
 
-/// Follow a `def_modifier?` chain: a send with no receiver whose sole argument
-/// is a `def`/`defs` node or another such modifier send. Returns the innermost
-/// `DefNode` reached together with the start offset of its *immediate* parent
-/// send (the def node's AST parent, used as the autocorrect anchor), or `None`
-/// if `node` is not a def modifier.
-fn def_modifier_target<'pr>(node: &Node<'pr>) -> Option<(ruby_prism::DefNode<'pr>, usize)> {
+/// rubocop-ast `def_modifier`: a send with no receiver whose *first*
+/// argument (`node.children[2]`) is a `def`/`defs` node or another such
+/// modifier send. Other arguments, a block argument and a block do not
+/// matter. Returns the `DefNode` reached, or `None` if `node` is not a def
+/// modifier.
+fn def_modifier_target<'pr>(node: &Node<'pr>) -> Option<ruby_prism::DefNode<'pr>> {
     let call = node.as_call_node()?;
     if call.receiver().is_some() {
         return None;
     }
-    // The sole argument (`node.children[2]`): exactly one positional argument,
-    // no block argument.
-    let args = call.arguments()?;
-    let mut it = args.arguments().iter();
-    let first = it.next()?;
-    if it.next().is_some() {
-        return None;
-    }
-    if call.block().is_some() {
-        return None;
-    }
+    let first = call.arguments()?.arguments().iter().next()?;
     if let Some(def) = first.as_def_node() {
-        // This send is the def's immediate parent.
-        return Some((def, node.location().start_offset()));
+        return Some(def);
     }
     def_modifier_target(&first)
 }
@@ -250,35 +227,13 @@ impl<'a> Visitor<'a> {
         Some((kw_start, kw_end, end_start, end_end))
     }
 
-    /// `autocorrect`'s alignment anchor column. Under `def` style, the def
-    /// keyword. Under `start_of_line`, the def node's parent send's column when
-    /// that parent is a send, otherwise the def keyword (`align_end` aligns to
-    /// `node` itself, whose column is the `def` keyword column).
-    ///
-    /// `parent_send` is the start offset of the def node's AST parent when that
-    /// parent is a `send`, else `None`.
-    fn align_column_anchor(&self, parent_send: Option<usize>, kw_start: usize) -> usize {
-        if self.style == STYLE_DEF {
-            return self.column(kw_start);
-        }
-        match parent_send {
-            Some(send_start) => self.column(send_start),
-            None => self.column(kw_start),
-        }
-    }
-
-    /// The def node's AST parent send start (for the bare `on_def` path), read
-    /// from the ancestor stack: `check_bare_def` runs in `enter_node` before the
-    /// def's own frame is pushed, so the top of the stack is the def's parent.
-    fn bare_parent_send(&self) -> Option<usize> {
-        match self.ancestors.last() {
-            Some(frame) if frame.is_send => Some(frame.start),
-            _ => None,
-        }
-    }
-
     /// `on_def` / `on_defs`: `check_end_kw_in_node` checks the single configured
     /// style against the def keyword.
+    ///
+    /// The autocorrect anchor is the def keyword under both styles: a def
+    /// that reaches this path under a modifier chain is single-line (the
+    /// modifier path skipped it), and a single-line def's `end` never begins
+    /// its line, so it is never an offense.
     fn check_bare_def(&mut self, def_start: usize, d: &ruby_prism::DefNode<'_>) {
         if self.handled.contains(&def_start) {
             return;
@@ -290,7 +245,7 @@ impl<'a> Visitor<'a> {
             start: kw_start,
             end: kw_end,
         };
-        let anchor = self.align_column_anchor(self.bare_parent_send(), kw_start);
+        let anchor = self.column(kw_start);
         // `{ style => node.loc.keyword }`: only the configured style is present.
         self.check(end_start, end_end, &[(self.style, kw)], anchor);
     }
@@ -298,15 +253,11 @@ impl<'a> Visitor<'a> {
     /// `on_send` for a `def_modifier?` send: check the inner def against both
     /// styles (`def` = the def keyword, `start_of_line` = the send-start to
     /// def-keyword-end range), then mark the def handled. `send_start` is the
-    /// *outermost* enclosing send (the firing callback, used for the message's
-    /// `start_of_line` range); `parent_send_start` is the def's *immediate*
-    /// parent send (the autocorrect anchor) — they differ for chained modifiers.
-    fn check_modifier(
-        &mut self,
-        send_start: usize,
-        parent_send_start: usize,
-        d: &ruby_prism::DefNode<'_>,
-    ) {
+    /// *outermost* enclosing send (the firing callback). It is used for the
+    /// message's `start_of_line` range and, under `start_of_line`, as the
+    /// autocorrect anchor: the outermost send whose `def_modifier` is this
+    /// def (`outermost_def_modifier`) is exactly the send that fires first.
+    fn check_modifier(&mut self, send_start: usize, d: &ruby_prism::DefNode<'_>) {
         let def_start = d.location().start_offset();
         if self.handled.contains(&def_start) {
             return;
@@ -333,7 +284,11 @@ impl<'a> Visitor<'a> {
             start: send_start,
             end: kw_end,
         };
-        let anchor = self.align_column_anchor(Some(parent_send_start), kw_start);
+        let anchor = if self.style == STYLE_DEF {
+            self.column(kw_start)
+        } else {
+            self.column(send_start)
+        };
         // `align_with = { def: ..., start_of_line: ... }` (insertion order).
         self.check(
             end_start,
@@ -346,9 +301,9 @@ impl<'a> Visitor<'a> {
 
     fn enter_node(&mut self, node: &Node<'_>) {
         // 1. A `def_modifier?` send checks (and ignores) its inner def first.
-        if let Some((def, parent_send_start)) = def_modifier_target(node) {
+        if let Some(def) = def_modifier_target(node) {
             let send_start = node.location().start_offset();
-            self.check_modifier(send_start, parent_send_start, &def);
+            self.check_modifier(send_start, &def);
             return;
         }
         // 2. A bare `def` / `defs` checks itself (unless already ignored).
@@ -361,15 +316,9 @@ impl<'a> Visitor<'a> {
 impl super::dispatch::Rule for Visitor<'_> {
     fn enter(&mut self, node: &Node<'_>) {
         self.enter_node(node);
-        self.ancestors.push(AncestorFrame {
-            start: node.location().start_offset(),
-            is_send: node.as_call_node().is_some(),
-        });
     }
 
-    fn leave(&mut self) {
-        self.ancestors.pop();
-    }
+    fn leave(&mut self) {}
 }
 
 #[cfg(test)]
@@ -443,10 +392,9 @@ mod tests {
     }
 
     #[test]
-    fn modifier_chained_diverges() {
-        // `private module_function def foo` start_of_line: message names the
-        // outer send (col 0), but the autocorrect column is the inner send's
-        // (col 8, the def node's immediate parent).
+    fn modifier_chained_aligns_to_outermost() {
+        // `private module_function def foo` start_of_line: the message and
+        // (since 1.92.3) the autocorrect column both use the outer send.
         let r = run(
             "private module_function def foo\n  end\n",
             STYLE_START_OF_LINE,
@@ -456,19 +404,30 @@ mod tests {
         assert!(o
             .message
             .contains("`private module_function def` at 1, 0"));
-        assert_eq!(o.align_column, 8);
+        assert_eq!(o.align_column, 0);
     }
 
     #[test]
     fn def_as_call_argument_with_receiver() {
-        // `obj.foo def bar` is not a modifier (receiver present); on_def fires,
-        // message names the def (col 8), but start_of_line aligns to the parent
-        // call (col 0).
+        // `obj.foo def bar` is not a modifier (receiver present); on_def fires
+        // and both the message and the autocorrect use the def (col 8).
         let r = run("obj.foo def bar\n      end\n", STYLE_START_OF_LINE);
         assert_eq!(r.len(), 1);
         let o = r[0].offense.as_ref().unwrap();
         assert!(o.message.contains("`def` at 1, 8"));
-        assert_eq!(o.align_column, 0);
+        assert_eq!(o.align_column, 8);
+    }
+
+    #[test]
+    fn modifier_uses_first_argument_only() {
+        // rubocop-ast `def_modifier` looks at the first argument only.
+        let r = run("foo def bar\n  end, 1\n", STYLE_START_OF_LINE);
+        let o = r[0].offense.as_ref().unwrap();
+        assert!(o.message.contains("`foo def` at 1, 0"));
+        let r = run("foo(bar, def baz\nend)\n", STYLE_START_OF_LINE);
+        let o = r[0].offense.as_ref().unwrap();
+        assert!(o.message.contains("`def` at 1, 9"));
+        assert_eq!(o.align_column, 9);
     }
 
     #[test]
