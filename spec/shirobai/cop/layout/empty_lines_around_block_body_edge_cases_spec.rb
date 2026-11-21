@@ -100,4 +100,29 @@ RSpec.describe Shirobai::Cop::Layout::EmptyLinesAroundBlockBody, "empty_lines in
     expect_correction_edits_parity(*klasses, source, config)
     expect_autocorrect_parity(*klasses, source, config)
   end
+
+  # 1.92.3 (rubocop#16305): under `empty_lines` no blank line is required at
+  # an end the body shares with the opening (or closing) line. With
+  # `rescue` / `ensure` clauses the parser body ends at the last clause, not
+  # at the block `end`.
+  [
+    "foo do |x| bar\n  baz\nend\n",
+    "foo {\n  bar\n  baz }\n",
+    "foo do\n  a\nrescue\n  b end\n",
+    "foo do\n  a\nrescue Foo,\n  Bar end\n",
+    "foo do\n  a\nrescue => e then end\n",
+    "foo do\n  a\nensure end\n",
+    "foo do\n  a\nensure\n  b\nend\n",
+    "foo do\n  a\nrescue\nelse end\n",
+    "foo do\nrescue\n  a\nend\n",
+    "foo do rescue\n  a\nend\n",
+    "foo do ensure\nend\n",
+    "-> { foo(<<~A) }\n  x\nA\n",
+    "foo { bar(\n  1) }\n"
+  ].each do |src|
+    it "matches stock under empty_lines for #{src.inspect}" do
+      expect_lint_parity(*klasses, src, config, expect_offenses: false)
+      expect_autocorrect_parity(*klasses, src, config)
+    end
+  end
 end
