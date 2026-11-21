@@ -38,14 +38,18 @@ module Shirobai
         def self.badge = RuboCop::Cop::Badge.parse(cop_name)
 
         # Packed args for the bundled run: `[nums, lists]` with
-        # `nums = [EnforcedStyle, EnforcedStyleForEmptyBrackets == 'space']`
-        # and no lists.
+        # `nums = [EnforcedStyle, bits]` and no lists. `bits`: 1 =
+        # `EnforcedStyleForEmptyBrackets == 'space'`, 2 = the enabled
+        # `Layout/MultilineArrayBraceLayout` enforces `new_line` (1.92.3
+        # `closing_bracket_on_new_line_enforced?`).
         def self.bundle_args(config)
           cop_config = config.for_badge(badge)
+          new_line = config.cop_enabled?("Layout/MultilineArrayBraceLayout") &&
+                     config.for_cop("Layout/MultilineArrayBraceLayout")["EnforcedStyle"] == "new_line"
           [
             [
               STYLES.fetch(cop_config["EnforcedStyle"] || "no_space"),
-              cop_config["EnforcedStyleForEmptyBrackets"] == "space" ? 1 : 0
+              (cop_config["EnforcedStyleForEmptyBrackets"] == "space" ? 1 : 0) | (new_line ? 2 : 0)
             ],
             []
           ]
@@ -92,7 +96,7 @@ module Shirobai
           else
             nums, = self.class.bundle_args(config)
             Shirobai.check_space_inside_array_literal_brackets(
-              processed_source.buffer.source, nums[0], nums[1] == 1
+              processed_source.buffer.source, nums[0], nums[1]
             )
           end
         end

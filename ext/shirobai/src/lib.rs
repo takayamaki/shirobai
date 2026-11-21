@@ -2694,13 +2694,14 @@ fn map_space_inside_reference_brackets(
 
 /// Ruby entry point for `Layout/SpaceInsideArrayLiteralBrackets` (the bundle
 /// is the usual path). `style` is 0 = no_space, 1 = space, 2 = compact;
-/// `space_empty` is `EnforcedStyleForEmptyBrackets == 'space'`. Returns the
+/// `flags` is the bundle word 97 (1 = `EnforcedStyleForEmptyBrackets ==
+/// 'space'`, 2 = `Layout/MultilineArrayBraceLayout` enforces `new_line`). Returns the
 /// shape documented on `map_space_inside_array_literal_brackets`.
 #[allow(clippy::type_complexity)]
 fn check_space_inside_array_literal_brackets(
     source: RString,
     style: u8,
-    space_empty: bool,
+    flags: u8,
 ) -> (
     Vec<(usize, usize, u8, usize, bool)>,
     Vec<Vec<(u8, usize, usize)>>,
@@ -2712,7 +2713,8 @@ fn check_space_inside_array_literal_brackets(
             2 => sialb::Style::Compact,
             _ => sialb::Style::NoSpace,
         },
-        space_empty,
+        space_empty: flags & 1 != 0,
+        closing_new_line: flags & 2 != 0,
     };
     map_space_inside_array_literal_brackets(sialb::check_space_inside_array_literal_brackets(
         bytes(&source),

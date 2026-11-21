@@ -160,7 +160,7 @@ pub fn check_multiline_bundle(
 /// | 94  | space_inside_hash_literal_braces style (`EnforcedStyle`: 0 space, 1 no_space, 2 compact) |
 /// | 95  | space_inside_hash_literal_braces empty no_space (`EnforcedStyleForEmptyBraces == 'no_space'`) |
 /// | 96  | space_inside_array_literal_brackets style (`EnforcedStyle`: 0 no_space, 1 space, 2 compact) |
-/// | 97  | space_inside_array_literal_brackets empty space (`EnforcedStyleForEmptyBrackets == 'space'`) |
+/// | 97  | space_inside_array_literal_brackets bits: 1 = empty space (`EnforcedStyleForEmptyBrackets == 'space'`), 2 = enabled `Layout/MultilineArrayBraceLayout` `EnforcedStyle == 'new_line'` |
 ///
 /// | 98  | if_unless_modifier_max (`Style/IfUnlessModifier`'s view of `Layout/LineLength` `Max`; `-1` when that cop is disabled) |
 /// | 99  | if_unless_modifier_tab_width (`LineLengthHelp#tab_indentation_width` for this cop) |
@@ -950,7 +950,8 @@ impl BundleConfig {
                     2 => space_inside_array_literal_brackets::Style::Compact,
                     _ => space_inside_array_literal_brackets::Style::NoSpace,
                 },
-                space_empty: nums[97] != 0,
+                space_empty: nums[97] & 1 != 0,
+                closing_new_line: nums[97] & 2 != 0,
             },
             if_unless_modifier: if_unless_modifier::Config {
                 max_line_length: if nums[98] < 0 { None } else { Some(nums[98]) },
