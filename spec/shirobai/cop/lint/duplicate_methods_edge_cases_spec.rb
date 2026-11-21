@@ -281,5 +281,42 @@ RSpec.describe Shirobai::Cop::Lint::DuplicateMethods do
                          "class A\n  delegate :foo, to: 'bar', prefix: true\n  def bar_foo; end\nend\n",
                          as_config)
     end
+
+    # 1.92.3 `hash_value` skips non-symbol keys (rubocop#16280); before, a
+    # send key raised NoMethodError.
+    it "skips a send key when it looks up the prefix" do
+      expect_lint_parity(*klasses,
+                         "class A\n  delegate :foo, to: :bar, key => 1\n  def foo; end\nend\n",
+                         as_config)
+    end
+
+    it "does not take a string prefix key as prefix:" do
+      expect_lint_parity(*klasses,
+                         "class A\n  delegate :foo, to: :bar, 'prefix' => true\n  def foo; end\nend\n",
+                         as_config)
+    end
+  end
+
+  # 1.92.3 `inside_condition?` also looks at `case` / `case_match` ancestors
+  # (rubocop#16392), anywhere under them, not only in a branch body.
+  describe "case ancestors" do
+    it "ignores a def in the case subject" do
+      source = "def foo; end\ncase (def foo; end)\nwhen 1 then 2\nend\n"
+      expect_lint_parity(*klasses, source, config, expect_offenses: false)
+      expect(lint_offenses(klasses.first, source, config)).to be_empty
+    end
+
+    it "ignores alias_method and attr defs differently in a case else branch" do
+      expect_lint_parity(*klasses,
+                         "class A\n  def foo; end\n  case x\n  when 1 then 2\n  else\n    " \
+                         "alias_method :foo, :bar\n    attr_reader :foo\n  end\nend\n",
+                         config)
+    end
+
+    it "ignores a def in a pattern guard branch" do
+      source = "def foo; end\ncase x\nin Integer if y\n  def foo; end\nend\n"
+      expect_lint_parity(*klasses, source, config, expect_offenses: false)
+      expect(lint_offenses(klasses.first, source, config)).to be_empty
+    end
   end
 end

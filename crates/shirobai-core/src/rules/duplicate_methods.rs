@@ -1163,6 +1163,9 @@ impl<'s> DuplicateMethodsRule<'s> {
                 frame.kind = Kind::If;
                 frame.bump_if = true;
             }
+            // 1.92.3 `inside_condition?` also looks at `case` and `case_match`
+            // ancestors (rubocop#16392).
+            Node::CaseNode { .. } | Node::CaseMatchNode { .. } => frame.bump_if = true,
             Node::LambdaNode { .. } => {
                 frame.kind = Kind::Lambda;
                 frame.pmn = Pmn::Abort;
