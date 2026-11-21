@@ -146,7 +146,7 @@ pub fn check_multiline_bundle(
 /// | 78  | method_length_max (`Metrics/MethodLength` `Max`, default 10) |
 /// | 79  | method_length_count_comments (`CountComments`) |
 /// | 80  | def_end_alignment style (`Layout/DefEndAlignment` `EnforcedStyleAlignWith`: 0 = start_of_line, 1 = def) |
-/// | 81  | multiline_method_call_brace_layout style (`Layout/MultilineMethodCallBraceLayout` `EnforcedStyle`: 0 = symmetrical, 1 = new_line, 2 = same_line) |
+/// | 81  | multiline_method_call_brace_layout style (`Layout/MultilineMethodCallBraceLayout` `EnforcedStyle`: 0 = symmetrical, 1 = new_line, 2 = same_line), plus 4 when `Lint/HeredocMethodCallPosition` is enabled |
 /// | 82  | access_modifier_indentation style (`Layout/AccessModifierIndentation` `EnforcedStyle`: 0 = indent, 1 = outdent) |
 /// | 83  | access_modifier_indentation indentation_width (`Layout/AccessModifierIndentation` `IndentationWidth` override, falling back to `Layout/IndentationWidth` `Width`) |
 /// | 84  | assignment_indentation indentation_width (`Layout/AssignmentIndentation` `IndentationWidth` falling back to `Layout/IndentationWidth.Width` falling back to 2) |

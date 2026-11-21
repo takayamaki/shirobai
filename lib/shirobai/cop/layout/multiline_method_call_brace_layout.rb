@@ -46,10 +46,14 @@ module Shirobai
         # Packed args for the bundled run: `[[style], []]`. Unknown styles
         # default to symmetrical (0); stock raises `Unknown EnforcedStyle` lazily
         # from `ConfigurableEnforcedStyle#style`, so we surface the same error
-        # before the bundle run if the configured value is invalid.
+        # before the bundle run if the configured value is invalid. Bit 4 (1.92.3)
+        # says `Lint/HeredocMethodCallPosition` is enabled
+        # (`heredoc_method_call_to_be_repositioned?`).
         def self.bundle_args(config)
           cop_config = config.for_badge(badge)
-          [[STYLES.fetch(cop_config["EnforcedStyle"] || "symmetrical", 0)], []]
+          style = STYLES.fetch(cop_config["EnforcedStyle"] || "symmetrical", 0)
+          heredoc_call = config.cop_enabled?("Lint/HeredocMethodCallPosition") ? 4 : 0
+          [[style | heredoc_call], []]
         end
 
         def on_new_investigation
