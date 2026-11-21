@@ -464,10 +464,9 @@ fn heredoc_end_offset(node: &Node<'_>) -> Option<usize> {
         (s.opening_loc()?, s.closing_loc()?)
     } else if let Some(s) = node.as_x_string_node() {
         (s.opening_loc(), s.closing_loc())
-    } else if let Some(s) = node.as_interpolated_x_string_node() {
-        (s.opening_loc(), s.closing_loc())
     } else {
-        return None;
+        let s = node.as_interpolated_x_string_node()?;
+        (s.opening_loc(), s.closing_loc())
     };
     if !open.as_slice().starts_with(b"<<") {
         return None;
