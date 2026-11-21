@@ -3,10 +3,11 @@
 //! Stock's `on_new_investigation`
 //! (`vendor/rubocop/lib/rubocop/cop/layout/initial_indentation.rb`):
 //!
-//! 1. `first_token = processed_source.tokens.find { |t| !t.text.start_with?('#') }`
-//!    — the first token that is not a `#` LINE comment. `=begin`/`=end` block
-//!    comments start with `=`, so they are NOT skipped and become the first
-//!    token themselves (always at column 0).
+//! 1. `first_token = processed_source.tokens.find { |t| !t.comment? }` — the
+//!    first token that is not a comment. Since 1.92.3 (rubocop#16249) this
+//!    skips `=begin`/`=end` block comments too; before, it skipped tokens
+//!    whose text starts with `#`, which also skipped a string token like
+//!    `"#x"` and kept a block comment as the first token.
 //! 2. `return unless first_token` (a `__END__`-only or empty file has none).
 //! 3. `return if first_token.column.zero?`.
 //! 4. `range_with_surrounding_space(first_token.pos, side: :left, newlines: false)`
@@ -71,6 +72,17 @@ pub fn check_initial_indentation(source: &[u8]) -> bool {
                     pos += 1;
                 }
             }
+            b'=' if pos == line_start && is_embdoc_line(source, pos, b"=begin") => {
+                // A `=begin` ... `=end` block comment (only at the start of a
+                // line) is skipped like a `#` comment. Skip up to the end of
+                // the `=end` line; an unterminated one is a syntax error, and
+                // reporting `true` there only over-reports.
+                let Some(after) = skip_embdoc(source, pos) else {
+                    return true;
+                };
+                pos = after;
+                line_start = pos;
+            }
             b'\\' if source.get(pos + 1) == Some(&b'\n') => {
                 // `\`-newline continuation produces no token.
                 pos += 2;
@@ -87,6 +99,33 @@ pub fn check_initial_indentation(source: &[u8]) -> bool {
                 // preceded by indentation on its line.
                 return pos > line_start;
             }
+        }
+    }
+}
+
+/// `source[pos..]` starts with `marker` (`=begin` / `=end`) followed by
+/// whitespace or the end of the source (Ruby's embdoc rule).
+fn is_embdoc_line(source: &[u8], pos: usize, marker: &[u8]) -> bool {
+    source[pos..].starts_with(marker)
+        && source
+            .get(pos + marker.len())
+            .is_none_or(|b| b.is_ascii_whitespace())
+}
+
+/// Skip a `=begin` block comment starting at `pos`. Returns the offset just
+/// after the newline of its `=end` line (or the end of the source), or
+/// `None` when no `=end` line closes it.
+fn skip_embdoc(source: &[u8], pos: usize) -> Option<usize> {
+    let mut line = pos;
+    loop {
+        line += source[line..].iter().position(|&b| b == b'\n')? + 1;
+        if is_embdoc_line(source, line, b"=end") {
+            return Some(
+                source[line..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .map_or(source.len(), |i| line + i + 1),
+            );
         }
     }
 }
@@ -124,11 +163,15 @@ mod tests {
         assert!(!run("# comment\nx = 1\n"));
     }
 
-    // A `=begin`/`=end` block comment is the first token itself (column 0), so
-    // indented code AFTER it is never reached: no offense.
+    // A `=begin`/`=end` block comment is skipped like a `#` comment (1.92.3),
+    // so indented code after it offends.
     #[test]
     fn block_comment_then_indented_code() {
-        assert!(!run("=begin\nhi\n=end\n  code\n"));
+        assert!(run("=begin\nhi\n=end\n  code\n"));
+        assert!(!run("=begin\nhi\n=end\ncode\n"));
+        assert!(run("=begin x\n  =end\n=end y\n  code\n"));
+        assert!(!run("=begin\n=end\n"));
+        assert!(!run("=begin\n=end"));
     }
 
     // Empty / comment-only / `__END__`-only files have no token: no offense.

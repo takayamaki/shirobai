@@ -11,9 +11,8 @@ require "spec_helper"
 # fire) exactly where stock does across the first-token shapes the gate must
 # get right:
 #
-# - a `#` line comment is skipped, but a `=begin`/`=end` block comment is the
-#   first token itself (always column 0), so indented code after a block
-#   comment is NEVER reached — no offense;
+# - `#` line comments and (since 1.92.3) `=begin`/`=end` block comments are
+#   skipped, so indented code after either is flagged;
 # - the first token can be an identifier / keyword / ivar / cvar / gvar /
 #   constant / `::` / string / symbol / number / `->` / `%w[` / heredoc opener
 #   / `(`; the gate must detect indentation regardless of the token shape;
@@ -64,13 +63,34 @@ RSpec.describe Shirobai::Cop::Layout::InitialIndentation do
     it "flags indented code after an indented `#` comment, keeping the comment" do
       expect_autocorrect_parity(*klasses, "   # comment\n   x = 1\n", config)
     end
+
+    # Up to 1.92.2 stock kept a `=begin`/`=end` block comment as the first
+    # token (column 0), so indented code after it was not flagged. 1.92.3
+    # (rubocop#16249) skips every comment token, so it is flagged now.
+    it "flags indented code after a `=begin`/`=end` block comment" do
+      source = "=begin\nhi\n=end\n  code\n"
+      expect_lint_parity(*klasses, source, config)
+      expect(expect_autocorrect_parity(*klasses, source, config))
+        .to eq("=begin\nhi\n=end\ncode\n")
+    end
+
+    it "flags indented code after a block comment and `#` comments" do
+      source = "# a\n=begin x\n  =end\n=end y\n  # b\n\n  code\n"
+      expect_lint_parity(*klasses, source, config)
+      expect_autocorrect_parity(*klasses, source, config)
+    end
+
+    it "flags an indented string whose value starts with `#`" do
+      expect_lint_parity(*klasses, "  \"#x\"\n", config)
+      expect_lint_parity(*klasses, "  %w[#a b]\n", config)
+      expect_autocorrect_parity(*klasses, "  \"#x\"\n", config)
+    end
   end
 
   describe "cases that must NOT offend" do
-    it "does not flag a `=begin`/`=end` block comment followed by indented code" do
-      source = "=begin\nhi\n=end\n  code\n"
+    it "does not flag column-0 code after a `=begin`/`=end` block comment" do
+      source = "=begin\nhi\n=end\ncode\n"
       expect_lint_parity(*klasses, source, config, expect_offenses: false)
-      expect(lint_offenses(klasses.first, source, config)).to be_empty
     end
 
     it "does not flag a column-0 start after blank lines" do
