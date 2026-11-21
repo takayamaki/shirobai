@@ -11,9 +11,9 @@
 //!   `bare_access_modifier?` — a `(send nil? {:public :protected :private
 //!   :module_function})` with no arguments — and skips ones on the same line
 //!   as the class/module/block header (`same_line?(node, modifier)`).
-//! - For each, `column_offset_between(modifier.source_range, node.loc.end)`
-//!   gives the modifier's column relative to the construct's `end` keyword's
-//!   column (in `effective_column` terms — BOM-adjusted). The expected offset
+//! - For each, `column_offset_between(modifier.source_range, base_range)`
+//!   gives the modifier's column relative to `indentation_base_range(node)`:
+//!   the `class` / `module` keyword, or a block's `end` / `}` (1.92.3) (in `effective_column` terms — BOM-adjusted). The expected offset
 //!   is `IndentationWidth` under `indent` style, or `0` under `outdent`.
 //!   `column_delta = expected - actual`. When zero, `correct_style_detected`;
 //!   otherwise the modifier is flagged and `AlignmentCorrector.correct(...,
@@ -141,9 +141,11 @@ impl<'a> Visitor<'a> {
     }
 
     /// Inspect a class-like / block body. `body` is the prism node a stock
-    /// `node.body` would yield. `end_anchor` is the offset of the construct's
-    /// `end` keyword (or `}` for a brace block / lambda) — `node.loc.end` in
-    /// stock — whose `effective_column` is the alignment reference.
+    /// `node.body` would yield. `end_anchor` is the offset of stock's
+    /// `indentation_base_range` (1.92.3, rubocop#16261): the `class` /
+    /// `module` keyword for class-like nodes, and the `end` / `}` for a block
+    /// or lambda (`node.loc.end`). Its `effective_column` is the alignment
+    /// reference.
     /// `header_line` is the line of the construct's opening (`node`'s start) —
     /// stock's `same_line?(node, modifier)` skips modifiers on it.
     fn check_body(&mut self, body: Option<Node<'_>>, end_anchor: usize, header_line: usize) {
@@ -233,20 +235,20 @@ impl<'a> Visitor<'a> {
 impl<'a> Visitor<'a> {
     fn handle_class(&mut self, n: &ClassNode<'_>) {
         let header_line = self.line_of(n.location().start_offset());
-        let end = n.end_keyword_loc().start_offset();
-        self.check_body(n.body(), end, header_line);
+        let kw = n.class_keyword_loc().start_offset();
+        self.check_body(n.body(), kw, header_line);
     }
 
     fn handle_module(&mut self, n: &ModuleNode<'_>) {
         let header_line = self.line_of(n.location().start_offset());
-        let end = n.end_keyword_loc().start_offset();
-        self.check_body(n.body(), end, header_line);
+        let kw = n.module_keyword_loc().start_offset();
+        self.check_body(n.body(), kw, header_line);
     }
 
     fn handle_sclass(&mut self, n: &SingletonClassNode<'_>) {
         let header_line = self.line_of(n.location().start_offset());
-        let end = n.end_keyword_loc().start_offset();
-        self.check_body(n.body(), end, header_line);
+        let kw = n.class_keyword_loc().start_offset();
+        self.check_body(n.body(), kw, header_line);
     }
 
     fn handle_block(&mut self, n: &BlockNode<'_>) {

@@ -107,4 +107,30 @@ RSpec.describe Shirobai::Cop::Layout::AccessModifierIndentation do
     expect(expect_autocorrect_parity(*klasses, src, config))
       .to eq("class Outer\n\n  class Inner\n\n    private\n\n    def a; end\n  end\n\n  protected\n\n  def test; end\nend\n")
   end
+
+  # 1.92.3 (rubocop#16261): a class / module / sclass measures the modifier
+  # from its keyword (`indentation_base_range`), not from its `end`, so a
+  # misaligned `end` no longer makes the indentation flip-flop. Blocks still
+  # measure from `end` / `}`.
+  {
+    "class after a semicolon" => "x = 1; class A\n  X = 1\n  private\n  def a; end\nend\n",
+    "module with an outdented end" => "  module M\n    X = 1\n    private\n    def a; end\nend\n",
+    "sclass with an indented end" => "class << self\n  X = 1\nprivate\n  def a; end\n  end\n",
+    "class assigned to a variable" => "x = class A\n  X = 1\n  private\n  def a; end\nend\n",
+    "block with an indented end" => "foo do\n  X = 1\n  private\n  def a; end\n  end\n"
+  }.each do |name, src|
+    it "matches stock for a #{name}" do
+      expect_lint_parity(*klasses, src, config, expect_offenses: false)
+      expect_autocorrect_parity(*klasses, src, config)
+      outdent = RuboCop::Config.new(
+        config.to_h.merge(
+          "Layout/AccessModifierIndentation" =>
+            config.to_h["Layout/AccessModifierIndentation"].merge("EnforcedStyle" => "outdent")
+        ),
+        config.loaded_path
+      )
+      expect_lint_parity(*klasses, src, outdent, expect_offenses: false)
+      expect_autocorrect_parity(*klasses, src, outdent)
+    end
+  end
 end
