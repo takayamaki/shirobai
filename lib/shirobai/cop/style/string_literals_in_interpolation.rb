@@ -117,12 +117,25 @@ module Shirobai
         # Applies the autocorrect, mirroring `StringLiteralCorrector.correct`:
         # `single` -> `to_string_literal`, `double` -> `String#inspect`.
         def apply_fix(corrector, range, fix, content)
+          content = source_content(range, content) if fix == FIX_SINGLE || fix == FIX_DOUBLE
           case fix
           when FIX_SINGLE
             corrector.replace(range, to_string_literal(content))
           when FIX_DOUBLE
             corrector.replace(range, content.inspect)
           end
+        end
+
+        # Rust hands over the unescaped content as UTF-8 (invalid bytes become
+        # U+FFFD). In a source with another encoding (a magic comment), stock's
+        # `str_content` keeps that encoding, and `to_string_literal` / `inspect`
+        # (including the 1.92.3 invalid-encoding `inspect`) depend on it, so
+        # read it from the parser node there. UTF-8 sources keep the fast path.
+        def source_content(range, content)
+          return content if processed_source.buffer.source.encoding == Encoding::UTF_8
+
+          node = processed_source.ast&.each_node(:str)&.find { |n| n.source_range == range }
+          node ? node.str_content : content
         end
       end
     end
