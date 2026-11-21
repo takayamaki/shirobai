@@ -15,7 +15,12 @@ pub struct SafeNavChainOffense {
     pub wrap_end: usize,
 }
 
-const COMPARISON_OPERATORS: &[&[u8]] = &[b"==", b"===", b"!=", b"<=>", b"<", b">", b"<=", b">="];
+/// `MethodIdentifierPredicates::OPERATOR_METHODS`.
+const OPERATOR_METHODS: &[&[u8]] = &[
+    b"|", b"^", b"&", b"<=>", b"==", b"===", b"=~", b">", b">=", b"<", b"<=", b"<<", b">>",
+    b"+", b"-", b"*", b"/", b"%", b"**", b"~", b"+@", b"-@", b"!@", b"~@", b"[]", b"[]=", b"!",
+    b"!=", b"!~", b"`",
+];
 
 pub fn check_safe_navigation_chain(
     source: &[u8],
@@ -42,26 +47,84 @@ enum TernaryKind {
     ElseBranch,
 }
 
+type Range = (usize, usize);
+
+fn range_of(node: &Node<'_>) -> Range {
+    let l = node.location();
+    (l.start_offset(), l.end_offset())
+}
+
+fn contains(outer: Option<Range>, inner: Range) -> bool {
+    outer.is_some_and(|(s, e)| s <= inner.0 && inner.1 <= e)
+}
+
 /// The parser-gem-equivalent parent of a node, with the data the cop's parent
-/// predicates need. Structural Prism wrappers (`ArgumentsNode`,
-/// `StatementsNode`, `ElseNode`) are `Transparent` and skipped.
+/// predicates need. Structural Prism wrappers (`ArgumentsNode`, a
+/// one-statement `StatementsNode`, `ElseNode`, `ProgramNode`) are
+/// `Transparent` and skipped.
 enum Frame {
     Transparent,
-    And {
-        left_receiver: Option<(usize, usize)>,
-        right_start: usize,
-        symbolic: bool,
+    /// parser `begin` / `kwbegin` / `rescue` / `ensure`: parentheses,
+    /// interpolation, a body of two or more statements, `begin ... end`.
+    Begin,
+    /// `block` / `numblock` / `itblock` / `when` / `in_pattern` / `class` /
+    /// `module` / `sclass`: only the body is a statement.
+    Body {
+        body: Option<Range>,
     },
-    Or {
-        symbolic: bool,
+    /// `in_pattern`: like `Body`, and its pattern position tells an `if`
+    /// guard apart from an `if` in the body.
+    In {
+        body: Option<Range>,
+        pattern: Range,
     },
-    Ternary {
-        predicate: (usize, usize),
+    While {
+        predicate: Range,
+    },
+    If {
+        ternary: bool,
+        predicate: Range,
         then_start: Option<usize>,
         else_start: Option<usize>,
     },
-    CollectionLiteral,
-    Comparison,
+    Case {
+        predicate: Option<Range>,
+    },
+    Def {
+        endless: bool,
+    },
+    Resbody {
+        body: Option<Range>,
+    },
+    /// A rescue modifier: its expression sits in the parser `rescue` node,
+    /// its rescue value in a modifier `resbody`.
+    RescueMod {
+        expression: Range,
+    },
+    /// parser `for` is not a body parent; only a body of two or more
+    /// statements (a parser `begin`) is a statement.
+    For {
+        multi_body: Option<Range>,
+    },
+    And {
+        semantic: bool,
+        left_receiver: Option<Range>,
+        right_start: usize,
+    },
+    Or {
+        semantic: bool,
+    },
+    /// `argument_taking?`: a non-operator, non-setter send, or
+    /// `yield` / `super` / `return` / `break` / `next`.
+    Args {
+        only_arg: Option<Range>,
+        paren_multiline: bool,
+    },
+    /// An assignment (including a setter send): only its value counts.
+    Assign {
+        own: Range,
+        value: Option<Range>,
+    },
     Opaque,
 }
 
@@ -102,71 +165,224 @@ impl<'a> Visitor<'a> {
         false
     }
 
-    fn is_comparison(call: &CallNode<'_>) -> bool {
-        COMPARISON_OPERATORS.contains(&call.name().as_slice())
+    /// Stack indices of the parser-gem ancestors, nearest first.
+    fn effective(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.stack.len())
+            .rev()
+            .filter(|&i| !matches!(self.stack[i], Frame::Transparent))
     }
 
     /// The parser-gem parent: the nearest stacked frame that is not a structural
     /// Prism wrapper.
     fn effective_parent(&self) -> Option<&Frame> {
-        self.stack
-            .iter()
-            .rev()
-            .find(|f| !matches!(f, Frame::Transparent))
+        self.effective().next().map(|i| &self.stack[i])
+    }
+
+    fn has_newline(&self, start: usize, end: usize) -> bool {
+        self.source[start..end].contains(&b'\n')
+    }
+
+    /// The `Args` frame of a call-like node: the sole parser argument (a
+    /// `&blk` counts as one) and whether it is a multiline parenthesized call.
+    fn args_frame(
+        &self,
+        start: usize,
+        args: Option<ruby_prism::ArgumentsNode<'_>>,
+        block_arg: bool,
+        rparen_end: Option<usize>,
+    ) -> Frame {
+        let list: Vec<Node<'_>> = args.map(|a| a.arguments().iter().collect()).unwrap_or_default();
+        let only_arg = (list.len() == 1 && !block_arg).then(|| range_of(&list[0]));
+        Frame::Args {
+            only_arg,
+            paren_multiline: rparen_end.is_some_and(|e| self.has_newline(start, e)),
+        }
     }
 
     /// Frame describing `node` for its children.
     fn frame_for(&self, node: &Node<'_>) -> Frame {
-        if node.as_arguments_node().is_some()
-            || node.as_statements_node().is_some()
-            || node.as_else_node().is_some()
-        {
-            return Frame::Transparent;
-        }
-        if let Some(a) = node.as_and_node() {
-            let op = a.operator_loc();
-            let left_receiver = a.left().as_call_node().and_then(|c| c.receiver()).map(|r| {
-                let l = r.location();
-                (l.start_offset(), l.end_offset())
-            });
-            return Frame::And {
-                left_receiver,
-                right_start: a.right().location().start_offset(),
-                symbolic: self.text(op.start_offset(), op.end_offset()) == "&&",
-            };
-        }
-        if let Some(o) = node.as_or_node() {
-            let op = o.operator_loc();
-            return Frame::Or {
-                symbolic: self.text(op.start_offset(), op.end_offset()) == "||",
-            };
-        }
-        if let Some(if_node) = node.as_if_node() {
-            if if_node.if_keyword_loc().is_none() {
-                let p = if_node.predicate().location();
-                let then_start = if_node.statements().map(|s| s.location().start_offset());
-                let else_start = if_node
-                    .subsequent()
-                    .and_then(|e| e.as_else_node())
-                    .and_then(|e| e.statements())
-                    .map(|s| s.location().start_offset());
-                return Frame::Ternary {
-                    predicate: (p.start_offset(), p.end_offset()),
-                    then_start,
-                    else_start,
-                };
+        match node {
+            Node::ArgumentsNode { .. } | Node::ElseNode { .. } | Node::ProgramNode { .. } => {
+                Frame::Transparent
             }
-            return Frame::Opaque;
+            Node::StatementsNode { .. } => {
+                if node.as_statements_node().unwrap().body().len() >= 2 {
+                    Frame::Begin
+                } else {
+                    Frame::Transparent
+                }
+            }
+            Node::ParenthesesNode { .. }
+            | Node::EmbeddedStatementsNode { .. }
+            | Node::BeginNode { .. }
+            | Node::EnsureNode { .. } => Frame::Begin,
+            Node::AndNode { .. } => {
+                let a = node.as_and_node().unwrap();
+                let op = a.operator_loc();
+                let left_receiver = a
+                    .left()
+                    .as_call_node()
+                    .and_then(|c| c.receiver())
+                    .map(|r| range_of(&r));
+                Frame::And {
+                    semantic: self.text(op.start_offset(), op.end_offset()) == "and",
+                    left_receiver,
+                    right_start: a.right().location().start_offset(),
+                }
+            }
+            Node::OrNode { .. } => {
+                let op = node.as_or_node().unwrap().operator_loc();
+                Frame::Or {
+                    semantic: self.text(op.start_offset(), op.end_offset()) == "or",
+                }
+            }
+            Node::IfNode { .. } | Node::UnlessNode { .. } => {
+                // `in pattern if guard`: prism nests the pattern in an
+                // `IfNode`/`UnlessNode`; parser has an `if_guard` instead.
+                if let Some(Frame::In { pattern, .. }) = self.stack.last()
+                    && *pattern == range_of(node)
+                {
+                    return Frame::Opaque;
+                }
+                if let Some(if_node) = node.as_if_node() {
+                    let ternary = if_node.if_keyword_loc().is_none();
+                    Frame::If {
+                        ternary,
+                        predicate: range_of(&if_node.predicate()),
+                        then_start: if_node.statements().map(|s| s.location().start_offset()),
+                        else_start: if_node
+                            .subsequent()
+                            .and_then(|e| e.as_else_node())
+                            .and_then(|e| e.statements())
+                            .map(|s| s.location().start_offset()),
+                    }
+                } else {
+                    let unless_node = node.as_unless_node().unwrap();
+                    Frame::If {
+                        ternary: false,
+                        predicate: range_of(&unless_node.predicate()),
+                        then_start: None,
+                        else_start: None,
+                    }
+                }
+            }
+            Node::WhileNode { .. } => Frame::While {
+                predicate: range_of(&node.as_while_node().unwrap().predicate()),
+            },
+            Node::UntilNode { .. } => Frame::While {
+                predicate: range_of(&node.as_until_node().unwrap().predicate()),
+            },
+            Node::CaseNode { .. } => Frame::Case {
+                predicate: node.as_case_node().unwrap().predicate().map(|p| range_of(&p)),
+            },
+            Node::CaseMatchNode { .. } => Frame::Case {
+                predicate: node
+                    .as_case_match_node()
+                    .unwrap()
+                    .predicate()
+                    .map(|p| range_of(&p)),
+            },
+            Node::WhenNode { .. } => Frame::Body {
+                body: node
+                    .as_when_node()
+                    .unwrap()
+                    .statements()
+                    .map(|s| range_of(&s.as_node())),
+            },
+            Node::InNode { .. } => {
+                let in_node = node.as_in_node().unwrap();
+                Frame::In {
+                    body: in_node.statements().map(|s| range_of(&s.as_node())),
+                    pattern: range_of(&in_node.pattern()),
+                }
+            }
+            Node::BlockNode { .. } => Frame::Body {
+                body: node.as_block_node().unwrap().body().map(|b| range_of(&b)),
+            },
+            Node::LambdaNode { .. } => Frame::Body {
+                body: node.as_lambda_node().unwrap().body().map(|b| range_of(&b)),
+            },
+            Node::ClassNode { .. } => Frame::Body {
+                body: node.as_class_node().unwrap().body().map(|b| range_of(&b)),
+            },
+            Node::ModuleNode { .. } => Frame::Body {
+                body: node.as_module_node().unwrap().body().map(|b| range_of(&b)),
+            },
+            Node::SingletonClassNode { .. } => Frame::Body {
+                body: node
+                    .as_singleton_class_node()
+                    .unwrap()
+                    .body()
+                    .map(|b| range_of(&b)),
+            },
+            Node::DefNode { .. } => Frame::Def {
+                endless: node.as_def_node().unwrap().equal_loc().is_some(),
+            },
+            Node::RescueModifierNode { .. } => Frame::RescueMod {
+                expression: range_of(&node.as_rescue_modifier_node().unwrap().expression()),
+            },
+            Node::ForNode { .. } => Frame::For {
+                multi_body: node
+                    .as_for_node()
+                    .unwrap()
+                    .statements()
+                    .filter(|s| s.body().len() >= 2)
+                    .map(|s| range_of(&s.as_node())),
+            },
+            Node::CallNode { .. } => {
+                let c = node.as_call_node().unwrap();
+                let name = c.name().as_slice();
+                if c.equal_loc().is_some() {
+                    let value = c
+                        .arguments()
+                        .and_then(|a| a.arguments().iter().last())
+                        .map(|v| range_of(&v));
+                    return Frame::Assign {
+                        own: range_of(node),
+                        value,
+                    };
+                }
+                if OPERATOR_METHODS.contains(&name) {
+                    return Frame::Opaque;
+                }
+                let block_arg = c.block().is_some_and(|b| b.as_block_argument_node().is_some());
+                let rparen = c
+                    .closing_loc()
+                    .filter(|l| self.text(l.start_offset(), l.end_offset()) == ")")
+                    .map(|l| l.end_offset());
+                self.args_frame(node.location().start_offset(), c.arguments(), block_arg, rparen)
+            }
+            Node::SuperNode { .. } => {
+                let s = node.as_super_node().unwrap();
+                let block_arg = s.block().is_some_and(|b| b.as_block_argument_node().is_some());
+                let rparen = s.rparen_loc().map(|l| l.end_offset());
+                self.args_frame(node.location().start_offset(), s.arguments(), block_arg, rparen)
+            }
+            Node::YieldNode { .. } => {
+                let y = node.as_yield_node().unwrap();
+                let rparen = y.rparen_loc().map(|l| l.end_offset());
+                self.args_frame(node.location().start_offset(), y.arguments(), false, rparen)
+            }
+            Node::ReturnNode { .. } => {
+                let args = node.as_return_node().unwrap().arguments();
+                self.args_frame(0, args, false, None)
+            }
+            Node::BreakNode { .. } => {
+                let args = node.as_break_node().unwrap().arguments();
+                self.args_frame(0, args, false, None)
+            }
+            Node::NextNode { .. } => {
+                let args = node.as_next_node().unwrap().arguments();
+                self.args_frame(0, args, false, None)
+            }
+            _ => match assignment_value(node) {
+                Some(value) => Frame::Assign {
+                    own: range_of(node),
+                    value: Some(range_of(&value)),
+                },
+                None => Frame::Opaque,
+            },
         }
-        if node.as_array_node().is_some() || node.as_assoc_node().is_some() {
-            return Frame::CollectionLiteral;
-        }
-        if let Some(c) = node.as_call_node()
-            && Self::is_comparison(&c)
-        {
-            return Frame::Comparison;
-        }
-        Frame::Opaque
     }
 
     /// `require_safe_navigation?`: suppress the `x&.foo && x.foo` idiom.
@@ -191,7 +407,8 @@ impl<'a> Visitor<'a> {
     /// receiver: the `if` branch is not an offense, the `else` branch is an
     /// offense without a safe correction.
     fn ternary(&self, call: &CallNode<'_>, safe_nav: &Node<'_>) -> TernaryKind {
-        let Some(Frame::Ternary {
+        let Some(Frame::If {
+            ternary: true,
             predicate,
             then_start,
             else_start,
@@ -212,22 +429,64 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    fn require_parentheses(&self, call: &CallNode<'_>, has_dot: bool) -> bool {
-        let parent = self.effective_parent();
-        if !has_dot && matches!(parent, Some(Frame::CollectionLiteral)) {
+    /// 1.92.3 `command_call_allowed?` (rubocop#16406).
+    fn command_call_allowed(&self, node: Range) -> bool {
+        let Some(idx) = self.effective().next() else {
             return true;
+        };
+        if let Frame::Args {
+            only_arg,
+            paren_multiline,
+        } = &self.stack[idx]
+        {
+            return *only_arg == Some(node) && !*paren_multiline && !self.comma_follows(node.1);
         }
-        if !Self::is_comparison(call) {
-            return false;
+        let condition = match &self.stack[idx] {
+            Frame::And { semantic, .. } | Frame::Or { semantic } => *semantic,
+            Frame::If {
+                ternary, predicate, ..
+            } => !*ternary && *predicate == node,
+            Frame::While { predicate } => *predicate == node,
+            Frame::Case { predicate } => *predicate == Some(node),
+            _ => false,
+        };
+        condition || self.statement(node, idx)
+    }
+
+    /// `/\G\s*,/` at `pos`.
+    fn comma_follows(&self, pos: usize) -> bool {
+        self.source[pos..]
+            .iter()
+            .find(|b| !matches!(b, b' ' | b'\t' | b'\n' | b'\x0b' | b'\x0c' | b'\r'))
+            == Some(&b',')
+    }
+
+    /// `statement?(node, parent)` with `parent` at stack index `idx`.
+    fn statement(&self, node: Range, idx: usize) -> bool {
+        match &self.stack[idx] {
+            Frame::Begin => true,
+            Frame::Body { body } | Frame::In { body, .. } | Frame::Resbody { body } => {
+                contains(*body, node)
+            }
+            Frame::While { predicate } => *predicate != node,
+            Frame::If {
+                ternary, predicate, ..
+            } => !*ternary && *predicate != node,
+            Frame::Case { predicate } => *predicate != Some(node),
+            Frame::Def { endless } => !*endless,
+            Frame::RescueMod { expression } => *expression == node,
+            Frame::For { multi_body } => contains(*multi_body, node),
+            Frame::Assign { own, value } => {
+                if *value != Some(node) {
+                    return false;
+                }
+                match self.effective().find(|&i| i < idx) {
+                    Some(grandparent) => self.statement(*own, grandparent),
+                    None => true,
+                }
+            }
+            _ => false,
         }
-        matches!(
-            parent,
-            Some(
-                Frame::And { symbolic: true, .. }
-                    | Frame::Or { symbolic: true }
-                    | Frame::Comparison
-            )
-        )
     }
 
     fn process_call(&mut self, call: &CallNode<'_>) {
@@ -258,6 +517,7 @@ impl<'a> Visitor<'a> {
 
         let dot = call.call_operator_loc();
         let has_dot = dot.is_some();
+        let brackets = method == b"[]" || method == b"[]=";
         let begin = dot
             .map(|d| d.start_offset())
             .unwrap_or_else(|| receiver.location().end_offset());
@@ -269,13 +529,18 @@ impl<'a> Visitor<'a> {
             self.build_replacement(call, method, begin, end)
         };
 
-        let (wrap_start, wrap_end) =
-            if !replacement.is_empty() && self.require_parentheses(call, has_dot) {
-                let loc = call.location();
-                (loc.start_offset(), loc.end_offset())
-            } else {
-                (0, 0)
-            };
+        // 1.92.3 `require_parentheses?`: an operator send without a dot is
+        // wrapped unless its parent allows a command call there.
+        let own = range_of(&call.as_node());
+        let (wrap_start, wrap_end) = if !replacement.is_empty()
+            && !has_dot
+            && !brackets
+            && !self.command_call_allowed(own)
+        {
+            own
+        } else {
+            (0, 0)
+        };
 
         self.offenses.push(SafeNavChainOffense {
             start_offset: begin,
@@ -315,6 +580,50 @@ impl<'a> Visitor<'a> {
     }
 }
 
+/// The value of an assignment node (parser `children.last`), or `None` when
+/// `node` is not an assignment.
+fn assignment_value<'pr>(node: &Node<'pr>) -> Option<Node<'pr>> {
+    macro_rules! value_of {
+        ($($as:ident),* $(,)?) => {
+            $(if let Some(n) = node.$as() { return Some(n.value()); })*
+        };
+    }
+    value_of!(
+        as_local_variable_write_node,
+        as_local_variable_or_write_node,
+        as_local_variable_and_write_node,
+        as_local_variable_operator_write_node,
+        as_instance_variable_write_node,
+        as_instance_variable_or_write_node,
+        as_instance_variable_and_write_node,
+        as_instance_variable_operator_write_node,
+        as_class_variable_write_node,
+        as_class_variable_or_write_node,
+        as_class_variable_and_write_node,
+        as_class_variable_operator_write_node,
+        as_global_variable_write_node,
+        as_global_variable_or_write_node,
+        as_global_variable_and_write_node,
+        as_global_variable_operator_write_node,
+        as_constant_write_node,
+        as_constant_or_write_node,
+        as_constant_and_write_node,
+        as_constant_operator_write_node,
+        as_constant_path_write_node,
+        as_constant_path_or_write_node,
+        as_constant_path_and_write_node,
+        as_constant_path_operator_write_node,
+        as_call_or_write_node,
+        as_call_and_write_node,
+        as_call_operator_write_node,
+        as_index_or_write_node,
+        as_index_and_write_node,
+        as_index_operator_write_node,
+        as_multi_write_node,
+    );
+    None
+}
+
 impl super::dispatch::Rule for Visitor<'_> {
     fn enter(&mut self, node: &Node<'_>) {
         if let Some(call) = node.as_call_node() {
@@ -325,6 +634,20 @@ impl super::dispatch::Rule for Visitor<'_> {
     }
 
     fn leave(&mut self) {
+        self.stack.pop();
+    }
+
+    // `RescueNode` bypasses the branch hooks (see `dispatch`); its parser
+    // `resbody` has only the body as a statement.
+    fn enter_rescue(&mut self, node: &Node<'_>) {
+        let body = node
+            .as_rescue_node()
+            .and_then(|r| r.statements())
+            .map(|s| range_of(&s.as_node()));
+        self.stack.push(Frame::Resbody { body });
+    }
+
+    fn leave_rescue(&mut self) {
         self.stack.pop();
     }
 }
