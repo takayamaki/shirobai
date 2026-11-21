@@ -1120,13 +1120,15 @@ fn map_unreachable_code(
 /// autocorrect `remove` range (matches stock's `corrector.remove(range)`).
 /// `[arg_start, arg_end)` is the first argument's full source range; the
 /// wrapper reads `source[arg_start..arg_end]` for the `MSG` substitution.
+/// `before_ruby30_only` marks a one-line `expr in pat` argument, which stock
+/// reports only for a target Ruby below 3.0.
 fn map_parentheses_as_grouped_expression(
     v: Vec<
         shirobai_core::rules::parentheses_as_grouped_expression::ParenthesesAsGroupedExpressionOffense,
     >,
-) -> Vec<(usize, usize, usize, usize)> {
+) -> Vec<(usize, usize, usize, usize, bool)> {
     v.into_iter()
-        .map(|o| (o.space_start, o.space_end, o.arg_start, o.arg_end))
+        .map(|o| (o.space_start, o.space_end, o.arg_start, o.arg_end, o.before_ruby30_only))
         .collect()
 }
 
