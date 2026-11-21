@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::mem::discriminant;
 
-use ruby_prism::{CallNode, Node, StatementsNode};
+use ruby_prism::{CallNode, Node, StatementsNode, Visit};
 
 /// A void-context offense. The correction is up to one `replace` plus one
 /// `remove` (a range is active when `end > start`), mirroring stock's
@@ -176,6 +176,52 @@ fn has_block_literal(call: &CallNode<'_>) -> bool {
 /// of the parser send node, so it counts.
 fn parser_args_empty(call: &CallNode<'_>) -> bool {
     call.arguments().is_none_or(|a| a.arguments().is_empty()) && call.block().is_none()
+}
+
+/// `node.each_descendant(:begin).any?` over the parser tree. A parser
+/// `begin` comes from parentheses, `#{}` interpolation, and a body of two or
+/// more statements, except the direct body of a plain `begin ... end` (a
+/// `kwbegin` holds its statements itself).
+fn has_parser_begin_descendant(node: &Node<'_>) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'pr> Visit<'pr> for Scan {
+        fn visit_parentheses_node(&mut self, _: &ruby_prism::ParenthesesNode<'pr>) {
+            self.found = true;
+        }
+        fn visit_embedded_statements_node(&mut self, _: &ruby_prism::EmbeddedStatementsNode<'pr>) {
+            self.found = true;
+        }
+        fn visit_statements_node(&mut self, node: &StatementsNode<'pr>) {
+            if self.found {
+                return;
+            }
+            if node.body().len() >= 2 {
+                self.found = true;
+                return;
+            }
+            ruby_prism::visit_statements_node(self, node);
+        }
+        fn visit_begin_node(&mut self, node: &ruby_prism::BeginNode<'pr>) {
+            if self.found {
+                return;
+            }
+            if node.rescue_clause().is_none()
+                && node.else_clause().is_none()
+                && node.ensure_clause().is_none()
+            {
+                for child in node.statements().iter().flat_map(|s| s.body().iter()) {
+                    self.visit(&child);
+                }
+                return;
+            }
+            ruby_prism::visit_begin_node(self, node);
+        }
+    }
+    let mut scan = Scan { found: false };
+    scan.visit(node);
+    scan.found
 }
 
 /// `#global_const?(:Proc)`: `Proc` or `::Proc`.
@@ -367,7 +413,7 @@ impl<'a> Visitor<'a> {
             return;
         }
         let args_empty = parser_args_empty(&call);
-        if binary && call.call_operator_loc().is_some() && args_empty {
+        if !self.operation(&call, args_empty, binary) {
             return;
         }
         let Some(selector) = call.message_loc() else {
@@ -394,6 +440,36 @@ impl<'a> Visitor<'a> {
             (Some((r_s, r_e, "\n".to_string())), remove)
         };
         self.push_offense(sel_s, sel_e, message, replace, remove);
+    }
+
+    /// 1.92.3 `operation?` (rubocop#16290): a send without arguments is an
+    /// operation when it is unary or has no dot. A send with arguments is one
+    /// only with exactly one value argument and no comma between the argument
+    /// and the end of the send; a hash argument counts only with braces.
+    fn operation(&self, call: &CallNode<'_>, args_empty: bool, binary: bool) -> bool {
+        if args_empty {
+            return !binary || call.call_operator_loc().is_none();
+        }
+        // A `&blk` argument is a parser argument too, so it makes two.
+        if call.block().is_some() {
+            return false;
+        }
+        let Some(arguments) = call.arguments() else {
+            return false;
+        };
+        let mut iter = arguments.arguments().iter();
+        let (Some(argument), None) = (iter.next(), iter.next()) else {
+            return false;
+        };
+        let (_, arg_end) = node_range(&argument);
+        let (_, call_end) = node_range(&call.as_node());
+        if self.source[arg_end..call_end].contains(&b',') {
+            return false;
+        }
+        // A braceless hash (`key: v`, `**opts`, `**`), `*args`, `*` and `...`.
+        argument.as_keyword_hash_node().is_none()
+            && argument.as_splat_node().is_none()
+            && argument.as_forwarding_arguments_node().is_none()
     }
 
     /// `check_expression`: conditionals descend into their branch bodies
@@ -499,7 +575,14 @@ impl<'a> Visitor<'a> {
         }
         let (start, end) = node_range(expr);
         let message = format!("Literal `{}` used in void context.", self.lossy(start, end));
-        let remove = self.removal_correction(expr, branch);
+        // 1.92.3 (rubocop#16282): no correction when the literal holds a
+        // parser `begin` (an interpolation, parentheses, a body of two or
+        // more statements).
+        let remove = if has_parser_begin_descendant(expr) {
+            None
+        } else {
+            self.removal_correction(expr, branch)
+        };
         self.push_offense(start, end, message, None, remove);
     }
 
