@@ -167,9 +167,9 @@ pub fn check_multiline_bundle(
 /// | 100 | space_before_block_braces style (`EnforcedStyle`: 0 space, 1 no_space) |
 /// | 101 | space_before_block_braces empty style (`EnforcedStyleForEmptyBraces` resolved: 0 space, 1 no_space, 2 invalid — `nil` follows `EnforcedStyle`) |
 /// | 102 | space_before_block_braces bd_line_count_based (`Style/BlockDelimiters` `EnforcedStyle == 'line_count_based'`) |
-/// | 103 | space_before_comma lcurly_space (`Layout/SpaceBeforeComma`'s view of `Layout/SpaceInsideBlockBraces` `EnforcedStyle == 'space'`) |
+/// | 103 | space_before_comma bits: 1 = lcurly_space (`Layout/SpaceBeforeComma`'s view of `Layout/SpaceInsideBlockBraces` `EnforcedStyle == 'space'`), 2 = lparen_space (its view of enabled `Layout/SpaceInsideParens` `EnforcedStyle` in `space` / `compact`) |
 /// | 104 | space_after_comma rcurly_no_space (`Layout/SpaceAfterComma`'s view of `Layout/SpaceInsideHashLiteralBraces` `EnforcedStyle == 'no_space'`) |
-/// | 105 | space_before_semicolon lcurly_space (`Layout/SpaceBeforeSemicolon`'s view of `Layout/SpaceInsideBlockBraces` `EnforcedStyle == 'space'`) |
+/// | 105 | space_before_semicolon bits: 1 = lcurly_space (`Layout/SpaceBeforeSemicolon`'s view of `Layout/SpaceInsideBlockBraces` `EnforcedStyle == 'space'`), 2 = lparen_space (its view of enabled `Layout/SpaceInsideParens` `EnforcedStyle` in `space` / `compact`) |
 /// | 106 | space_after_semicolon rcurly_no_space (`Layout/SpaceAfterSemicolon`'s view of `Layout/SpaceInsideBlockBraces` `EnforcedStyle == 'no_space'`) |
 /// | 107 | space_inside_parens style (`EnforcedStyle`: 0 no_space, 1 space, 2 compact) |
 /// | 108 | space_inside_reference_brackets style (`EnforcedStyle`: 0 no_space, 1 space) |
@@ -971,9 +971,11 @@ impl BundleConfig {
                 bd_line_count_based: nums[102] != 0,
             },
             punctuation_spacing: punctuation_spacing::Config {
-                before_comma_lcurly_space: nums[103] != 0,
+                before_comma_lcurly_space: nums[103] & 1 != 0,
+                before_comma_lparen_space: nums[103] & 2 != 0,
                 after_comma_rcurly_no_space: nums[104] != 0,
-                before_semi_lcurly_space: nums[105] != 0,
+                before_semi_lcurly_space: nums[105] & 1 != 0,
+                before_semi_lparen_space: nums[105] & 2 != 0,
                 after_semi_rcurly_no_space: nums[106] != 0,
             },
             space_inside_parens: space_inside_parens::Config {

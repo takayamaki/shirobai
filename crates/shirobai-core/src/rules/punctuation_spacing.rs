@@ -59,6 +59,12 @@ pub struct Config {
     pub before_comma_lcurly_space: bool,
     /// `SpaceBeforeSemicolon`'s `space_required_after_lcurly?`.
     pub before_semi_lcurly_space: bool,
+    /// `SpaceBeforeComma`'s `space_required_after_lparen?` (1.92.3): the
+    /// enabled `Layout/SpaceInsideParens` `EnforcedStyle` is `space` or
+    /// `compact`.
+    pub before_comma_lparen_space: bool,
+    /// `SpaceBeforeSemicolon`'s `space_required_after_lparen?`.
+    pub before_semi_lparen_space: bool,
     /// `SpaceAfterComma`'s `space_forbidden_before_rcurly?`
     /// (`Layout/SpaceInsideHashLiteralBraces` `EnforcedStyle` == `no_space`).
     pub after_comma_rcurly_no_space: bool,
@@ -173,16 +179,20 @@ impl<'a> Visitor<'a> {
                 continue;
             }
             let comma = b == b',';
-            if let Some(range) = before_offense(
-                source,
-                p,
-                &lcurly_opens,
-                if comma {
-                    config.before_comma_lcurly_space
-                } else {
-                    config.before_semi_lcurly_space
-                },
-            ) {
+            let (lcurly_space, lparen_space) = if comma {
+                (
+                    config.before_comma_lcurly_space,
+                    config.before_comma_lparen_space,
+                )
+            } else {
+                (
+                    config.before_semi_lcurly_space,
+                    config.before_semi_lparen_space,
+                )
+            };
+            if let Some(range) = before_offense(source, p, &lcurly_opens, lcurly_space)
+                && !(lparen_space && after_left_paren(source, range.0, &masks))
+            {
                 if comma {
                     out.space_before_comma.push(range);
                 } else {
@@ -272,6 +282,76 @@ fn before_offense(
         return None;
     }
     Some((q, p))
+}
+
+/// `space_required_after?`'s `left_parens?` arm (1.92.3): the previous token,
+/// ending at `q`, is a `tLPAREN` / `tLPAREN2` `(`. A `(` byte inside an opaque
+/// region (`?(`, a `%w(` opening) is not a paren token, and a `tLPAREN_ARG`
+/// (`foo (`) is not `left_parens?`.
+fn after_left_paren(source: &[u8], q: usize, masks: &[(usize, usize)]) -> bool {
+    let open = q - 1;
+    if source[open] != b'(' {
+        return false;
+    }
+    let i = masks.partition_point(|m| m.1 <= open);
+    if masks.get(i).is_some_and(|m| m.0 <= open) {
+        return false;
+    }
+    !lparen_arg(source, open)
+}
+
+/// Reserved words after which a spaced `(` lexes as `tLPAREN` (probed on the
+/// parser gem). `defined?`, `not`, `super` and `yield` are left out: they
+/// take a `tLPAREN_ARG` like a method name.
+const LPAREN_KEYWORDS: &[&[u8]] = &[
+    b"__ENCODING__", b"__LINE__", b"__FILE__", b"BEGIN", b"END", b"alias", b"and", b"begin",
+    b"break", b"case", b"class", b"def", b"do", b"else", b"elsif", b"end", b"ensure", b"false",
+    b"for", b"if", b"in", b"module", b"next", b"nil", b"or", b"redo", b"rescue", b"retry",
+    b"return", b"self", b"then", b"true", b"undef", b"unless", b"until", b"when", b"while",
+];
+
+fn ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b >= 0x80
+}
+
+/// Whether the `(` at `open` lexes as `tLPAREN_ARG`: whitespace (spaces,
+/// tabs or a `\`-newline) separates it from a preceding method name or a
+/// local variable, as in `foo (`, `a.b (`, `Foo (` or `yield (` (probed on the
+/// parser gem).
+fn lparen_arg(source: &[u8], open: usize) -> bool {
+    let skip_space = |mut i: usize| loop {
+        if i > 0 && matches!(source[i - 1], b' ' | b'\t') {
+            i -= 1;
+        } else if i > 1 && source[i - 1] == b'\n' && source[i - 2] == b'\\' {
+            i -= 2;
+        } else {
+            return i;
+        }
+    };
+    let end = skip_space(open);
+    if end == open || end == 0 {
+        return false;
+    }
+    let mut word_end = end;
+    if matches!(source[end - 1], b'?' | b'!') {
+        word_end -= 1;
+    }
+    let mut start = word_end;
+    while start > 0 && ident_byte(source[start - 1]) {
+        start -= 1;
+    }
+    if start == word_end || source[start].is_ascii_digit() {
+        return false;
+    }
+    if start > 0 && matches!(source[start - 1], b'@' | b'$' | b':') {
+        // `@a (` / `$a (` / `:a (` do not parse; `::a (` is a method name.
+        return start > 1 && source[start - 1] == b':' && source[start - 2] == b':';
+    }
+    let before = skip_space(start);
+    if before > 0 && source[before - 1] == b'.' {
+        return true;
+    }
+    !LPAREN_KEYWORDS.contains(&&source[start..end])
 }
 
 /// `SpaceAfterPunctuation#each_missing_space` for the punctuation at `p`:
@@ -414,6 +494,8 @@ mod tests {
         Config {
             before_comma_lcurly_space: true,
             before_semi_lcurly_space: true,
+            before_comma_lparen_space: false,
+            before_semi_lparen_space: false,
             after_comma_rcurly_no_space: false,
             after_semi_rcurly_no_space: false,
         }
