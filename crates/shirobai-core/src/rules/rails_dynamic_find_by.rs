@@ -114,10 +114,7 @@ impl DynamicFindByVisitor {
             }
         }
         // whitelisted? (deprecated)
-        if self.config.whitelist.iter().any(|m| m.as_bytes() == name) {
-            return true;
-        }
-        false
+        self.config.whitelist.iter().any(|m| m.as_bytes() == name)
     }
 
     fn check_call(&mut self, node: &CallNode<'_>) {
