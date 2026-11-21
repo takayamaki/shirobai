@@ -96,7 +96,7 @@ shirobaiは日本語話者なら当然わかるでしょう、白バイです。
 
 | | |
 |---|---|
-| RuboCop | **`= 1.92.2` で hard pin** |
+| RuboCop | **`= 1.92.3` で hard pin** |
 | Ruby | `>= 3.1` |
 | Rust | `>= 1.88`（stable）——下記ビルド済み対象では不要 |
 | ビルド済み提供 | `x86_64-linux` / `aarch64-linux`（glibc）/ `arm64-darwin`（Apple Silicon）、Ruby 3.1〜4.0 |
@@ -136,7 +136,7 @@ target version に合わせてパースできるようになるまでは、古�
 Gemfile で `rubocop` の隣に追加する:
 
 ```ruby
-gem "rubocop", "= 1.92.2"
+gem "rubocop", "= 1.92.3"
 gem "shirobai"
 ```
 
@@ -233,7 +233,7 @@ disable コメント、`--only` / `--except`、`--auto-correct`、ResultCache �
 | `ext/shirobai/` | magnus ブリッジ（cdylib） |
 | `benches/` | ベンチマークと parity オラクル |
 | `spec/` | RSpec、vendor spec 取り込み、エッジケース parity |
-| `vendor/rubocop/` | git submodule、1.92.2 を pin（vendor spec 用） |
+| `vendor/rubocop/` | git submodule、1.92.3 を pin（vendor spec 用） |
 | `gems/shirobai-performance/` | プラグイン gem（rubocop-performance cop） |
 | `gems/shirobai-rspec/` | プラグイン gem（rubocop-rspec cop） |
 | `gems/shirobai-rails/` | プラグイン gem（rubocop-rails cop） |
