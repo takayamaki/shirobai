@@ -71,4 +71,29 @@ RSpec.describe Shirobai::Cop::Style::StringLiterals do
     expect_lint_parity(*klasses, source, config, expect_offenses: false)
     expect_autocorrect_parity(*klasses, source, config)
   end
+
+  # A source with a non-UTF-8 magic comment: stock's `str_content` keeps the
+  # source encoding, so `to_string_literal` (1.92.3: `inspect` for an invalid
+  # value) and `inspect` must see the same string, not a UTF-8 copy.
+  describe "sources in another encoding" do
+    def style_config(style)
+      RuboCop::ConfigLoader.merge_with_default(
+        RuboCop::Config.new({ "Style/StringLiterals" => { "EnforcedStyle" => style } }, "(test)"),
+        "(test)"
+      )
+    end
+
+    {
+      "binary" => "# encoding: ascii-8bit\nx = \"a\xFFb\"\ny = \"\xC3\xA9\"\nz = '\xC3\xA9'\n",
+      "EUC-JP" => "# encoding: euc-jp\nx = \"\xA4\xA2\"\ny = '\xA4\xA2'\n"
+    }.each do |label, text|
+      %w[single_quotes double_quotes].each do |style|
+        it "matches stock in a #{label} source (#{style})" do
+          src = text.b.force_encoding(Encoding::UTF_8)
+          expect_lint_parity(*klasses, src, style_config(style))
+          expect_autocorrect_parity(*klasses, src, style_config(style))
+        end
+      end
+    end
+  end
 end
