@@ -602,8 +602,9 @@ impl<'a> SpacingProfile<'a> {
         }
     }
 
-    /// `uniform_alignment_allowed?(token, lines, spacings)`, memoized per
-    /// `(group, column, type)`.
+    /// `uniform_alignment_allowed?(token, lines, spacings, entries)`, memoized per
+    /// `(group, column, type)`. `entries` is `by_column[column]`, read from the
+    /// profile after the memo check.
     fn uniform_alignment_allowed(
         &mut self,
         group: &Rc<Vec<usize>>,
@@ -619,7 +620,20 @@ impl<'a> SpacingProfile<'a> {
         let mut distinct = spacings.to_vec();
         distinct.sort_unstable();
         distinct.dedup();
-        let verdict = distinct.len() > 1 || self.aligned_on_other_column(group, column, lines);
+        // 1.92.3: two different non-zero paddings anywhere in the column
+        // (other token types included) also make it alignment.
+        let mut column_spacings: Vec<usize> = self.group_profiles[group.as_ref()]
+            .by_column
+            .get(&column)
+            .map_or(&[][..], Vec::as_slice)
+            .iter()
+            .map(|&(_, sp)| sp)
+            .collect();
+        column_spacings.sort_unstable();
+        column_spacings.dedup();
+        let verdict = distinct.len() > 1
+            || column_spacings.iter().filter(|&&sp| sp > 0).count() > 1
+            || self.aligned_on_other_column(group, column, lines);
         self.group_profiles
             .get_mut(group.as_ref())
             .expect("profile built")
