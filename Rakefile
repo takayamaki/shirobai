@@ -65,6 +65,31 @@ def published?(name, version)
   JSON.parse(res.body).any? { |v| v["number"] == version }
 end
 
+# Waits until the compact index lists this version of the gem.
+# Bundler and `gem install` resolve the plugins' `= version` dependency
+# through this endpoint, so the plugin pushes must wait for it.
+# Same check as rubygems/release-gem's await-release.rb.
+# rubygems-await 0.5.4 never saw the new version in the info endpoint
+# (NoMethodError on Gem::CompactIndexClient::Cache), even after the index
+# had it, and failed the 2026.1125.0100 release.
+def await_compact_index(name, version, timeout: 300)
+  require "net/http"
+  uri = URI("https://index.rubygems.org/info/#{name}")
+  line = /^#{Regexp.escape(version)} /
+  deadline = Time.now + timeout
+  loop do
+    begin
+      res = Net::HTTP.get_response(uri)
+      return if res.is_a?(Net::HTTPSuccess) && line.match?(res.body)
+    rescue StandardError => e
+      warn "#{uri}: #{e.class}: #{e.message}"
+    end
+    abort "Timed out waiting for #{name} #{version} on #{uri}" if Time.now > deadline
+    puts "Waiting for #{name} #{version} on #{uri}"
+    sleep 5
+  end
+end
+
 desc "Build and push all four gems to RubyGems.org (used by release-gem action)"
 task :release do
   require_relative "lib/shirobai/version"
@@ -74,10 +99,6 @@ task :release do
   # `= version` dependency resolves against it.
   (core_name, core_path), *plugins = pairs
   sh "gem", "push", core_path unless published?(core_name, version)
-  # `gem exec` must run outside the bundle: under `bundle exec rake`,
-  # Bundler blocks any gem that is not in the Gemfile.
-  Bundler.with_unbundled_env do
-    sh "gem", "exec", "rubygems-await", core_path
-  end
+  await_compact_index(core_name, version)
   plugins.each { |name, path| sh("gem", "push", path) unless published?(name, version) }
 end

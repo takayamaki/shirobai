@@ -71,6 +71,10 @@ plugin gem at the pinned version.
   versions that are already on RubyGems.org, so a re-run only does
   the missing pushes (the version is already burned; do not re-bump
   for a partial failure).
+- A re-run keeps the workflow and Rakefile of the release commit.
+  If the fix is in those files, merge the fix first, then start the
+  release workflow on main by hand (`gh workflow run release.yml --ref main`).
+  It also skips the existing tag and the gems already on RubyGems.org.
 - If the workflow path is broken itself, push the built gems by hand:
   `gem push pkg/<gem>` from a `rake build` checkout of the release tag.
   A gem first published by hand has no trusted publisher; add one on
@@ -81,8 +85,13 @@ plugin gem at the pinned version.
 ## Lessons from the first 4-gem release (2026.0708.2200)
 
 - `gem exec` dies under `bundle exec rake`: Bundler blocks gems that
-  are not in the Gemfile. The await call now runs inside
+  are not in the Gemfile. The await call ran inside
   `Bundler.with_unbundled_env`.
+  Since 2026.1125.0100 the Rakefile no longer calls rubygems-await.
+  It polls the compact index itself (`await_compact_index`).
+  rubygems-await 0.5.4 raised NoMethodError on every info check
+  and never saw the new version, even after the index had it.
+  That release timed out after the core push, and a re-run failed the same way.
 - `gem install shirobai` was broken even though every CI gate was
   green: the RubyGems Cargo builder derives the dylib name from the
   **package name** in `ext/shirobai/Cargo.toml`, and ours (`shirobai-ext`)
