@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
     paths: [lib/shirobai/version.rb]
+  # Manual start from main, for a release that "Re-run failed jobs" cannot
+  # fix (a re-run keeps the old commit's workflow and Rakefile). The steps
+  # skip the tag and the gems that are already published.
+  workflow_dispatch:
 
 jobs:
   release:
@@ -40,7 +44,7 @@ jobs:
             git push origin "v$ver"
           fi
 
-      - uses: rubygems/release-gem@v1.4.1
+      - uses: rubygems/release-gem@v1.4.2
 
   # Prebuilt platform gems for the core gem only (the 3 plugin gems are pure
   # Ruby). Runs after `release` so the source gems are already on the index;
