@@ -18,5 +18,5 @@ Gem::Specification.new do |spec|
   spec.extensions = ["ext/shirobai/extconf.rb"]
 
   spec.add_dependency "rb_sys", "~> 0.9"
-  spec.add_dependency "rubocop", "= 1.92.3"
+  spec.add_dependency "rubocop", "= 1.93.0"
 end
